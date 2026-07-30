@@ -1,0 +1,96 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+enum Role {
+  ADMIN
+  MEMBER
+}
+
+model User {
+  id           String          @id @default(cuid())
+  name         String
+  email        String          @unique
+  passwordHash String
+  role         Role            @default(MEMBER)
+  createdAt    DateTime        @default(now())
+  companies    CompanyMember[]
+  expenses     Expense[]
+}
+
+model Company {
+  id               String          @id @default(cuid())
+  name             String
+  defaultGstPercent Float          @default(18)
+  createdAt        DateTime        @default(now())
+  members          CompanyMember[]
+  gateways         Gateway[]
+  categories       Category[]
+  expenses         Expense[]
+}
+
+model CompanyMember {
+  id        String  @id @default(cuid())
+  userId    String
+  companyId String
+  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, companyId])
+}
+
+model Gateway {
+  id            String    @id @default(cuid())
+  companyId     String
+  name          String
+  chargePercent Float
+  createdAt     DateTime  @default(now())
+  company       Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  expenses      Expense[]
+}
+
+model Category {
+  id        String    @id @default(cuid())
+  companyId String
+  name      String
+  createdAt DateTime  @default(now())
+  company   Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  expenses  Expense[]
+
+  @@unique([companyId, name])
+}
+
+model Expense {
+  id                  String   @id @default(cuid())
+  companyId           String
+  categoryId          String
+  gatewayId           String?
+  description         String?
+  date                DateTime
+  grossAmount         Float
+  gatewayChargePercent Float   @default(0)
+  gatewayChargeAmount Float    @default(0)
+  gstPercent          Float    @default(0)
+  gstAmount           Float    @default(0)
+  netAmount           Float
+  screenshotPath      String?
+  createdById         String
+  createdAt           DateTime @default(now())
+
+  company    Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  category   Category  @relation(fields: [categoryId], references: [id])
+  gateway    Gateway?  @relation(fields: [gatewayId], references: [id])
+  createdBy  User      @relation(fields: [createdById], references: [id])
+
+  @@index([companyId, date])
+}

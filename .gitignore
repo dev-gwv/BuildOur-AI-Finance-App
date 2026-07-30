@@ -39,3 +39,18 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+/src/generated/prisma
+
+# database
+/dev.db
+/dev.db-journal
+
+# private uploads (screenshots)
+/uploads
+
+# Prisma-generated AI assistant reference docs (not app code)
+/.agents
+/.claude
+/.windsurf
+/skills-lock.json
