@@ -10,5 +10,9 @@ export default defineConfig({
   },
   datasource: {
     url: process.env["DATABASE_URL"],
+    // Optional: an unpooled connection string for the shadow database Prisma
+    // uses during `migrate dev`, if your Postgres provider gives you a pooled
+    // DATABASE_URL (e.g. via PgBouncer). Falls back to DATABASE_URL if unset.
+    shadowDatabaseUrl: process.env["DIRECT_URL"],
   },
 });

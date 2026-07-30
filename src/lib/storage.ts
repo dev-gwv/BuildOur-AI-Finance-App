@@ -1,21 +1,31 @@
-import { mkdir, writeFile } from "node:fs/promises";
-import path from "node:path";
+import { put, del, get } from "@vercel/blob";
 
-const UPLOADS_DIR = path.join(process.cwd(), "uploads");
+const PREFIX = "screenshots/";
 
 function safeExtension(filename: string): string {
-  const ext = path.extname(filename).toLowerCase();
-  return /^\.[a-z0-9]{1,5}$/.test(ext) ? ext : "";
+  const match = /\.[a-zA-Z0-9]{1,5}$/.exec(filename);
+  return match ? match[0].toLowerCase() : "";
 }
 
+/**
+ * Uploads a screenshot as a private Vercel Blob and returns an opaque name
+ * (no slashes) that's safe to store on the Expense record and pass through
+ * the /api/uploads/[filename] route.
+ */
 export async function saveUpload(file: File): Promise<string> {
-  await mkdir(UPLOADS_DIR, { recursive: true });
-  const filename = `${crypto.randomUUID()}${safeExtension(file.name)}`;
-  const buffer = Buffer.from(await file.arrayBuffer());
-  await writeFile(path.join(UPLOADS_DIR, filename), buffer);
-  return filename;
+  const name = `${crypto.randomUUID()}${safeExtension(file.name)}`;
+  await put(`${PREFIX}${name}`, file, {
+    access: "private",
+    addRandomSuffix: false,
+  });
+  return name;
 }
 
-export function uploadPath(filename: string): string {
-  return path.join(UPLOADS_DIR, filename);
+export async function deleteUpload(name: string): Promise<void> {
+  await del(`${PREFIX}${name}`);
+}
+
+/** Streams a previously uploaded screenshot back, for proxying through an authenticated route. */
+export async function readUpload(name: string) {
+  return get(`${PREFIX}${name}`, { access: "private" });
 }

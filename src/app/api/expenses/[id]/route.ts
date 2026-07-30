@@ -3,7 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { ApiError, requireUser, withApiErrors } from "@/lib/api-auth";
 import { canAccessCompany } from "@/lib/access";
 import { calculateBreakup } from "@/lib/calc";
-import { saveUpload } from "@/lib/storage";
+import { deleteUpload, saveUpload } from "@/lib/storage";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -57,6 +57,9 @@ export const PATCH = withApiErrors(async (req: NextRequest, { params }: Params) 
   let screenshotPath = existing.screenshotPath;
   if (screenshot instanceof File && screenshot.size > 0) {
     screenshotPath = await saveUpload(screenshot);
+    if (existing.screenshotPath) {
+      await deleteUpload(existing.screenshotPath).catch(() => {});
+    }
   }
 
   const expense = await prisma.expense.update({
@@ -93,5 +96,8 @@ export const DELETE = withApiErrors(async (_req: NextRequest, { params }: Params
   }
 
   await prisma.expense.delete({ where: { id } });
+  if (expense.screenshotPath) {
+    await deleteUpload(expense.screenshotPath).catch(() => {});
+  }
   return NextResponse.json({ ok: true });
 });
