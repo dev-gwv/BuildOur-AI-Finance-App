@@ -10,9 +10,10 @@ export default defineConfig({
   },
   datasource: {
     url: process.env["DATABASE_URL"],
-    // Optional: an unpooled connection string for the shadow database Prisma
-    // uses during `migrate dev`, if your Postgres provider gives you a pooled
-    // DATABASE_URL (e.g. via PgBouncer). Falls back to DATABASE_URL if unset.
-    shadowDatabaseUrl: process.env["DIRECT_URL"],
+    // Unpooled connection string for the shadow database Prisma uses during
+    // `migrate dev`. DIRECT_URL is the generic name; DATABASE_URL_UNPOOLED is
+    // what Neon's Vercel integration provides out of the box.
+    shadowDatabaseUrl:
+      process.env["DIRECT_URL"] || process.env["DATABASE_URL_UNPOOLED"],
   },
 });
