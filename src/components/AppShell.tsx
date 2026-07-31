@@ -49,7 +49,7 @@ export function AppShell({
             <Wallet className="h-4 w-4" />
           </span>
           <span className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
-            BuildOur Finance
+            Grateful Finance
           </span>
         </div>
         <nav className="flex-1 space-y-1 px-3 py-4">
@@ -70,7 +70,7 @@ export function AppShell({
               <Wallet className="h-4 w-4" />
             </span>
             <span className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
-              BuildOur Finance
+              Grateful Finance
             </span>
           </div>
           <button

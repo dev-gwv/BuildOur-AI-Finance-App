@@ -15,7 +15,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "BuildOur Finance",
+  title: "Grateful Finance",
   description: "Multi-company expense, P&L, and revenue tracking",
 };
 

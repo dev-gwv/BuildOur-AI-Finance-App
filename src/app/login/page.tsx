@@ -22,7 +22,7 @@ export default function LoginPage() {
           <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-indigo-500">
             <Wallet className="h-5 w-5" />
           </span>
-          BuildOur Finance
+          Grateful Finance
         </div>
         <div className="relative max-w-md space-y-4">
           <h2 className="text-3xl font-semibold leading-tight">
@@ -37,7 +37,7 @@ export default function LoginPage() {
             Real-time revenue breakup, per company
           </div>
         </div>
-        <p className="relative text-xs text-neutral-500">© {new Date().getFullYear()} BuildOur</p>
+        <p className="relative text-xs text-neutral-500">© {new Date().getFullYear()} Grateful Finance</p>
       </div>
 
       <div className="flex items-center justify-center px-4 py-12">
@@ -46,7 +46,7 @@ export default function LoginPage() {
             <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-indigo-600 text-white">
               <Wallet className="h-5 w-5" />
             </span>
-            BuildOur Finance
+            Grateful Finance
           </div>
 
           <h1 className="text-xl font-semibold text-neutral-900 dark:text-neutral-100">Welcome back</h1>
