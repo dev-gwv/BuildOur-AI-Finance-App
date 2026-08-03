@@ -1,4 +1,4 @@
-import { PDFParse } from "pdf-parse";
+import { extractText } from "unpdf";
 
 export interface ParsedDeliveryOrder {
   doId: string | null;
@@ -21,14 +21,8 @@ function toIsoDate(ddmmyyyy: string | null): string | null {
 // template. It's a fixed layout across deals, so plain regex on the flattened
 // text is enough — no generic PDF-layout parsing required.
 export async function parseDeliveryOrder(buffer: Buffer): Promise<ParsedDeliveryOrder> {
-  const parser = new PDFParse({ data: buffer });
-  let text: string;
-  try {
-    const result = await parser.getText();
-    text = result.text.replace(/\s+/g, " ");
-  } finally {
-    await parser.destroy();
-  }
+  const { text: merged } = await extractText(new Uint8Array(buffer), { mergePages: true });
+  const text = merged.replace(/\s+/g, " ");
 
   const priceMatch = /Product Price\s*([\d,]+\.\d{2})/.exec(text);
 
