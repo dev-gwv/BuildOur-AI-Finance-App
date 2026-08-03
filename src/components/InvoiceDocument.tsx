@@ -3,6 +3,7 @@ import { calculateInvoiceBreakup } from "@/lib/invoiceCalc";
 import { amountInWords } from "@/lib/numberToWords";
 import { formatCurrency, formatDate } from "@/lib/format";
 import { INVOICE_SELLER } from "@/lib/invoiceSeller";
+import { AUTHORIZED_SIGNATURE_DATA_URI } from "@/lib/signatureImage";
 
 export interface InvoiceDocumentData {
   invoiceNumber: string;
@@ -176,7 +177,13 @@ export function InvoiceDocument({ invoice }: { invoice: InvoiceDocumentData }) {
             </p>
           </div>
           <div className="text-right">
-            <div className="h-10 w-48 border-b border-neutral-400" />
+            {/* eslint-disable-next-line @next/next/no-img-element -- inline data URI, no next/image optimization needed */}
+            <img
+              src={AUTHORIZED_SIGNATURE_DATA_URI}
+              alt="Authorized signature"
+              className="ml-auto h-16 w-auto object-contain"
+            />
+            <div className="w-48 border-b border-neutral-400" />
             <p className="mt-1 text-xs text-neutral-500">Authorized signature for {INVOICE_SELLER.name}</p>
           </div>
         </div>
