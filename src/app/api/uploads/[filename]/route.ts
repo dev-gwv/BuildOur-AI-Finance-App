@@ -19,12 +19,15 @@ export const GET = withApiErrors(async (_req: NextRequest, { params }: Params) =
     select: { companyId: true },
   });
 
-  if (!expense) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
-  }
-
-  if (!(await canAccessCompany(user, expense.companyId))) {
-    throw new ApiError(403, "No access to this file");
+  if (expense) {
+    if (!(await canAccessCompany(user, expense.companyId))) {
+      throw new ApiError(403, "No access to this file");
+    }
+  } else {
+    const invoice = await prisma.invoice.findFirst({ where: { doFilePath: filename } });
+    if (!invoice) {
+      return NextResponse.json({ error: "Not found" }, { status: 404 });
+    }
   }
 
   const result = await readUpload(filename);

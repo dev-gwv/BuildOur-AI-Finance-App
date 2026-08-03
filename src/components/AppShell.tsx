@@ -6,6 +6,7 @@ import { useState } from "react";
 import {
   Building2,
   FileBarChart,
+  FileText,
   LayoutDashboard,
   LogOut,
   Menu,
@@ -21,6 +22,7 @@ const NAV_LINKS = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/companies", label: "Companies", icon: Building2 },
   { href: "/expenses", label: "Expenses", icon: Receipt },
+  { href: "/invoices", label: "Invoices", icon: FileText },
   { href: "/reports", label: "Reports", icon: FileBarChart },
 ];
 
@@ -43,7 +45,7 @@ export function AppShell({
   return (
     <div className="flex min-h-screen">
       {/* Desktop sidebar */}
-      <aside className="hidden w-60 shrink-0 flex-col border-r border-neutral-200 bg-white lg:flex dark:border-neutral-800 dark:bg-neutral-900">
+      <aside className="hidden w-60 shrink-0 flex-col border-r border-neutral-200 bg-white lg:flex dark:border-neutral-800 dark:bg-neutral-900 print:hidden">
         <div className="flex h-16 items-center gap-2 border-b border-neutral-200 px-5 dark:border-neutral-800">
           <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-600 text-white">
             <Wallet className="h-4 w-4" />
@@ -64,7 +66,7 @@ export function AppShell({
 
       {/* Mobile top bar */}
       <div className="flex flex-1 flex-col">
-        <header className="flex h-16 items-center justify-between border-b border-neutral-200 bg-white px-4 lg:hidden dark:border-neutral-800 dark:bg-neutral-900">
+        <header className="flex h-16 items-center justify-between border-b border-neutral-200 bg-white px-4 lg:hidden dark:border-neutral-800 dark:bg-neutral-900 print:hidden">
           <div className="flex items-center gap-2">
             <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-600 text-white">
               <Wallet className="h-4 w-4" />
@@ -113,8 +115,8 @@ export function AppShell({
           </div>
         )}
 
-        <main className="flex-1 px-4 py-6 sm:px-6 lg:px-8">
-          <div className="mx-auto max-w-6xl">{children}</div>
+        <main className="flex-1 px-4 py-6 sm:px-6 lg:px-8 print:p-0">
+          <div className="mx-auto max-w-6xl print:max-w-none">{children}</div>
         </main>
       </div>
     </div>

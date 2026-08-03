@@ -26,6 +26,7 @@ model User {
   createdAt    DateTime        @default(now())
   companies    CompanyMember[]
   expenses     Expense[]
+  invoices     Invoice[]
 }
 
 model Company {
@@ -93,4 +94,33 @@ model Expense {
   createdBy  User      @relation(fields: [createdById], references: [id])
 
   @@index([companyId, date])
+}
+
+// Tax invoices billed by Grateful World Ventures, generated from an uploaded
+// Bajaj Finance Delivery Order (DO). The seller's own legal/bank details are
+// fixed (see src/lib/invoiceSeller.ts) since this entity is the sole issuer.
+model Invoice {
+  id              String    @id @default(cuid())
+  invoiceNumber   String    @unique
+  invoiceDate     DateTime
+  dueDate         DateTime
+  customerName    String
+  customerAddress String
+  placeOfSupply   String
+  itemDescription String
+  hsnSac          String
+  qty             Float     @default(1)
+  grossAmount     Float
+  gstPercent      Float     @default(18)
+  notes           String?
+  terms           String?
+  doId            String?
+  doDate          DateTime?
+  doFilePath      String?
+  createdById     String
+  createdAt       DateTime  @default(now())
+
+  createdBy User @relation(fields: [createdById], references: [id])
+
+  @@index([createdAt])
 }
