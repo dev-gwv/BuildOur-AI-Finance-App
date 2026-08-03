@@ -124,3 +124,21 @@ model Invoice {
 
   @@index([createdAt])
 }
+
+// Maps a DO's exact loan amount to the item that was actually sold, since
+// Bajaj's delivery order never names the product — only its price.
+model ItemCatalogEntry {
+  id              String   @id @default(cuid())
+  amount          Float    @unique
+  itemDescription String
+  hsnSac          String
+  createdAt       DateTime @default(now())
+}
+
+// Singleton row (id is always "default") holding the invoice-wide defaults
+// so terms/notes are set once instead of retyped on every invoice.
+model InvoiceSettings {
+  id    String  @id
+  terms String?
+  notes String?
+}

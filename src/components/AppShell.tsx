@@ -11,6 +11,7 @@ import {
   LogOut,
   Menu,
   Receipt,
+  Settings2,
   Users,
   Wallet,
   X,
@@ -40,7 +41,13 @@ export function AppShell({
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
 
-  const links = isAdmin ? [...NAV_LINKS, { href: "/settings/users", label: "Users", icon: Users }] : NAV_LINKS;
+  const links = isAdmin
+    ? [
+        ...NAV_LINKS,
+        { href: "/settings/invoicing", label: "Invoice Settings", icon: Settings2 },
+        { href: "/settings/users", label: "Users", icon: Users },
+      ]
+    : NAV_LINKS;
 
   return (
     <div className="flex min-h-screen">

@@ -15,7 +15,19 @@ const inputClass =
   "mt-1 w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 dark:border-neutral-700 dark:bg-neutral-950";
 const labelClass = "block text-sm font-medium text-neutral-700 dark:text-neutral-300";
 
-export function InvoiceForm({ suggestedNumber }: { suggestedNumber: string }) {
+export type CatalogEntry = { amount: number; itemDescription: string; hsnSac: string };
+
+export function InvoiceForm({
+  suggestedNumber,
+  catalog,
+  defaultTerms,
+  defaultNotes,
+}: {
+  suggestedNumber: string;
+  catalog: CatalogEntry[];
+  defaultTerms: string;
+  defaultNotes: string;
+}) {
   const router = useRouter();
   const toast = useToast();
   const today = new Date().toISOString().slice(0, 10);
@@ -25,6 +37,7 @@ export function InvoiceForm({ suggestedNumber }: { suggestedNumber: string }) {
   const [pending, setPending] = useState(false);
   const [doId, setDoId] = useState("");
   const [doDate, setDoDate] = useState("");
+  const [itemMatched, setItemMatched] = useState(false);
 
   const [invoiceNumber, setInvoiceNumber] = useState(suggestedNumber);
   const [invoiceDate, setInvoiceDate] = useState(today);
@@ -37,8 +50,8 @@ export function InvoiceForm({ suggestedNumber }: { suggestedNumber: string }) {
   const [qty, setQty] = useState("1");
   const [grossAmount, setGrossAmount] = useState("");
   const [gstPercent, setGstPercent] = useState("18");
-  const [notes, setNotes] = useState("Thank you for your business.");
-  const [terms, setTerms] = useState("");
+  const [notes, setNotes] = useState(defaultNotes);
+  const [terms, setTerms] = useState(defaultTerms);
 
   const breakup = calculateInvoiceBreakup({
     grossAmount: Number(grossAmount) || 0,
@@ -68,8 +81,22 @@ export function InvoiceForm({ suggestedNumber }: { suggestedNumber: string }) {
         setDoDate(parsed.doDate);
       }
       if (parsed.doId) setDoId(parsed.doId);
-      if (parsed.productPrice) setGrossAmount(String(parsed.productPrice));
-      toast.success("Extracted the DO — review the details below and add the item");
+
+      if (parsed.productPrice) {
+        setGrossAmount(String(parsed.productPrice));
+        const match = catalog.find((c) => c.amount === parsed.productPrice);
+        if (match) {
+          setItemDescription(match.itemDescription);
+          setHsnSac(match.hsnSac);
+          setItemMatched(true);
+          toast.success("DO read and item matched from your catalog — ready to generate");
+        } else {
+          setItemMatched(false);
+          toast.success("DO read, but no catalog match for this amount — fill in the item below");
+        }
+      } else {
+        toast.success("Extracted the DO — review the details below and add the item");
+      }
     } catch {
       toast.error("Network error while reading the PDF");
     } finally {
@@ -214,15 +241,23 @@ export function InvoiceForm({ suggestedNumber }: { suggestedNumber: string }) {
         </Card>
 
         <Card>
-          <CardHeader>
+          <CardHeader className="flex items-center justify-between">
             <h2 className="text-sm font-semibold text-neutral-700 dark:text-neutral-300">Item</h2>
+            {itemMatched && (
+              <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400">
+                Auto-filled from catalog
+              </span>
+            )}
           </CardHeader>
           <CardBody className="grid gap-4">
             <div>
               <label className={labelClass}>Item / description</label>
               <input
                 value={itemDescription}
-                onChange={(e) => setItemDescription(e.target.value)}
+                onChange={(e) => {
+                  setItemDescription(e.target.value);
+                  setItemMatched(false);
+                }}
                 placeholder="e.g. Diamond Premium 2.0"
                 required
                 className={inputClass}
