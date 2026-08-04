@@ -8,7 +8,8 @@ function twoDigits(n: number): string {
   if (n < 20) return ONES[n];
   const tens = Math.floor(n / 10);
   const ones = n % 10;
-  return TENS[tens] + (ones ? ` ${ONES[ones]}` : "");
+  // Hyphenated ("Ninety-Nine") to match how the reference invoices word amounts.
+  return TENS[tens] + (ones ? `-${ONES[ones]}` : "");
 }
 
 function threeDigits(n: number): string {
