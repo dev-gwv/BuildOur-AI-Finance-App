@@ -24,7 +24,9 @@ export async function parseDeliveryOrder(buffer: Buffer): Promise<ParsedDelivery
   const { text: merged } = await extractText(new Uint8Array(buffer), { mergePages: true });
   const text = merged.replace(/\s+/g, " ");
 
-  const priceMatch = /Product Price\s*([\d,]+\.\d{2})/.exec(text);
+  // Decimals are optional: the amount varies per deal and isn't always written
+  // as "1,17,999.00" — some DOs state a round figure like "1,77,000".
+  const priceMatch = /Product Price\s*([\d,]+(?:\.\d{1,2})?)/.exec(text);
 
   return {
     doId: match(/DO ID:\s*([A-Z0-9]+)/, text),

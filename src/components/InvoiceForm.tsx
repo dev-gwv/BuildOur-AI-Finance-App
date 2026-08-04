@@ -15,7 +15,7 @@ const inputClass =
   "mt-1 w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 dark:border-neutral-700 dark:bg-neutral-950";
 const labelClass = "block text-sm font-medium text-neutral-700 dark:text-neutral-300";
 
-export type CatalogEntry = { amount: number; itemDescription: string; hsnSac: string };
+export type CatalogEntry = { id: string; amount: number; itemDescription: string; hsnSac: string };
 
 export function InvoiceForm({
   suggestedNumber,
@@ -47,6 +47,7 @@ export function InvoiceForm({
   const [placeOfSupply, setPlaceOfSupply] = useState<string>(INVOICE_SELLER.placeOfSupply);
   const [itemDescription, setItemDescription] = useState("");
   const [hsnSac, setHsnSac] = useState("999259");
+  const [selectedItemId, setSelectedItemId] = useState("");
   const [qty, setQty] = useState("1");
   const [grossAmount, setGrossAmount] = useState("");
   const [gstPercent, setGstPercent] = useState("18");
@@ -86,13 +87,14 @@ export function InvoiceForm({
         setGrossAmount(String(parsed.productPrice));
         const match = catalog.find((c) => c.amount === parsed.productPrice);
         if (match) {
+          setSelectedItemId(match.id);
           setItemDescription(match.itemDescription);
           setHsnSac(match.hsnSac);
           setItemMatched(true);
           toast.success("DO read and item matched from your catalog — ready to generate");
         } else {
           setItemMatched(false);
-          toast.success("DO read, but no catalog match for this amount — fill in the item below");
+          toast.success("DO read — now pick the product from the dropdown below");
         }
       } else {
         toast.success("Extracted the DO — review the details below and add the item");
@@ -250,6 +252,36 @@ export function InvoiceForm({
             )}
           </CardHeader>
           <CardBody className="grid gap-4">
+            {catalog.length > 0 && (
+              <div>
+                <label className={labelClass}>Product</label>
+                <select
+                  value={selectedItemId}
+                  onChange={(e) => {
+                    const entry = catalog.find((c) => c.id === e.target.value);
+                    setSelectedItemId(e.target.value);
+                    if (entry) {
+                      setItemDescription(entry.itemDescription);
+                      setHsnSac(entry.hsnSac);
+                    }
+                    setItemMatched(false);
+                  }}
+                  className={inputClass}
+                >
+                  <option value="">Select a product…</option>
+                  {catalog.map((entry) => (
+                    <option key={entry.id} value={entry.id}>
+                      {entry.itemDescription} — {formatCurrency(entry.amount)}
+                    </option>
+                  ))}
+                </select>
+                <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
+                  Picked automatically when the DO amount matches. The invoice always bills the
+                  Product Price read from the DO, not the amount shown here.
+                </p>
+              </div>
+            )}
+
             <div>
               <label className={labelClass}>Item / description</label>
               <input
@@ -257,6 +289,7 @@ export function InvoiceForm({
                 onChange={(e) => {
                   setItemDescription(e.target.value);
                   setItemMatched(false);
+                  setSelectedItemId("");
                 }}
                 placeholder="e.g. Diamond Premium 2.0"
                 required
