@@ -70,7 +70,8 @@ export function InvoiceForm({
       body.append("file", file);
       const res = await fetch("/api/invoices/parse", { method: "POST", body });
       if (!res.ok) {
-        toast.error("Couldn't read that PDF — fill in the details manually");
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.error ?? "Couldn't read that PDF — fill in the details manually");
         return;
       }
       const { parsed } = await res.json();
