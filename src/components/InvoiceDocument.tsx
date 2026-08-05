@@ -19,6 +19,7 @@ export interface InvoiceDocumentData {
   gstPercent: number;
   notes: string | null;
   terms: string | null;
+  doId?: string | null;
 }
 
 // Deliberately always rendered light, regardless of the app's dark mode —
@@ -76,6 +77,12 @@ export function InvoiceDocument({
               <dd className="text-right font-medium text-neutral-900">Due on Receipt</dd>
               <dt className="text-neutral-500">Place of supply</dt>
               <dd className="text-right font-medium text-neutral-900">{invoice.placeOfSupply}</dd>
+              {invoice.doId && (
+                <>
+                  <dt className="text-neutral-500">DO reference</dt>
+                  <dd className="text-right font-medium text-neutral-900">{invoice.doId}</dd>
+                </>
+              )}
             </dl>
           </div>
         </div>
@@ -184,17 +191,22 @@ export function InvoiceDocument({
               IFSC: {INVOICE_SELLER.bank.ifsc} · {INVOICE_SELLER.bank.bankName} ({INVOICE_SELLER.bank.accountType})
             </p>
           </div>
-          <div className="text-right">
+          <div className="shrink-0 text-right">
             {/* eslint-disable-next-line @next/next/no-img-element -- inline data URI, no next/image optimization needed */}
             <img
               src={signature}
               alt="Authorized signature"
-              className="ml-auto h-16 w-auto object-contain"
+              className="ml-auto h-14 w-auto object-contain"
             />
-            <div className="w-48 border-b border-neutral-400" />
-            <p className="mt-1 text-xs text-neutral-500">Authorized signature for {INVOICE_SELLER.name}</p>
+            <div className="ml-auto w-56 border-b border-neutral-300" />
+            <p className="mt-1.5 text-xs font-medium text-neutral-700">Authorised Signatory</p>
+            <p className="text-xs text-neutral-500">{INVOICE_SELLER.name}</p>
           </div>
         </div>
+
+        <p className="border-t border-neutral-100 px-8 py-3 text-center text-[11px] text-neutral-400">
+          This is a computer-generated tax invoice and is valid without a physical stamp.
+        </p>
       </div>
     </div>
   );
