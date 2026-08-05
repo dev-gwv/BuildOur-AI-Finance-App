@@ -106,6 +106,8 @@ model Invoice {
   dueDate         DateTime
   customerName    String
   customerAddress String
+  /** Present when the invoice was raised from a customer's GST certificate (B2B). */
+  customerGstin   String?
   placeOfSupply   String
   itemDescription String
   hsnSac          String

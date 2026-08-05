@@ -4,6 +4,8 @@
 import assert from "node:assert/strict";
 import { calculateInvoiceBreakup } from "./invoiceCalc.ts";
 import { amountInWords, numberToIndianWords } from "./numberToWords.ts";
+import { looksLikeGstCertificate, parseGstCertificateText } from "./parseGstCertificate.ts";
+import { parseDeliveryOrderText } from "./parseDeliveryOrder.ts";
 
 // --- GST back-calculation, matched against INV-002241 ---
 const ref = calculateInvoiceBreakup({ grossAmount: 117999, gstPercent: 18, qty: 1 });
@@ -49,5 +51,41 @@ const parsePrice = (s) => {
 assert.equal(parsePrice("A Product Price 117,999.00 117,999.00"), 117999);
 assert.equal(parsePrice("A Product Price 1,77,000 1,77,000"), 177000);
 assert.equal(parsePrice("A Product Price 354000 354000"), 354000);
+
+// --- GST certificate (Form GST REG-06) extraction ---
+// Text flattened the same way the PDF reader flattens it.
+const gstText = (
+  "Form GST REG-06 [See Rule 10(1)] Registration Certificate " +
+  "Registration Number : 27AABCU9603R1ZM " +
+  "1. Legal Name ACME TECHNOLOGIES PRIVATE LIMITED " +
+  "2. Trade Name, if any ACME TECH " +
+  "3. Constitution of Business Private Limited Company " +
+  "4. Address of Principal Place of Business 501, 5th Floor, Tower B, Cyber Heights, Andheri East, Mumbai, Maharashtra, 400069 " +
+  "5. Date of Liability 01/07/2017 " +
+  "6. Period of Validity From 01/07/2017 To Not Applicable " +
+  "7. Type of Registration Regular"
+).replace(/\s+/g, " ");
+
+const gst = parseGstCertificateText(gstText);
+assert.equal(gst.gstin, "27AABCU9603R1ZM", "GSTIN");
+assert.equal(gst.legalName, "ACME TECHNOLOGIES PRIVATE LIMITED", "legal name");
+assert.equal(gst.tradeName, "ACME TECH", "trade name");
+assert.match(gst.address, /Cyber Heights.*400069$/, "address");
+assert.ok(looksLikeGstCertificate(gstText), "should detect a GST certificate");
+
+// A certificate with no trade name must not swallow the next label.
+const noTrade = parseGstCertificateText(
+  "Registration Certificate Registration Number : 07AAJCG9243K1Z5 " +
+    "1. Legal Name SOME FIRM 2. Trade Name, if any 3. Constitution of Business Proprietorship"
+);
+assert.equal(noTrade.legalName, "SOME FIRM", "legal name without trade name");
+assert.equal(noTrade.gstin, "07AAJCG9243K1Z5", "GSTIN without trade name");
+
+// --- The two document types must not be confused with each other ---
+const doText =
+  "Bajaj Finance Limited DELIVERY ORDER DO ID: B429427477 A Product Price 117,999.00 117,999.00";
+assert.equal(parseDeliveryOrderText(doText).productPrice, 117999, "DO still parses");
+assert.equal(parseDeliveryOrderText(doText).doId, "B429427477", "DO id still parses");
+assert.ok(!/GST REG/i.test(doText), "DO sample has no GST markers");
 
 console.log("All invoice money-path checks passed.");

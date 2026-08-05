@@ -38,6 +38,10 @@ export function InvoiceForm({
   const [doId, setDoId] = useState("");
   const [doDate, setDoDate] = useState("");
   const [itemMatched, setItemMatched] = useState(false);
+  const [customerGstin, setCustomerGstin] = useState("");
+  const [docType, setDocType] = useState<"DO" | "GST" | null>(null);
+  /** Set when the product's catalog price was used because the source had no amount. */
+  const [amountFromCatalog, setAmountFromCatalog] = useState(false);
 
   const [invoiceNumber, setInvoiceNumber] = useState(suggestedNumber);
   const [invoiceDate, setInvoiceDate] = useState(today);
@@ -80,6 +84,24 @@ export function InvoiceForm({
         return;
       }
       const { parsed } = await res.json();
+      setDocType(parsed.docType);
+
+      if (parsed.docType === "GST") {
+        // A GST certificate carries who the customer is, but never an amount —
+        // that comes from the product picked below (and stays editable).
+        const name = parsed.tradeName || parsed.legalName;
+        if (name) setCustomerName(name);
+        if (parsed.address) setCustomerAddress(parsed.address);
+        if (parsed.gstin) setCustomerGstin(parsed.gstin);
+        setAmountFromCatalog(false);
+        toast.success(
+          parsed.gstin
+            ? "GST certificate read — now pick the product to set the amount"
+            : "Read the certificate, but couldn't find a GSTIN — please check the details below"
+        );
+        return;
+      }
+
       if (parsed.customerName) setCustomerName(parsed.customerName);
       if (parsed.deliveryAddress) setCustomerAddress(parsed.deliveryAddress);
       if (parsed.doDate) {
@@ -91,6 +113,7 @@ export function InvoiceForm({
 
       if (parsed.productPrice) {
         setGrossAmount(String(parsed.productPrice));
+        setAmountFromCatalog(false);
         const match = catalog.find((c) => c.amount === parsed.productPrice);
         if (match) {
           setSelectedItemId(match.id);
@@ -122,6 +145,7 @@ export function InvoiceForm({
       body.append("dueDate", dueDate);
       body.append("customerName", customerName);
       body.append("customerAddress", customerAddress);
+      body.append("customerGstin", customerGstin);
       body.append("placeOfSupply", placeOfSupply);
       body.append("itemDescription", itemDescription);
       body.append("hsnSac", hsnSac);
@@ -169,14 +193,18 @@ export function InvoiceForm({
                 <UploadCloud className="h-7 w-7 text-neutral-400" />
               )}
               <span className="text-sm font-semibold text-neutral-800 dark:text-neutral-100">
-                {doFile ? doFile.name : "Upload the Bajaj delivery order (PDF)"}
+                {doFile ? doFile.name : "Upload the delivery order or GST certificate (PDF)"}
               </span>
               <span className="text-xs text-neutral-500 dark:text-neutral-400">
                 {parsing
-                  ? "Reading the delivery order…"
+                  ? "Reading the document…"
                   : doFile
-                    ? "Click to choose a different file"
-                    : "Everything below fills in automatically"}
+                    ? docType === "GST"
+                      ? "Read as a GST certificate · click to choose a different file"
+                      : docType === "DO"
+                        ? "Read as a Bajaj delivery order · click to choose a different file"
+                        : "Click to choose a different file"
+                    : "Bajaj DO or the customer's GST certificate — details fill in automatically"}
               </span>
               <input type="file" accept="application/pdf" className="hidden" onChange={onFileChange} />
             </label>
@@ -209,9 +237,9 @@ export function InvoiceForm({
                   <dd className="font-medium text-neutral-900 dark:text-neutral-100">{customerName || "—"}</dd>
                 </div>
                 <div>
-                  <dt className="text-xs text-neutral-500 dark:text-neutral-400">Amount (from DO)</dt>
-                  <dd className="font-semibold tabular-nums text-neutral-900 dark:text-neutral-100">
-                    {formatCurrency(Number(grossAmount) || 0)}
+                  <dt className="text-xs text-neutral-500 dark:text-neutral-400">Customer GSTIN</dt>
+                  <dd className="font-medium tabular-nums text-neutral-900 dark:text-neutral-100">
+                    {customerGstin || "—"}
                   </dd>
                 </div>
                 <div className="sm:col-span-2">
@@ -238,6 +266,13 @@ export function InvoiceForm({
                       if (entry) {
                         setItemDescription(entry.itemDescription);
                         setHsnSac(entry.hsnSac);
+                        // A GST certificate has no amount of its own, so take the
+                        // product's list price as the starting point. A DO's own
+                        // amount is authoritative and must not be overwritten.
+                        if (docType !== "DO") {
+                          setGrossAmount(String(entry.amount));
+                          setAmountFromCatalog(true);
+                        }
                       }
                       setItemMatched(false);
                     }}
@@ -250,11 +285,34 @@ export function InvoiceForm({
                       </option>
                     ))}
                   </select>
-                  <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
-                    The invoice always bills the amount read from the DO, not the price listed here.
-                  </p>
                 </div>
               )}
+
+              {/* Kept here rather than behind "Edit all details": part-payments and
+                  discounts mean this genuinely gets changed on the way through. */}
+              <div>
+                <label className={labelClass}>Amount to bill (GST-inclusive, ₹)</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={grossAmount}
+                  onChange={(e) => {
+                    setGrossAmount(e.target.value);
+                    setAmountFromCatalog(false);
+                    setItemMatched(false);
+                  }}
+                  required
+                  className={`${inputClass} font-semibold tabular-nums`}
+                />
+                <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
+                  {docType === "DO"
+                    ? "Taken from the DO. Change it for a discount or a part payment."
+                    : amountFromCatalog
+                      ? "The product's list price. Change it for a discount or a part payment."
+                      : "Change it freely for a discount or a part payment."}
+                </p>
+              </div>
             </CardBody>
           </Card>
         )}
@@ -336,6 +394,16 @@ export function InvoiceForm({
             </div>
 
             <div>
+              <label className={labelClass}>Customer GSTIN (optional)</label>
+              <input
+                value={customerGstin}
+                onChange={(e) => setCustomerGstin(e.target.value.toUpperCase())}
+                placeholder="Filled in automatically from a GST certificate"
+                className={inputClass}
+              />
+            </div>
+
+            <div>
               <label className={labelClass}>Item / description</label>
               <input
                 value={itemDescription}
@@ -379,19 +447,6 @@ export function InvoiceForm({
                   className={inputClass}
                 />
               </div>
-            </div>
-
-            <div>
-              <label className={labelClass}>Amount (GST-inclusive, ₹)</label>
-              <input
-                type="number"
-                step="0.01"
-                min="0"
-                value={grossAmount}
-                onChange={(e) => setGrossAmount(e.target.value)}
-                required
-                className={inputClass}
-              />
             </div>
 
             <div>

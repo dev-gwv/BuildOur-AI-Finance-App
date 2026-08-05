@@ -21,6 +21,7 @@ export const POST = withApiErrors(async (req: NextRequest) => {
   const dueDate = String(form.get("dueDate") ?? invoiceDate);
   const customerName = String(form.get("customerName") ?? "").trim();
   const customerAddress = String(form.get("customerAddress") ?? "").trim();
+  const customerGstin = form.get("customerGstin") ? String(form.get("customerGstin")).trim() : null;
   const placeOfSupply = String(form.get("placeOfSupply") ?? "").trim();
   const itemDescription = String(form.get("itemDescription") ?? "").trim();
   const hsnSac = String(form.get("hsnSac") ?? "").trim();
@@ -53,6 +54,7 @@ export const POST = withApiErrors(async (req: NextRequest) => {
       dueDate: new Date(dueDate),
       customerName,
       customerAddress,
+      customerGstin,
       placeOfSupply,
       itemDescription,
       hsnSac,

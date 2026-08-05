@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ApiError, requireUser, withApiErrors } from "@/lib/api-auth";
-import { parseDeliveryOrder } from "@/lib/parseDeliveryOrder";
+import { parseUploadedDocument } from "@/lib/parseDeliveryOrder";
 
 export const POST = withApiErrors(async (req: NextRequest) => {
   await requireUser();
@@ -17,11 +17,14 @@ export const POST = withApiErrors(async (req: NextRequest) => {
 
   let parsed;
   try {
-    parsed = await parseDeliveryOrder(buffer);
+    parsed = await parseUploadedDocument(buffer);
   } catch {
     // Anything unreadable (wrong file picked, corrupt or scanned PDF) is the
     // user's input being wrong, not a server fault — say so plainly.
-    throw new ApiError(400, "Couldn't read that file as a PDF. Please upload the Bajaj delivery order PDF.");
+    throw new ApiError(
+      400,
+      "Couldn't read that file as a PDF. Please upload the Bajaj delivery order or the customer's GST certificate."
+    );
   }
 
   return NextResponse.json({ parsed });

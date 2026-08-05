@@ -11,6 +11,7 @@ export interface InvoiceDocumentData {
   dueDate: string | Date;
   customerName: string;
   customerAddress: string;
+  customerGstin?: string | null;
   placeOfSupply: string;
   itemDescription: string;
   hsnSac: string;
@@ -66,6 +67,9 @@ export function InvoiceDocument({
             <p className="mt-1 text-base font-semibold text-neutral-900">{invoice.customerName}</p>
             <p className="mt-1 max-w-xs text-sm text-neutral-600">{invoice.customerAddress}</p>
             <p className="mt-1 text-sm text-neutral-600">India</p>
+            {invoice.customerGstin && (
+              <p className="mt-1 text-sm font-medium text-neutral-700">GSTIN {invoice.customerGstin}</p>
+            )}
           </div>
           <div className="sm:text-right">
             <dl className="grid grid-cols-2 gap-y-1.5 text-sm sm:ml-auto sm:max-w-[240px]">
