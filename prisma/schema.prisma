@@ -136,9 +136,12 @@ model ItemCatalogEntry {
 }
 
 // Singleton row (id is always "default") holding the invoice-wide defaults
-// so terms/notes are set once instead of retyped on every invoice.
+// so terms/notes/signature are set once instead of repeated per invoice.
+// The signature is stored inline as a data URI (a few KB) so it renders in
+// print/PDF without a second authenticated request for the image.
 model InvoiceSettings {
-  id    String  @id
-  terms String?
-  notes String?
+  id               String  @id
+  terms            String?
+  notes            String?
+  signatureDataUri String?
 }

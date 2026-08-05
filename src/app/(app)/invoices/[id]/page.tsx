@@ -11,7 +11,10 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
   await requireSessionUser();
   const { id } = await params;
 
-  const invoice = await prisma.invoice.findUnique({ where: { id } });
+  const [invoice, settings] = await Promise.all([
+    prisma.invoice.findUnique({ where: { id } }),
+    prisma.invoiceSettings.findUnique({ where: { id: "default" } }),
+  ]);
   if (!invoice) notFound();
 
   return (
@@ -39,7 +42,7 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
         />
       </div>
 
-      <InvoiceDocument invoice={invoice} />
+      <InvoiceDocument invoice={invoice} signatureDataUri={settings?.signatureDataUri} />
     </div>
   );
 }

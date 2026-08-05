@@ -29,10 +29,16 @@ export default async function InvoicingSettingsPage() {
       <Card>
         <CardHeader className="flex items-center gap-2">
           <Settings2 className="h-4 w-4 text-indigo-500" />
-          <h2 className="text-sm font-semibold text-neutral-700 dark:text-neutral-300">Notes & terms</h2>
+          <h2 className="text-sm font-semibold text-neutral-700 dark:text-neutral-300">
+            Notes, terms &amp; signature
+          </h2>
         </CardHeader>
         <CardBody>
-          <InvoiceSettingsForm defaultTerms={settings?.terms ?? ""} defaultNotes={settings?.notes ?? "Thank you for your business."} />
+          <InvoiceSettingsForm
+            defaultTerms={settings?.terms ?? ""}
+            defaultNotes={settings?.notes ?? "Thank you for your business."}
+            signatureDataUri={settings?.signatureDataUri ?? null}
+          />
         </CardBody>
       </Card>
 

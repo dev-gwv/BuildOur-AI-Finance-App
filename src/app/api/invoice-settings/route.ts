@@ -1,26 +1,52 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireAdmin, requireUser, withApiErrors } from "@/lib/api-auth";
+import { ApiError, requireAdmin, requireUser, withApiErrors } from "@/lib/api-auth";
 
 const SETTINGS_ID = "default";
+
+// Kept small deliberately: the signature is inlined into every invoice page as
+// a data URI, so a heavy image would bloat each render.
+const MAX_SIGNATURE_BYTES = 500 * 1024;
+const ALLOWED_SIGNATURE_TYPES = ["image/png", "image/jpeg", "image/webp"];
 
 export const GET = withApiErrors(async () => {
   await requireUser();
   const settings = await prisma.invoiceSettings.findUnique({ where: { id: SETTINGS_ID } });
-  return NextResponse.json({ settings: settings ?? { terms: null, notes: null } });
+  return NextResponse.json({ settings: settings ?? { terms: null, notes: null, signatureDataUri: null } });
 });
 
 export const PATCH = withApiErrors(async (req: NextRequest) => {
   await requireAdmin();
-  const body = await req.json();
 
-  const terms = body.terms ? String(body.terms) : null;
-  const notes = body.notes ? String(body.notes) : null;
+  const form = await req.formData().catch(() => null);
+  if (!form) throw new ApiError(400, "Expected a form submission");
+
+  const terms = form.get("terms") ? String(form.get("terms")) : null;
+  const notes = form.get("notes") ? String(form.get("notes")) : null;
+  const signature = form.get("signature");
+  const removeSignature = form.get("removeSignature") === "true";
+
+  // Left undefined so an ordinary save of terms/notes doesn't disturb the
+  // stored signature; only an explicit upload or removal touches it.
+  let signatureDataUri: string | null | undefined;
+
+  if (removeSignature) {
+    signatureDataUri = null;
+  } else if (signature instanceof File && signature.size > 0) {
+    if (!ALLOWED_SIGNATURE_TYPES.includes(signature.type)) {
+      throw new ApiError(400, "Signature must be a PNG, JPG, or WebP image");
+    }
+    if (signature.size > MAX_SIGNATURE_BYTES) {
+      throw new ApiError(400, "Signature image must be under 500 KB");
+    }
+    const base64 = Buffer.from(await signature.arrayBuffer()).toString("base64");
+    signatureDataUri = `data:${signature.type};base64,${base64}`;
+  }
 
   const settings = await prisma.invoiceSettings.upsert({
     where: { id: SETTINGS_ID },
-    create: { id: SETTINGS_ID, terms, notes },
-    update: { terms, notes },
+    create: { id: SETTINGS_ID, terms, notes, signatureDataUri: signatureDataUri ?? null },
+    update: { terms, notes, ...(signatureDataUri !== undefined ? { signatureDataUri } : {}) },
   });
 
   return NextResponse.json({ settings });

@@ -23,7 +23,15 @@ export interface InvoiceDocumentData {
 
 // Deliberately always rendered light, regardless of the app's dark mode —
 // this is a formal document meant to look identical on screen and in print.
-export function InvoiceDocument({ invoice }: { invoice: InvoiceDocumentData }) {
+export function InvoiceDocument({
+  invoice,
+  signatureDataUri,
+}: {
+  invoice: InvoiceDocumentData;
+  /** Uploaded in Invoice Settings; falls back to the signature already in use. */
+  signatureDataUri?: string | null;
+}) {
+  const signature = signatureDataUri || AUTHORIZED_SIGNATURE_DATA_URI;
   const breakup = calculateInvoiceBreakup({
     grossAmount: invoice.grossAmount,
     gstPercent: invoice.gstPercent,
@@ -179,7 +187,7 @@ export function InvoiceDocument({ invoice }: { invoice: InvoiceDocumentData }) {
           <div className="text-right">
             {/* eslint-disable-next-line @next/next/no-img-element -- inline data URI, no next/image optimization needed */}
             <img
-              src={AUTHORIZED_SIGNATURE_DATA_URI}
+              src={signature}
               alt="Authorized signature"
               className="ml-auto h-16 w-auto object-contain"
             />

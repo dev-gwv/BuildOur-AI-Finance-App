@@ -2,7 +2,7 @@
 
 import { useState, type ChangeEvent, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
-import { FileCheck2, Receipt, UploadCloud } from "lucide-react";
+import { AlertCircle, CheckCircle2, FileCheck2, Receipt, SlidersHorizontal, UploadCloud } from "lucide-react";
 import { calculateInvoiceBreakup } from "@/lib/invoiceCalc";
 import { amountInWords } from "@/lib/numberToWords";
 import { formatCurrency } from "@/lib/format";
@@ -59,6 +59,11 @@ export function InvoiceForm({
     gstPercent: Number(gstPercent) || 0,
     qty: Number(qty) || 1,
   });
+
+  // A DO has been read (or details were entered by hand) — worth showing the summary.
+  const parsed = Boolean(customerName || grossAmount);
+  // Everything the invoice legally needs is present.
+  const ready = Boolean(customerName && customerAddress && itemDescription && Number(grossAmount) > 0);
 
   async function onFileChange(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -148,34 +153,123 @@ export function InvoiceForm({
   return (
     <form onSubmit={onSubmit} className="grid gap-6 lg:grid-cols-[1fr_320px]">
       <div className="grid gap-6">
+        {/* Step 1 — the only action needed in the common case */}
         <Card>
-          <CardHeader className="flex items-center gap-2">
-            <UploadCloud className="h-4 w-4 text-indigo-500" />
-            <h2 className="text-sm font-semibold text-neutral-700 dark:text-neutral-300">
-              Bajaj delivery order (DO)
-            </h2>
-          </CardHeader>
-          <CardBody className="space-y-3">
-            <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-dashed border-neutral-300 px-3 py-3 text-sm text-neutral-500 hover:border-indigo-400 hover:text-indigo-600 dark:border-neutral-700 dark:text-neutral-400">
-              <UploadCloud className="h-4 w-4" />
-              {doFile ? doFile.name : "Upload the Bajaj DO PDF to auto-fill customer & amount"}
+          <CardBody>
+            <label
+              className={`flex cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed px-6 py-8 text-center transition-colors ${
+                doFile
+                  ? "border-emerald-300 bg-emerald-50/50 dark:border-emerald-800 dark:bg-emerald-950/20"
+                  : "border-neutral-300 hover:border-indigo-400 hover:bg-indigo-50/40 dark:border-neutral-700 dark:hover:bg-indigo-950/20"
+              }`}
+            >
+              {doFile ? (
+                <FileCheck2 className="h-7 w-7 text-emerald-500" />
+              ) : (
+                <UploadCloud className="h-7 w-7 text-neutral-400" />
+              )}
+              <span className="text-sm font-semibold text-neutral-800 dark:text-neutral-100">
+                {doFile ? doFile.name : "Upload the Bajaj delivery order (PDF)"}
+              </span>
+              <span className="text-xs text-neutral-500 dark:text-neutral-400">
+                {parsing
+                  ? "Reading the delivery order…"
+                  : doFile
+                    ? "Click to choose a different file"
+                    : "Everything below fills in automatically"}
+              </span>
               <input type="file" accept="application/pdf" className="hidden" onChange={onFileChange} />
             </label>
-            {parsing && <p className="text-xs text-indigo-600 dark:text-indigo-400">Reading delivery order…</p>}
-            {doId && (
-              <p className="flex items-center gap-1.5 text-xs text-emerald-600 dark:text-emerald-400">
-                <FileCheck2 className="h-3.5 w-3.5" />
-                DO {doId} {doDate && `· ${doDate}`}
-              </p>
-            )}
           </CardBody>
         </Card>
 
-        <Card>
-          <CardHeader>
-            <h2 className="text-sm font-semibold text-neutral-700 dark:text-neutral-300">Invoice details</h2>
-          </CardHeader>
-          <CardBody className="grid gap-4">
+        {/* Step 2 — what was read, at a glance */}
+        {parsed && (
+          <Card className={ready ? "border-emerald-200 dark:border-emerald-900" : "border-amber-200 dark:border-amber-900"}>
+            <CardHeader className="flex items-center justify-between">
+              <h2 className="flex items-center gap-2 text-sm font-semibold text-neutral-700 dark:text-neutral-300">
+                {ready ? (
+                  <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+                ) : (
+                  <AlertCircle className="h-4 w-4 text-amber-500" />
+                )}
+                {ready ? "Ready to generate" : "Almost there — pick the product"}
+              </h2>
+              {doId && (
+                <span className="text-xs text-neutral-500 dark:text-neutral-400">
+                  DO {doId}
+                  {doDate && ` · ${doDate}`}
+                </span>
+              )}
+            </CardHeader>
+            <CardBody className="grid gap-4">
+              <dl className="grid gap-2 text-sm sm:grid-cols-2">
+                <div>
+                  <dt className="text-xs text-neutral-500 dark:text-neutral-400">Bill to</dt>
+                  <dd className="font-medium text-neutral-900 dark:text-neutral-100">{customerName || "—"}</dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-neutral-500 dark:text-neutral-400">Amount (from DO)</dt>
+                  <dd className="font-semibold tabular-nums text-neutral-900 dark:text-neutral-100">
+                    {formatCurrency(Number(grossAmount) || 0)}
+                  </dd>
+                </div>
+                <div className="sm:col-span-2">
+                  <dt className="text-xs text-neutral-500 dark:text-neutral-400">Address</dt>
+                  <dd className="text-neutral-600 dark:text-neutral-400">{customerAddress || "—"}</dd>
+                </div>
+              </dl>
+
+              {catalog.length > 0 && (
+                <div>
+                  <label className={labelClass}>
+                    Product
+                    {itemMatched && (
+                      <span className="ml-2 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400">
+                        matched automatically
+                      </span>
+                    )}
+                  </label>
+                  <select
+                    value={selectedItemId}
+                    onChange={(e) => {
+                      const entry = catalog.find((c) => c.id === e.target.value);
+                      setSelectedItemId(e.target.value);
+                      if (entry) {
+                        setItemDescription(entry.itemDescription);
+                        setHsnSac(entry.hsnSac);
+                      }
+                      setItemMatched(false);
+                    }}
+                    className={inputClass}
+                  >
+                    <option value="">Select a product…</option>
+                    {catalog.map((entry) => (
+                      <option key={entry.id} value={entry.id}>
+                        {entry.itemDescription} — {formatCurrency(entry.amount)}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
+                    The invoice always bills the amount read from the DO, not the price listed here.
+                  </p>
+                </div>
+              )}
+            </CardBody>
+          </Card>
+        )}
+
+        {/* Everything else stays out of the way until it's actually needed */}
+        <details className="group rounded-xl border border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-900">
+          <summary className="flex cursor-pointer items-center gap-2 px-5 py-4 text-sm font-semibold text-neutral-700 marker:content-none dark:text-neutral-300">
+            <SlidersHorizontal className="h-4 w-4 text-neutral-400" />
+            Edit all details
+            <span className="ml-auto text-xs font-normal text-neutral-400 group-open:hidden">
+              invoice no., dates, GST, notes…
+            </span>
+          </summary>
+
+          <div className="grid gap-4 border-t border-neutral-100 px-5 py-4 dark:border-neutral-800">
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className={labelClass}>Invoice number</label>
@@ -240,48 +334,6 @@ export function InvoiceForm({
                 className={inputClass}
               />
             </div>
-          </CardBody>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-neutral-700 dark:text-neutral-300">Item</h2>
-            {itemMatched && (
-              <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400">
-                Auto-filled from catalog
-              </span>
-            )}
-          </CardHeader>
-          <CardBody className="grid gap-4">
-            {catalog.length > 0 && (
-              <div>
-                <label className={labelClass}>Product</label>
-                <select
-                  value={selectedItemId}
-                  onChange={(e) => {
-                    const entry = catalog.find((c) => c.id === e.target.value);
-                    setSelectedItemId(e.target.value);
-                    if (entry) {
-                      setItemDescription(entry.itemDescription);
-                      setHsnSac(entry.hsnSac);
-                    }
-                    setItemMatched(false);
-                  }}
-                  className={inputClass}
-                >
-                  <option value="">Select a product…</option>
-                  {catalog.map((entry) => (
-                    <option key={entry.id} value={entry.id}>
-                      {entry.itemDescription} — {formatCurrency(entry.amount)}
-                    </option>
-                  ))}
-                </select>
-                <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
-                  Picked automatically when the DO amount matches. The invoice always bills the
-                  Product Price read from the DO, not the amount shown here.
-                </p>
-              </div>
-            )}
 
             <div>
               <label className={labelClass}>Item / description</label>
@@ -341,32 +393,34 @@ export function InvoiceForm({
                 className={inputClass}
               />
             </div>
-          </CardBody>
-        </Card>
 
-        <Card>
-          <CardHeader>
-            <h2 className="text-sm font-semibold text-neutral-700 dark:text-neutral-300">Notes (optional)</h2>
-          </CardHeader>
-          <CardBody className="grid gap-4">
             <div>
               <label className={labelClass}>Notes</label>
               <input value={notes} onChange={(e) => setNotes(e.target.value)} className={inputClass} />
             </div>
+
             <div>
-              <label className={labelClass}>Terms & conditions</label>
+              <label className={labelClass}>Terms &amp; conditions</label>
               <textarea value={terms} onChange={(e) => setTerms(e.target.value)} rows={2} className={inputClass} />
+              <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
+                Prefilled from Invoice Settings — change here only for this one invoice.
+              </p>
             </div>
-          </CardBody>
-        </Card>
+          </div>
+        </details>
 
         <div className="flex items-center gap-2">
-          <Button type="submit" loading={pending}>
+          <Button type="submit" loading={pending} disabled={!ready}>
             Generate invoice
           </Button>
           <Button type="button" variant="secondary" onClick={() => router.push("/invoices")}>
             Cancel
           </Button>
+          {!ready && (
+            <span className="text-xs text-neutral-500 dark:text-neutral-400">
+              Upload a DO and pick the product to continue
+            </span>
+          )}
         </div>
       </div>
 
