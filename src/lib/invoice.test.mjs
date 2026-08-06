@@ -6,6 +6,7 @@ import { calculateInvoiceBreakup } from "./invoiceCalc.ts";
 import { amountInWords, numberToIndianWords } from "./numberToWords.ts";
 import { looksLikeGstCertificate, parseGstCertificateText } from "./parseGstCertificate.ts";
 import { parseDeliveryOrderText } from "./parseDeliveryOrder.ts";
+import { looksLikeQuotation, parseQuotationText } from "./parseQuotation.ts";
 
 // --- GST back-calculation, matched against INV-002241 ---
 const ref = calculateInvoiceBreakup({ grossAmount: 117999, gstPercent: 18, qty: 1 });
@@ -87,5 +88,33 @@ const doText =
 assert.equal(parseDeliveryOrderText(doText).productPrice, 117999, "DO still parses");
 assert.equal(parseDeliveryOrderText(doText).doId, "B429427477", "DO id still parses");
 assert.ok(!/GST REG/i.test(doText), "DO sample has no GST markers");
+
+// --- Mulberry: unregistered seller, so no tax is added ---
+const noTax = calculateInvoiceBreakup({ grossAmount: 170000, gstPercent: 0, qty: 1 });
+assert.equal(noTax.subTotal, 170000, "sub total equals total when no GST");
+assert.equal(noTax.cgstAmount, 0, "no CGST");
+assert.equal(noTax.sgstAmount, 0, "no SGST");
+assert.equal(noTax.adjustment, 0, "no rounding adjustment");
+assert.equal(numberToIndianWords(170000), "One Lakh Seventy Thousand");
+
+// --- Mulberry quotation extraction, matched to the reference deck ---
+const quoteText = (
+  "The Mulberry Weddings Timeless Memories For Lifetime Events " +
+  "Event : Carnival Haldi (Both side) Location: Jim Corbett Event : Carnival Haldi Location: Jim Corbett Date : 19 Feb 2027 " +
+  "Event : Vidai ( Morning ) Location: Jim Corbett Event : Vidai Location: Jim Corbett Date : 21 Feb 2027 " +
+  "Deliverables Total Investment: INR 1,70,000/- (Team Food & Accommodation will be managed by the client.)"
+).replace(/\s+/g, " ");
+
+const quote = parseQuotationText(quoteText, "Aman & Ruchika Wedding Package (1).pdf");
+assert.ok(looksLikeQuotation(quoteText), "should detect a quotation");
+assert.equal(quote.totalAmount, 170000, "total investment");
+assert.equal(quote.clientName, "Aman & Ruchika", "client name from file name");
+assert.equal(quote.firstEventDate, "2027-02-19", "first event date");
+// The same event appears twice per slide with a different suffix — keep one.
+assert.deepEqual(quote.events, ["Carnival Haldi (Both side)", "Vidai ( Morning )"], "deduped events");
+
+// Balance owed is whatever the payments don't cover.
+const paid = [50000, 20000].reduce((a, b) => a + b, 0);
+assert.equal(Math.round((170000 - paid) * 100) / 100, 100000, "balance after part payments");
 
 console.log("All invoice money-path checks passed.");

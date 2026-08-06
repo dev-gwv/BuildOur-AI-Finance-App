@@ -6,7 +6,7 @@ import { AlertCircle, CheckCircle2, FileCheck2, Receipt, SlidersHorizontal, Uplo
 import { calculateInvoiceBreakup } from "@/lib/invoiceCalc";
 import { amountInWords } from "@/lib/numberToWords";
 import { formatCurrency } from "@/lib/format";
-import { INVOICE_SELLER } from "@/lib/invoiceSeller";
+import { BRANDS } from "@/lib/brands";
 import { Button } from "@/components/ui/Button";
 import { Card, CardBody, CardHeader } from "@/components/ui/Card";
 import { useToast } from "@/components/ui/Toast";
@@ -48,7 +48,7 @@ export function InvoiceForm({
   const [dueDate, setDueDate] = useState(today);
   const [customerName, setCustomerName] = useState("");
   const [customerAddress, setCustomerAddress] = useState("");
-  const [placeOfSupply, setPlaceOfSupply] = useState<string>(INVOICE_SELLER.placeOfSupply);
+  const [placeOfSupply, setPlaceOfSupply] = useState<string>(BRANDS.GRATEFUL.placeOfSupply ?? "Delhi (07)");
   const [itemDescription, setItemDescription] = useState("");
   const [hsnSac, setHsnSac] = useState("999259");
   const [selectedItemId, setSelectedItemId] = useState("");

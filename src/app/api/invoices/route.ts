@@ -16,6 +16,7 @@ export const POST = withApiErrors(async (req: NextRequest) => {
   const user = await requireUser();
   const form = await req.formData();
 
+  const brand = String(form.get("brand") ?? "GRATEFUL") === "MULBERRY" ? "MULBERRY" : "GRATEFUL";
   const invoiceNumber = String(form.get("invoiceNumber") ?? "").trim();
   const invoiceDate = String(form.get("invoiceDate") ?? "");
   const dueDate = String(form.get("dueDate") ?? invoiceDate);
@@ -33,6 +34,8 @@ export const POST = withApiErrors(async (req: NextRequest) => {
   const doId = form.get("doId") ? String(form.get("doId")) : null;
   const doDateStr = form.get("doDate") ? String(form.get("doDate")) : "";
   const doFile = form.get("doFile");
+  /** Advance already received when the invoice is raised (Mulberry books deposits). */
+  const advancePaid = Number(form.get("advancePaid") ?? 0);
 
   if (!invoiceNumber || !invoiceDate || !customerName || !itemDescription || !grossAmount) {
     return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
@@ -47,8 +50,26 @@ export const POST = withApiErrors(async (req: NextRequest) => {
     doFilePath = await saveUpload(doFile);
   }
 
+  // A Bajaj-financed sale is disbursed in full, so the invoice is settled the
+  // moment it's raised. Mulberry bookings are paid in instalments, so only the
+  // advance actually received is recorded and the rest stays outstanding.
+  const initialPayment =
+    brand === "GRATEFUL" ? grossAmount : advancePaid > 0 ? Math.min(advancePaid, grossAmount) : 0;
+
   const invoice = await prisma.invoice.create({
     data: {
+      brand,
+      ...(initialPayment > 0
+        ? {
+            payments: {
+              create: {
+                amount: initialPayment,
+                paidOn: new Date(invoiceDate),
+                method: brand === "GRATEFUL" ? "Bajaj Finance disbursement" : "Advance",
+              },
+            },
+          }
+        : {}),
       invoiceNumber,
       invoiceDate: new Date(invoiceDate),
       dueDate: new Date(dueDate),

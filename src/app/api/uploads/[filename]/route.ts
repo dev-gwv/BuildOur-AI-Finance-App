@@ -24,8 +24,11 @@ export const GET = withApiErrors(async (_req: NextRequest, { params }: Params) =
       throw new ApiError(403, "No access to this file");
     }
   } else {
-    const invoice = await prisma.invoice.findFirst({ where: { doFilePath: filename } });
-    if (!invoice) {
+    const [invoice, payment] = await Promise.all([
+      prisma.invoice.findFirst({ where: { doFilePath: filename }, select: { id: true } }),
+      prisma.payment.findFirst({ where: { proofPath: filename }, select: { id: true } }),
+    ]);
+    if (!invoice && !payment) {
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
   }

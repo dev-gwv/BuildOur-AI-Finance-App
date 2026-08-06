@@ -4,10 +4,11 @@ import { FileText } from "lucide-react";
 import { prisma } from "@/lib/prisma";
 import { requireSessionUser } from "@/lib/session";
 import { InvoiceDocument } from "@/components/InvoiceDocument";
+import { PaymentsPanel } from "@/components/PaymentsPanel";
 import { PrintButton } from "@/components/PrintButton";
 import { PageHeader } from "@/components/ui/PageHeader";
 
-export default async function InvoiceDetailPage({ params }: { params: Promise<{ id: string }> }) {
+export default async function MulberryInvoicePage({ params }: { params: Promise<{ id: string }> }) {
   await requireSessionUser();
   const { id } = await params;
 
@@ -18,7 +19,7 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
     }),
     prisma.invoiceSettings.findUnique({ where: { id: "default" } }),
   ]);
-  if (!invoice) notFound();
+  if (!invoice || invoice.brand !== "MULBERRY") notFound();
 
   return (
     <div className="space-y-6">
@@ -36,7 +37,7 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
                   className="inline-flex items-center gap-1.5 rounded-lg border border-neutral-300 px-3.5 py-2 text-sm font-medium text-neutral-700 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-200 dark:hover:bg-neutral-800"
                 >
                   <FileText className="h-4 w-4" />
-                  View original DO
+                  View quotation
                 </Link>
               )}
               <PrintButton />
@@ -44,6 +45,8 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
           }
         />
       </div>
+
+      <PaymentsPanel invoiceId={invoice.id} total={invoice.grossAmount} payments={invoice.payments} />
 
       <InvoiceDocument
         invoice={invoice}

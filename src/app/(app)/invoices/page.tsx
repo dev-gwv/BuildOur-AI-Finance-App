@@ -13,6 +13,7 @@ export default async function InvoicesPage() {
   await requireSessionUser();
 
   const invoices = await prisma.invoice.findMany({
+    where: { brand: "GRATEFUL" },
     orderBy: { createdAt: "desc" },
     include: { createdBy: { select: { name: true } } },
   });
@@ -21,7 +22,7 @@ export default async function InvoicesPage() {
     <div className="space-y-6">
       <PageHeader
         title="Invoices"
-        description="Tax invoices generated from Bajaj delivery orders, billed by Grateful World Ventures"
+        description="Tax invoices billed by Grateful World Ventures, from a Bajaj delivery order or a customer's GST certificate"
         actions={
           <Link href="/invoices/new">
             <Button>

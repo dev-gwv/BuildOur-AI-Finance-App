@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { useState } from "react";
 import {
   Building2,
+  Camera,
   FileBarChart,
   FileText,
   LayoutDashboard,
@@ -24,6 +25,7 @@ const NAV_LINKS = [
   { href: "/companies", label: "Companies", icon: Building2 },
   { href: "/expenses", label: "Expenses", icon: Receipt },
   { href: "/invoices", label: "Invoices", icon: FileText },
+  { href: "/mulberry", label: "Mulberry Weddings", icon: Camera },
   { href: "/reports", label: "Reports", icon: FileBarChart },
 ];
 

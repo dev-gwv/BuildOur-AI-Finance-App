@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { requireSessionUser } from "@/lib/session";
-import { formatInvoiceNumber, INVOICE_NUMBER_START } from "@/lib/invoiceSeller";
+import { BRANDS, nextInvoiceNumber } from "@/lib/brands";
 import { InvoiceForm } from "@/components/InvoiceForm";
 import { PageHeader } from "@/components/ui/PageHeader";
 
@@ -8,12 +8,15 @@ export default async function NewInvoicePage() {
   await requireSessionUser();
 
   const [last, catalog, settings] = await Promise.all([
-    prisma.invoice.findFirst({ orderBy: { createdAt: "desc" }, select: { invoiceNumber: true } }),
+    prisma.invoice.findFirst({
+      where: { brand: "GRATEFUL" },
+      orderBy: { createdAt: "desc" },
+      select: { invoiceNumber: true },
+    }),
     prisma.itemCatalogEntry.findMany({ orderBy: { amount: "asc" } }),
     prisma.invoiceSettings.findUnique({ where: { id: "default" } }),
   ]);
-  const lastSeq = last ? parseInt(last.invoiceNumber.replace(/\D/g, ""), 10) : INVOICE_NUMBER_START - 1;
-  const suggestedNumber = formatInvoiceNumber((Number.isFinite(lastSeq) ? lastSeq : INVOICE_NUMBER_START - 1) + 1);
+  const suggestedNumber = nextInvoiceNumber(BRANDS.GRATEFUL, last?.invoiceNumber ?? null);
 
   return (
     <div className="space-y-6">

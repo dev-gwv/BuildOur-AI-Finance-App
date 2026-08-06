@@ -17,6 +17,13 @@ enum Role {
   MEMBER
 }
 
+/// Which business the invoice is billed under. Grateful is GST-registered;
+/// Mulberry is not, so its invoices carry no tax breakup.
+enum InvoiceBrand {
+  GRATEFUL
+  MULBERRY
+}
+
 model User {
   id           String          @id @default(cuid())
   name         String
@@ -96,12 +103,13 @@ model Expense {
   @@index([companyId, date])
 }
 
-// Tax invoices billed by Grateful World Ventures, generated from an uploaded
-// Bajaj Finance Delivery Order (DO). The seller's own legal/bank details are
-// fixed (see src/lib/invoiceSeller.ts) since this entity is the sole issuer.
+// Invoices raised under either brand, from an uploaded
+// Bajaj DO, a GST certificate, or a Mulberry quotation. Seller details are
+// fixed (see src/lib/brands.ts) since each brand has one issuing entity.
 model Invoice {
-  id              String    @id @default(cuid())
-  invoiceNumber   String    @unique
+  id              String       @id @default(cuid())
+  brand           InvoiceBrand @default(GRATEFUL)
+  invoiceNumber   String       @unique
   invoiceDate     DateTime
   dueDate         DateTime
   customerName    String
@@ -122,9 +130,29 @@ model Invoice {
   createdById     String
   createdAt       DateTime  @default(now())
 
-  createdBy User @relation(fields: [createdById], references: [id])
+  createdBy User      @relation(fields: [createdById], references: [id])
+  payments  Payment[]
 
   @@index([createdAt])
+  @@index([brand, createdAt])
+}
+
+/// Money actually received against an invoice. Wedding work is paid in
+/// instalments, so the balance due is whatever the payments don't yet cover.
+model Payment {
+  id        String   @id @default(cuid())
+  invoiceId String
+  amount    Float
+  paidOn    DateTime
+  method    String?
+  note      String?
+  /// Screenshot or receipt for the transfer, stored like expense proofs.
+  proofPath String?
+  createdAt DateTime @default(now())
+
+  invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@index([invoiceId])
 }
 
 // Maps a DO's exact loan amount to the item that was actually sold, since

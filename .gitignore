@@ -48,3 +48,8 @@ next-env.d.ts
 /.claude
 /.windsurf
 /skills-lock.json
+
+# Reference documents shared for building (real client data) — the logo and
+# signature they contain are already extracted into src/lib/.
+/assets/*.pdf
+/example/
