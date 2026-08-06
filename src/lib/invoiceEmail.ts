@@ -11,6 +11,8 @@ export interface InvoiceEmailData {
   amountPaid: number;
   notes?: string | null;
   terms?: string | null;
+  /** Covering message written by the business; shown above the invoice summary. */
+  message?: string;
 }
 
 const inr = new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 2 });
@@ -32,24 +34,28 @@ export function invoiceEmailSubject(data: InvoiceEmailData): string {
 export function invoiceEmailText(data: InvoiceEmailData): string {
   const brand = BRANDS[data.brand];
   const balance = Math.round((data.total - data.amountPaid) * 100) / 100;
+  const opening = data.message?.trim()
+    ? data.message.trim()
+    : `Dear ${data.customerName},\n\nHere is ${brand.documentTitle.toLowerCase()} ${data.invoiceNumber} from ${brand.name}.`;
   return [
-    `Dear ${data.customerName},`,
+    opening,
     ``,
-    `Here is ${brand.documentTitle.toLowerCase()} ${data.invoiceNumber} from ${brand.name}.`,
-    ``,
+    `--------------------------------`,
     `Invoice number : ${data.invoiceNumber}`,
     `Invoice date   : ${day.format(new Date(data.invoiceDate))}`,
     `Amount         : ${inr.format(data.total)}`,
     data.amountPaid > 0 ? `Received       : ${inr.format(data.amountPaid)}` : null,
     `Balance due    : ${inr.format(Math.max(balance, 0))}`,
+    `--------------------------------`,
     ``,
     data.notes ?? "",
-    ``,
-    `Thank you,`,
-    brand.name,
+    brand.bank
+      ? `\nBank details: ${brand.bank.accountName}\nA/c ${brand.bank.accountNumber} · IFSC ${brand.bank.ifsc} · ${brand.bank.bankName}`
+      : "",
   ]
     .filter((l) => l !== null)
-    .join("\n");
+    .join("\n")
+    .trimEnd();
 }
 
 /**
@@ -82,11 +88,20 @@ export function invoiceEmailHtml(data: InvoiceEmailData): string {
         </td></tr>
 
         <tr><td style="padding:28px 32px 8px;">
-          <p style="margin:0 0 14px;font-size:15px;color:#171717;">Dear ${esc(data.customerName)},</p>
-          <p style="margin:0 0 20px;font-size:14px;line-height:22px;color:#525252;">
-            Here is your ${esc(brand.documentTitle.toLowerCase())} from ${esc(brand.name)}, with the full details below.
-          </p>
+          ${
+            data.message?.trim()
+              ? `<div style="margin:0 0 22px;font-size:14px;line-height:23px;color:#404040;white-space:pre-line;">${esc(
+                  data.message.trim()
+                )}</div>`
+              : `<p style="margin:0 0 14px;font-size:15px;color:#171717;">Dear ${esc(data.customerName)},</p>
+                 <p style="margin:0 0 20px;font-size:14px;line-height:22px;color:#525252;">
+                   Here is your ${esc(brand.documentTitle.toLowerCase())} from ${esc(brand.name)}, with the full details below.
+                 </p>`
+          }
 
+          <div style="font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:#a3a3a3;padding-bottom:6px;">
+            ${esc(brand.documentTitle)} summary
+          </div>
           <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-top:1px solid #ededed;">
             ${row("Invoice date", day.format(new Date(data.invoiceDate)))}
             ${row("Due date", day.format(new Date(data.dueDate)))}

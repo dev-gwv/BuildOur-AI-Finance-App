@@ -1,5 +1,8 @@
 import { redirect } from "next/navigation";
-import { ListChecks, Settings2 } from "lucide-react";
+import { ListChecks, Mail, Settings2 } from "lucide-react";
+import { BRANDS, type BrandKey } from "@/lib/brands";
+import { DEFAULT_TEMPLATES } from "@/lib/emailTemplate";
+import { EmailTemplateForm } from "@/components/EmailTemplateForm";
 import { prisma } from "@/lib/prisma";
 import { requireSessionUser } from "@/lib/session";
 import { InvoiceSettingsForm } from "@/components/InvoiceSettingsForm";
@@ -14,9 +17,10 @@ export default async function InvoicingSettingsPage() {
   const user = await requireSessionUser();
   if (user.role !== "ADMIN") redirect("/dashboard");
 
-  const [settings, catalog] = await Promise.all([
+  const [settings, catalog, templates] = await Promise.all([
     prisma.invoiceSettings.findUnique({ where: { id: "default" } }),
     prisma.itemCatalogEntry.findMany({ orderBy: { amount: "asc" } }),
+    prisma.emailTemplate.findMany(),
   ]);
 
   return (
@@ -41,6 +45,30 @@ export default async function InvoicingSettingsPage() {
           />
         </CardBody>
       </Card>
+
+      {(["GRATEFUL", "MULBERRY"] as BrandKey[]).map((key) => {
+        const saved = templates.find((t) => t.brand === key);
+        const tpl = saved ?? DEFAULT_TEMPLATES[key];
+        return (
+          <Card key={key}>
+            <CardHeader className="flex items-center gap-2">
+              <Mail className="h-4 w-4 text-indigo-500" />
+              <h2 className="text-sm font-semibold text-neutral-700 dark:text-neutral-300">
+                Email message — {BRANDS[key].name}
+              </h2>
+            </CardHeader>
+            <CardBody>
+              <EmailTemplateForm
+                brand={key}
+                brandName={BRANDS[key].name}
+                subject={tpl.subject}
+                body={tpl.body}
+                isDefault={!saved}
+              />
+            </CardBody>
+          </Card>
+        );
+      })}
 
       <Card>
         <CardHeader className="flex items-center gap-2">

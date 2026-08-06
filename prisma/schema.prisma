@@ -169,6 +169,16 @@ model ItemCatalogEntry {
   createdAt       DateTime @default(now())
 }
 
+/// The covering message sent with an invoice, one per brand. Kept editable
+/// because the wording is the business's voice, not something to hard-code.
+/// Supports {{customer_name}}, {{invoice_number}}, {{total}}, {{balance_due}},
+/// {{invoice_date}}, {{due_date}}, {{item}} and {{brand}} placeholders.
+model EmailTemplate {
+  brand   InvoiceBrand @id
+  subject String
+  body    String
+}
+
 // Singleton row (id is always "default") holding the invoice-wide defaults
 // so terms/notes/signature are set once instead of repeated per invoice.
 // The signature is stored inline as a data URI (a few KB) so it renders in
