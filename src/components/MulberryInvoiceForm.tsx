@@ -4,6 +4,8 @@ import { useState, type ChangeEvent, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { AlertCircle, CheckCircle2, FileCheck2, SlidersHorizontal, UploadCloud } from "lucide-react";
 import { formatCurrency } from "@/lib/format";
+import { parseQuotationText } from "@/lib/parseQuotation";
+import { extractPdfTextInBrowser, uploadDirectToBlob } from "@/lib/clientUpload";
 import { Button } from "@/components/ui/Button";
 import { Card, CardBody, CardHeader } from "@/components/ui/Card";
 import { useToast } from "@/components/ui/Toast";
@@ -53,15 +55,10 @@ export function MulberryInvoiceForm({
     setFile(picked);
     setParsing(true);
     try {
-      const body = new FormData();
-      body.append("file", picked);
-      const res = await fetch("/api/quotations/parse", { method: "POST", body });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        toast.error(err.error ?? "Couldn't read that quotation — fill in the details manually");
-        return;
-      }
-      const { parsed } = await res.json();
+      // Parsed here in the browser rather than server-side: these decks are
+      // tens of megabytes, far past what a serverless function may receive.
+      const text = await extractPdfTextInBrowser(picked);
+      const parsed = parseQuotationText(text, picked.name);
       setReadIt(true);
       if (parsed.clientName) setCustomerName(parsed.clientName);
       if (parsed.totalAmount) setGrossAmount(String(parsed.totalAmount));
@@ -74,7 +71,7 @@ export function MulberryInvoiceForm({
           : "Quotation read, but no total found — please enter the amount"
       );
     } catch {
-      toast.error("Network error while reading the quotation");
+      toast.error("Couldn't read that PDF — please fill in the details manually");
     } finally {
       setParsing(false);
     }
@@ -100,7 +97,16 @@ export function MulberryInvoiceForm({
       body.append("advancePaid", String(advance));
       body.append("notes", notes);
       body.append("terms", terms);
-      if (file) body.append("doFile", file);
+
+      // Sent straight to storage from here for the same size reason; the
+      // invoice only needs the resulting file name.
+      if (file) {
+        try {
+          body.append("doFilePath", await uploadDirectToBlob(file));
+        } catch {
+          toast.info("Invoice saved, but the quotation file couldn't be attached");
+        }
+      }
 
       const res = await fetch("/api/invoices", { method: "POST", body });
       if (!res.ok) {

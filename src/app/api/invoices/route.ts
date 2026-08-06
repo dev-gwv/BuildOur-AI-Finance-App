@@ -45,8 +45,12 @@ export const POST = withApiErrors(async (req: NextRequest) => {
     throw new ApiError(400, `Invoice ${invoiceNumber} already exists`);
   }
 
-  let doFilePath: string | null = null;
-  if (doFile instanceof File && doFile.size > 0) {
+  // Large files (quotation decks) are sent to storage from the browser and
+  // arrive here as a name; smaller ones are still proxied through the server.
+  let doFilePath: string | null = form.get("doFilePath")
+    ? String(form.get("doFilePath")).trim()
+    : null;
+  if (!doFilePath && doFile instanceof File && doFile.size > 0) {
     doFilePath = await saveUpload(doFile);
   }
 
