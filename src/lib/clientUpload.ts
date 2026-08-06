@@ -30,3 +30,19 @@ export async function extractPdfTextInBrowser(file: File): Promise<string> {
   const { text } = await extractText(new Uint8Array(await file.arrayBuffer()), { mergePages: true });
   return text.replace(/\s+/g, " ");
 }
+
+/**
+ * OCRs a payment screenshot in the browser. Tesseract is loaded on demand —
+ * it pulls down a few MB of worker and language data, which shouldn't be paid
+ * for by everyone who merely opens an invoice.
+ */
+export async function readImageTextInBrowser(file: File): Promise<string> {
+  const { createWorker } = await import("tesseract.js");
+  const worker = await createWorker("eng");
+  try {
+    const { data } = await worker.recognize(file);
+    return data.text;
+  } finally {
+    await worker.terminate();
+  }
+}

@@ -47,6 +47,7 @@ export function InvoiceForm({
   const [invoiceDate, setInvoiceDate] = useState(today);
   const [dueDate, setDueDate] = useState(today);
   const [customerName, setCustomerName] = useState("");
+  const [customerEmail, setCustomerEmail] = useState("");
   const [customerAddress, setCustomerAddress] = useState("");
   const [placeOfSupply, setPlaceOfSupply] = useState<string>(BRANDS.GRATEFUL.placeOfSupply ?? "Delhi (07)");
   const [itemDescription, setItemDescription] = useState("");
@@ -145,6 +146,7 @@ export function InvoiceForm({
       body.append("dueDate", dueDate);
       body.append("customerName", customerName);
       body.append("customerAddress", customerAddress);
+      body.append("customerEmail", customerEmail);
       body.append("customerGstin", customerGstin);
       body.append("placeOfSupply", placeOfSupply);
       body.append("itemDescription", itemDescription);
@@ -287,6 +289,20 @@ export function InvoiceForm({
                   </select>
                 </div>
               )}
+
+              <div>
+                <label className={labelClass}>Customer email</label>
+                <input
+                  type="email"
+                  value={customerEmail}
+                  onChange={(e) => setCustomerEmail(e.target.value)}
+                  placeholder="name@example.com"
+                  className={inputClass}
+                />
+                <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
+                  The invoice can be emailed straight to the customer once it&apos;s generated.
+                </p>
+              </div>
 
               {/* Kept here rather than behind "Edit all details": part-payments and
                   discounts mean this genuinely gets changed on the way through. */}

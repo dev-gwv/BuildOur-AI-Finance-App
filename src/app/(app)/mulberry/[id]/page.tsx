@@ -6,6 +6,7 @@ import { requireSessionUser } from "@/lib/session";
 import { InvoiceDocument } from "@/components/InvoiceDocument";
 import { PaymentsPanel } from "@/components/PaymentsPanel";
 import { PrintButton } from "@/components/PrintButton";
+import { SendInvoiceEmail } from "@/components/SendInvoiceEmail";
 import { PageHeader } from "@/components/ui/PageHeader";
 
 export default async function MulberryInvoicePage({ params }: { params: Promise<{ id: string }> }) {
@@ -40,6 +41,11 @@ export default async function MulberryInvoicePage({ params }: { params: Promise<
                   View quotation
                 </Link>
               )}
+              <SendInvoiceEmail
+                invoiceId={invoice.id}
+                customerEmail={invoice.customerEmail}
+                sentAt={invoice.emailSentAt}
+              />
               <PrintButton />
             </>
           }

@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { requireSessionUser } from "@/lib/session";
 import { InvoiceDocument } from "@/components/InvoiceDocument";
 import { PrintButton } from "@/components/PrintButton";
+import { SendInvoiceEmail } from "@/components/SendInvoiceEmail";
 import { PageHeader } from "@/components/ui/PageHeader";
 
 export default async function InvoiceDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -39,6 +40,11 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
                   View original DO
                 </Link>
               )}
+              <SendInvoiceEmail
+                invoiceId={invoice.id}
+                customerEmail={invoice.customerEmail}
+                sentAt={invoice.emailSentAt}
+              />
               <PrintButton />
             </>
           }

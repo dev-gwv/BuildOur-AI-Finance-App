@@ -7,6 +7,8 @@ import { amountInWords, numberToIndianWords } from "./numberToWords.ts";
 import { looksLikeGstCertificate, parseGstCertificateText } from "./parseGstCertificate.ts";
 import { parseDeliveryOrderText } from "./parseDeliveryOrder.ts";
 import { looksLikeQuotation, parseQuotationText } from "./parseQuotation.ts";
+import { parsePaymentScreenshotText } from "./parsePaymentScreenshot.ts";
+import { invoiceEmailHtml, invoiceEmailSubject, invoiceEmailText } from "./invoiceEmail.ts";
 
 // --- GST back-calculation, matched against INV-002241 ---
 const ref = calculateInvoiceBreakup({ grossAmount: 117999, gstPercent: 18, qty: 1 });
@@ -116,5 +118,56 @@ assert.deepEqual(quote.events, ["Carnival Haldi (Both side)", "Vidai ( Morning )
 // Balance owed is whatever the payments don't cover.
 const paid = [50000, 20000].reduce((a, b) => a + b, 0);
 assert.equal(Math.round((170000 - paid) * 100) / 100, 100000, "balance after part payments");
+
+// --- Payment screenshot reading (OCR output is messy, so be forgiving) ---
+const phonepe = parsePaymentScreenshotText(
+  "PhonePe Payment Successful ₹10,000 To The Mulberry Weddings 12 Aug 2026 UPI Transaction ID T2608121234567890"
+);
+assert.equal(phonepe.amount, 10000, "PhonePe amount");
+assert.equal(phonepe.method, "PhonePe", "PhonePe detected");
+assert.equal(phonepe.paidOn, "2026-08-12", "PhonePe date");
+assert.equal(phonepe.reference, "T2608121234567890", "PhonePe reference");
+
+const gpay = parsePaymentScreenshotText("Google Pay ₹1,60,000 Completed 20/08/2026 UPI transaction ID 987654321012");
+assert.equal(gpay.amount, 160000, "GPay amount");
+assert.equal(gpay.method, "GPay", "GPay detected");
+assert.equal(gpay.paidOn, "2026-08-20", "GPay numeric date");
+
+// "Rs." with no symbol, and Paytm.
+const paytm = parsePaymentScreenshotText("Paytm Paid Rs. 25000 successfully");
+assert.equal(paytm.amount, 25000, "Paytm amount");
+assert.equal(paytm.method, "Paytm", "Paytm detected");
+
+// Nothing recognisable must not invent a value.
+const junk = parsePaymentScreenshotText("blurry screenshot with no useful text");
+assert.equal(junk.amount, null, "no amount invented");
+assert.equal(junk.method, null, "no method invented");
+
+// --- Invoice email renders for both brands ---
+for (const brand of ["GRATEFUL", "MULBERRY"]) {
+  const data = {
+    brand,
+    invoiceNumber: "INV-000001",
+    customerName: "Test <script>",
+    invoiceDate: "2026-08-06",
+    dueDate: "2026-08-06",
+    itemDescription: "Wedding Package",
+    total: 170000,
+    amountPaid: 10000,
+    notes: "Thanks!",
+    terms: "Terms here",
+  };
+  const html = invoiceEmailHtml(data);
+  assert.ok(html.includes("INV-000001"), `${brand}: invoice number in email`);
+  assert.ok(html.includes("1,60,000"), `${brand}: balance in email`);
+  assert.ok(!html.includes("<script>"), `${brand}: customer name must be escaped`);
+  assert.ok(invoiceEmailSubject(data).includes("INV-000001"), `${brand}: subject`);
+  assert.ok(invoiceEmailText(data).includes("Balance due"), `${brand}: plain-text part`);
+}
+// An unregistered seller must not leak GST wording into the email.
+assert.ok(!/GSTIN/.test(invoiceEmailHtml({
+  brand: "MULBERRY", invoiceNumber: "X", customerName: "A", invoiceDate: "2026-08-06",
+  dueDate: "2026-08-06", itemDescription: "Y", total: 100, amountPaid: 0,
+})), "no GSTIN on Mulberry email");
 
 console.log("All invoice money-path checks passed.");

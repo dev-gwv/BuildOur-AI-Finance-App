@@ -36,6 +36,7 @@ export function MulberryInvoiceForm({
   const [invoiceDate, setInvoiceDate] = useState(today);
   const [dueDate, setDueDate] = useState(today);
   const [customerName, setCustomerName] = useState("");
+  const [customerEmail, setCustomerEmail] = useState("");
   const [customerAddress, setCustomerAddress] = useState("");
   const [itemDescription, setItemDescription] = useState("");
   const [qty, setQty] = useState("1");
@@ -87,6 +88,7 @@ export function MulberryInvoiceForm({
       body.append("invoiceDate", invoiceDate);
       body.append("dueDate", dueDate);
       body.append("customerName", customerName);
+      body.append("customerEmail", customerEmail);
       body.append("customerAddress", customerAddress);
       body.append("placeOfSupply", "");
       body.append("itemDescription", itemDescription);
@@ -178,6 +180,20 @@ export function MulberryInvoiceForm({
                   required
                   className={inputClass}
                 />
+              </div>
+
+              <div>
+                <label className={labelClass}>Client email</label>
+                <input
+                  type="email"
+                  value={customerEmail}
+                  onChange={(e) => setCustomerEmail(e.target.value)}
+                  placeholder="name@example.com"
+                  className={inputClass}
+                />
+                <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
+                  The invoice can be emailed straight to the client once it&apos;s generated.
+                </p>
               </div>
 
               <div>

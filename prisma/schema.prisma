@@ -114,6 +114,10 @@ model Invoice {
   dueDate         DateTime
   customerName    String
   customerAddress String
+  /** Where the invoice gets emailed; captured on the upload screen. */
+  customerEmail   String?
+  /** When the invoice was last emailed out, so the UI can show it's been sent. */
+  emailSentAt     DateTime?
   /** Present when the invoice was raised from a customer's GST certificate (B2B). */
   customerGstin   String?
   placeOfSupply   String

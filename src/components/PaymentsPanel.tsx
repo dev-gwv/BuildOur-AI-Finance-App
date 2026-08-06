@@ -1,9 +1,11 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type ChangeEvent, type FormEvent } from "react";
 import Link from "next/link";
-import { BadgeIndianRupee, Paperclip, Plus } from "lucide-react";
+import { BadgeIndianRupee, Paperclip, Plus, ScanLine } from "lucide-react";
+import { readImageTextInBrowser } from "@/lib/clientUpload";
+import { parsePaymentScreenshotText } from "@/lib/parsePaymentScreenshot";
 import { Button } from "@/components/ui/Button";
 import { Card, CardBody, CardHeader } from "@/components/ui/Card";
 import { DeleteButton } from "@/components/DeleteButton";
@@ -36,6 +38,50 @@ export function PaymentsPanel({
   const toast = useToast();
   const [pending, setPending] = useState(false);
   const [open, setOpen] = useState(false);
+  const [scanning, setScanning] = useState(false);
+  const [scanned, setScanned] = useState<string | null>(null);
+  const formRef = useRef<HTMLFormElement>(null);
+
+  /** Reads a UPI screenshot and fills the form; every value stays editable. */
+  async function onProofChange(e: ChangeEvent<HTMLInputElement>) {
+    const proof = e.target.files?.[0];
+    if (!proof || !proof.type.startsWith("image/")) return;
+    setScanning(true);
+    setScanned(null);
+    try {
+      const found = parsePaymentScreenshotText(await readImageTextInBrowser(proof));
+      const form = formRef.current;
+      if (!form) return;
+
+      const setField = (name: string, value: string) => {
+        const el = form.elements.namedItem(name);
+        if (el instanceof HTMLInputElement) el.value = value;
+      };
+
+      const parts: string[] = [];
+      if (found.amount !== null && found.amount <= outstanding) {
+        setField("amount", String(found.amount));
+        parts.push(formatCurrency(found.amount));
+      }
+      if (found.method) {
+        setField("method", found.method);
+        parts.push(found.method);
+      }
+      if (found.paidOn) setField("paidOn", found.paidOn);
+      if (found.reference) setField("note", `Ref ${found.reference}`);
+
+      if (parts.length) {
+        setScanned(parts.join(" · "));
+        toast.success("Read the screenshot — please check the values before saving");
+      } else {
+        toast.info("Couldn't read that screenshot — please enter the details yourself");
+      }
+    } catch {
+      toast.info("Couldn't read that screenshot — please enter the details yourself");
+    } finally {
+      setScanning(false);
+    }
+  }
 
   const paid = payments.reduce((sum, p) => sum + p.amount, 0);
   const outstanding = Math.round((total - paid) * 100) / 100;
@@ -113,7 +159,33 @@ export function PaymentsPanel({
         </dl>
 
         {open && !settled && (
-          <form onSubmit={onSubmit} className="grid gap-3 rounded-lg border border-neutral-200 p-4 dark:border-neutral-800">
+          <form
+            ref={formRef}
+            onSubmit={onSubmit}
+            className="grid gap-3 rounded-lg border border-neutral-200 p-4 dark:border-neutral-800"
+          >
+            <div>
+              <label className="flex cursor-pointer items-center justify-center gap-2 rounded-lg border-2 border-dashed border-neutral-300 px-3 py-4 text-sm text-neutral-500 transition-colors hover:border-indigo-400 hover:text-indigo-600 dark:border-neutral-700 dark:text-neutral-400">
+                <ScanLine className="h-4 w-4" />
+                {scanning ? "Reading the screenshot…" : "Upload the payment screenshot to fill this in"}
+                <input
+                  name="proof"
+                  type="file"
+                  accept="image/*,.pdf"
+                  className="hidden"
+                  onChange={onProofChange}
+                />
+              </label>
+              {scanned && (
+                <p className="mt-1.5 text-xs text-emerald-600 dark:text-emerald-400">
+                  Read from screenshot: {scanned} — check it below before saving.
+                </p>
+              )}
+              <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
+                Works with PhonePe, GPay, Paytm and bank screenshots. The image is kept as proof.
+              </p>
+            </div>
+
             <div className="grid gap-3 sm:grid-cols-2">
               <div>
                 <label className={labelClass}>Amount received (₹)</label>
@@ -141,17 +213,12 @@ export function PaymentsPanel({
             </div>
             <div className="grid gap-3 sm:grid-cols-2">
               <div>
-                <label className={labelClass}>Method (optional)</label>
-                <input name="method" placeholder="UPI, bank transfer, cash…" className={fieldClass} />
+                <label className={labelClass}>Method</label>
+                <input name="method" placeholder="PhonePe, GPay, bank transfer…" className={fieldClass} />
               </div>
               <div>
-                <label className={labelClass}>Proof (optional)</label>
-                <input
-                  name="proof"
-                  type="file"
-                  accept="image/*,.pdf"
-                  className="mt-1 w-full text-sm text-neutral-500 file:mr-3 file:rounded-md file:border-0 file:bg-neutral-100 file:px-3 file:py-1.5 file:text-sm dark:file:bg-neutral-800 dark:file:text-neutral-200"
-                />
+                <label className={labelClass}>Reference / note</label>
+                <input name="note" placeholder="UPI reference" className={fieldClass} />
               </div>
             </div>
             <div className="flex items-center gap-2">
