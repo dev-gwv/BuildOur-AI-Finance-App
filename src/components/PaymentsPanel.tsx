@@ -19,6 +19,7 @@ import { Card, CardBody, CardHeader } from "@/components/ui/Card";
 import { DeleteButton } from "@/components/DeleteButton";
 import { useToast } from "@/components/ui/Toast";
 import { formatCurrency, formatDate } from "@/lib/format";
+import { totalsByPlatform } from "@/lib/invoiceCalc";
 
 const fieldClass =
   "mt-1 w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 dark:border-neutral-700 dark:bg-neutral-950";
@@ -58,6 +59,8 @@ export function PaymentsPanel({
   const outstanding = Math.round((total - paid) * 100) / 100;
   const settled = outstanding <= 0;
   const progress = total > 0 ? Math.min(100, Math.round((paid / total) * 100)) : 0;
+
+  const byPlatform = totalsByPlatform(payments);
 
   // Object URLs leak until revoked, and one is created per screenshot tried.
   useEffect(() => {
@@ -251,6 +254,21 @@ export function PaymentsPanel({
               ? "Settled in full."
               : `${progress}% received across ${payments.length} payment${payments.length === 1 ? "" : "s"}.`}
           </p>
+          {byPlatform.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 pt-1">
+              {byPlatform.map(([name, amount]) => (
+                <span
+                  key={name}
+                  className="inline-flex items-center gap-1.5 rounded-full border border-neutral-200 bg-white px-2.5 py-1 text-xs dark:border-neutral-800 dark:bg-neutral-900"
+                >
+                  <span className="text-neutral-500 dark:text-neutral-400">{name}</span>
+                  <span className="font-semibold tabular-nums text-neutral-900 dark:text-neutral-100">
+                    {formatCurrency(amount)}
+                  </span>
+                </span>
+              ))}
+            </div>
+          )}
         </div>
 
         {open && !settled && (

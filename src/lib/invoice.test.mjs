@@ -2,7 +2,7 @@
 // Expected values are taken from the real reference invoice INV-002241,
 // so a regression here means we'd bill a customer differently than before.
 import assert from "node:assert/strict";
-import { calculateInvoiceBreakup } from "./invoiceCalc.ts";
+import { calculateInvoiceBreakup, totalsByPlatform } from "./invoiceCalc.ts";
 import { amountInWords, numberToIndianWords } from "./numberToWords.ts";
 import { looksLikeGstCertificate, parseGstCertificateText } from "./parseGstCertificate.ts";
 import { parseDeliveryOrderText } from "./parseDeliveryOrder.ts";
@@ -118,6 +118,41 @@ assert.deepEqual(quote.events, ["Carnival Haldi (Both side)", "Vidai ( Morning )
 // Balance owed is whatever the payments don't cover.
 const paid = [50000, 20000].reduce((a, b) => a + b, 0);
 assert.equal(Math.round((170000 - paid) * 100) / 100, 100000, "balance after part payments");
+
+// --- What arrived on each platform ---
+const split = totalsByPlatform([
+  { amount: 50000, method: "PhonePe" },
+  { amount: 20000, method: "GPay" },
+  { amount: 30000, method: "PhonePe" },
+  { amount: 5000, method: null },
+  { amount: 2500, method: "  " },
+]);
+assert.deepEqual(
+  split,
+  [
+    ["PhonePe", 80000],
+    ["GPay", 20000],
+    ["Not recorded", 7500],
+  ],
+  "instalments group by platform, largest first"
+);
+// Every rupee taken must survive the grouping, or the split silently disagrees
+// with the Received figure sitting right above it.
+assert.equal(
+  split.reduce((sum, [, amt]) => sum + amt, 0),
+  107500,
+  "platform split must reconcile to the total received"
+);
+// Paise must not drift when instalments accumulate.
+assert.deepEqual(
+  totalsByPlatform([
+    { amount: 0.1, method: "GPay" },
+    { amount: 0.2, method: "GPay" },
+  ]),
+  [["GPay", 0.3]],
+  "no floating-point drift across instalments"
+);
+assert.deepEqual(totalsByPlatform([]), [], "no payments means no platform rows");
 
 // --- Payment screenshot reading (OCR output is messy, so be forgiving) ---
 const phonepe = parsePaymentScreenshotText(

@@ -2,6 +2,23 @@ function round2(n: number): number {
   return Math.round((n + Number.EPSILON) * 100) / 100;
 }
 
+/**
+ * Totals what arrived on each platform, largest first. Instalments land across
+ * several apps over months, so the per-platform figure is the one question the
+ * payment list can't be read off by eye. Payments with no platform recorded are
+ * grouped rather than dropped — money that arrived still counts.
+ */
+export function totalsByPlatform(
+  payments: Array<{ amount: number; method: string | null }>
+): Array<[string, number]> {
+  const totals = new Map<string, number>();
+  for (const p of payments) {
+    const name = p.method?.trim() || "Not recorded";
+    totals.set(name, round2((totals.get(name) ?? 0) + p.amount));
+  }
+  return [...totals.entries()].sort(([, a], [, b]) => b - a);
+}
+
 export interface InvoiceBreakupInput {
   /** GST-inclusive total for the line item (what the customer's loan actually covers). */
   grossAmount: number;
