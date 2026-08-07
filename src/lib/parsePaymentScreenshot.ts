@@ -16,6 +16,18 @@ const APPS: Array<[RegExp, string]> = [
   [/net\s*banking|imps|neft|rtgs/i, "Bank transfer"],
 ];
 
+/**
+ * Every platform money can arrive on, for the payment form's suggestions. The
+ * OCR-detectable ones come from APPS so a name can never drift between what a
+ * screenshot fills in and what the user can pick — a mismatch would split one
+ * platform's takings across two spellings in the totals.
+ */
+export const PAYMENT_METHODS: string[] = [
+  ...APPS.map(([, label]) => label),
+  "Cash",
+  "Cheque",
+];
+
 const MONTHS: Record<string, string> = {
   jan: "01", feb: "02", mar: "03", apr: "04", may: "05", jun: "06",
   jul: "07", aug: "08", sep: "09", oct: "10", nov: "11", dec: "12",

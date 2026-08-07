@@ -7,7 +7,7 @@ import { amountInWords, numberToIndianWords } from "./numberToWords.ts";
 import { looksLikeGstCertificate, parseGstCertificateText } from "./parseGstCertificate.ts";
 import { parseDeliveryOrderText } from "./parseDeliveryOrder.ts";
 import { looksLikeQuotation, parseQuotationText } from "./parseQuotation.ts";
-import { parsePaymentScreenshotText } from "./parsePaymentScreenshot.ts";
+import { PAYMENT_METHODS, parsePaymentScreenshotText } from "./parsePaymentScreenshot.ts";
 import { invoiceEmailHtml, invoiceEmailSubject, invoiceEmailText } from "./invoiceEmail.ts";
 
 // --- GST back-calculation, matched against INV-002241 ---
@@ -142,6 +142,17 @@ assert.equal(paytm.method, "Paytm", "Paytm detected");
 const junk = parsePaymentScreenshotText("blurry screenshot with no useful text");
 assert.equal(junk.amount, null, "no amount invented");
 assert.equal(junk.method, null, "no method invented");
+
+// A platform a screenshot can fill in must also be one the user could have
+// picked. If the two lists drift, the same platform's takings split across two
+// spellings and the per-platform totals quietly stop adding up.
+assert.equal(new Set(PAYMENT_METHODS).size, PAYMENT_METHODS.length, "no duplicate platforms");
+for (const detected of [phonepe.method, gpay.method, paytm.method]) {
+  assert.ok(PAYMENT_METHODS.includes(detected), `${detected} must be an offered platform`);
+}
+const bank = parsePaymentScreenshotText("NEFT credited to your account Rs. 50000");
+assert.equal(bank.method, "Bank transfer", "NEFT reads as a bank transfer");
+assert.ok(PAYMENT_METHODS.includes(bank.method), "bank transfer must be an offered platform");
 
 // --- Invoice email renders for both brands ---
 for (const brand of ["GRATEFUL", "MULBERRY"]) {
