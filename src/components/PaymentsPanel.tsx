@@ -12,7 +12,7 @@ import {
   ScanLine,
   X,
 } from "lucide-react";
-import { readImageTextInBrowser } from "@/lib/clientUpload";
+import { readPaymentScreenshot } from "@/lib/clientUpload";
 import { PAYMENT_METHODS, parsePaymentScreenshotText } from "@/lib/parsePaymentScreenshot";
 import { Button } from "@/components/ui/Button";
 import { Card, CardBody, CardHeader } from "@/components/ui/Card";
@@ -87,7 +87,8 @@ export function PaymentsPanel({
 
     setScanning(true);
     try {
-      const found = parsePaymentScreenshotText(await readImageTextInBrowser(file));
+      const shot = await readPaymentScreenshot(file);
+      const found = parsePaymentScreenshotText(shot.text, shot.amountLine);
       const form = formRef.current;
       if (!form) return;
 

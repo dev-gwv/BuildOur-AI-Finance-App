@@ -178,6 +178,54 @@ const junk = parsePaymentScreenshotText("blurry screenshot with no useful text")
 assert.equal(junk.amount, null, "no amount invented");
 assert.equal(junk.method, null, "no method invented");
 
+// --- What OCR really returns for "₹" ---
+// Tesseract's English alphabet has no ₹, so it never comes back. The strings
+// below are verbatim OCR output for PhonePe, GPay and Paytm receipts, with the
+// line the figure was printed largest on — the symbol reads as "%", as its own
+// "X", and, on the GPay receipt, as a "3" glued to the figure. Getting these
+// wrong is what had the amount being retyped by hand for every payment.
+const ocr = [
+  [
+    "Payment Successful %1,70,000 Paid to The Mulberry Weddings Transaction ID" +
+      " T2608121234567890 UTR 521834765412 Debited from XXXXXX4521 15 Aug 2026, 4:12 PM",
+    "%1,70,000",
+    170000,
+  ],
+  [
+    "Completed 344,000 To The Mulberry Weddings 13 Aug 2026, 11:04 am From HDFC" +
+      " Bank 8842 UPI transaction ID 487561239045 Google Pay",
+    "344,000",
+    44000,
+  ],
+  [
+    "Payment Successful X 39,500.00 Paid to The Mulberry Weddings 03 Aug 2026" +
+      " UPI Ref No: 561203948877 Paytm UPI Bank Balance %2,14,880",
+    "X 39,500.00",
+    39500,
+  ],
+];
+for (const [text, amountLine, expected] of ocr) {
+  assert.equal(parsePaymentScreenshotText(text, amountLine).amount, expected, `OCR amount ${expected}`);
+}
+
+// A figure that came with a symbol is never trimmed: ₹1,70,000 written the
+// western way is 170000, not 70000.
+assert.equal(parsePaymentScreenshotText("", "₹170,000").amount, 170000, "western grouping kept");
+assert.equal(parsePaymentScreenshotText("", "Rs 44,000").amount, 44000, "spelt-out symbol kept");
+// The balance printed under the amount must never be mistaken for it.
+assert.equal(
+  parsePaymentScreenshotText("Bank Balance ₹2,14,880 Paid ₹5,000 to The Mulberry Weddings").amount,
+  5000,
+  "balance is not the payment"
+);
+// Timestamps and dates are numbers too.
+assert.equal(parsePaymentScreenshotText("no money here", "11:04 am").amount, null, "a time is not an amount");
+assert.equal(
+  parsePaymentScreenshotText("UPI Ref No: 561203948877 only").amount,
+  null,
+  "a reference number is not an amount"
+);
+
 // A platform a screenshot can fill in must also be one the user could have
 // picked. If the two lists drift, the same platform's takings split across two
 // spellings and the per-platform totals quietly stop adding up.

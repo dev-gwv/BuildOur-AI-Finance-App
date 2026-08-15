@@ -1,7 +1,8 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { ApiError, requireUser, withApiErrors } from "@/lib/api-auth";
 import { saveUpload } from "@/lib/storage";
+import { syncPaymentToSheet } from "@/lib/sheet";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -38,6 +39,22 @@ export const POST = withApiErrors(async (req: NextRequest, { params }: Params) =
   const payment = await prisma.payment.create({
     data: { invoiceId: id, amount, paidOn: new Date(paidOn), method, note, proofPath },
   });
+
+  // The workbook is The Mulberry Weddings' own hisaab, so only its money goes
+  // in. Sent after the response: Apps Script takes seconds to answer, and none
+  // of that should be spent watching a spinner over a payment already saved.
+  if (invoice.brand === "MULBERRY") {
+    after(() =>
+      syncPaymentToSheet({
+        action: "add",
+        id: payment.id,
+        date: payment.paidOn.toISOString().slice(0, 10),
+        client: invoice.customerName,
+        amount: payment.amount,
+        remarks: [method, note, invoice.invoiceNumber].filter(Boolean).join(" · "),
+      })
+    );
+  }
 
   return NextResponse.json({ payment }, { status: 201 });
 });

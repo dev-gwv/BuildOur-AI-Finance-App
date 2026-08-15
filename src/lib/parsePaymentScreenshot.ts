@@ -33,26 +33,106 @@ const MONTHS: Record<string, string> = {
   jul: "07", aug: "08", sep: "09", oct: "10", nov: "11", dec: "12",
 };
 
+/** "1,70,000" — how every Indian payment app prints a figure. */
+const INDIAN_GROUPED = /^\d{1,2}(?:,\d{2})*,\d{3}$/;
+/** "170,000" — what bank sites and statements print instead. */
+const WESTERN_GROUPED = /^\d{1,3}(?:,\d{3})+$/;
+
+/**
+ * Rupees from an OCR'd figure, or null if it isn't money.
+ *
+ * Tesseract's English alphabet has no ₹, so the symbol never survives: on the
+ * receipts measured it came back as "%", as "X", and — worst — as a digit glued
+ * to the figure, which turns ₹44,000 into a plausible-looking 344,000. That
+ * last one is why `symbolFound` matters: with nothing else in front of the
+ * digits, a leading digit that breaks Indian grouping is the rupee sign.
+ */
+function toAmount(token: string, symbolFound: boolean): number | null {
+  // A time or a date is the number most easily mistaken for an amount.
+  if (/\d\s*[:/]\s*\d/.test(token)) return null;
+
+  let digits = token.replace(/^[^\d]+/, "").replace(/[^\d]+$/, "");
+  if (!digits) return null;
+  // OCR reads the thousands separator as a comma or a full stop interchangeably.
+  const decimal = /[.,](\d{1,2})$/.exec(digits);
+  if (decimal) digits = digits.slice(0, -decimal[0].length);
+  digits = digits.replace(/\./g, ",");
+
+  if (!symbolFound && WESTERN_GROUPED.test(digits) && !INDIAN_GROUPED.test(digits)) {
+    // ponytail: only catches a swallowed ₹ when dropping it restores Indian
+    // grouping. ₹4,40,000 read as "34,40,000" stays wrong — it reads as a
+    // valid figure — but lands far over the balance due, which is flagged.
+    const withoutSymbol = digits.slice(1);
+    if (INDIAN_GROUPED.test(withoutSymbol)) digits = withoutSymbol;
+  }
+
+  const n = Number(`${digits.replace(/,/g, "")}${decimal ? `.${decimal[1]}` : ""}`);
+  return Number.isFinite(n) && n > 0 && n < 100_000_000 ? n : null;
+}
+
+/** The line the figure is printed on, split into what OCR saw as separate words. */
+function amountFromLine(line: string): number | null {
+  const tokens = line.trim().split(/\s+/);
+  // The amount is the longest run of digits on its line; anything shorter is a
+  // stray "To", a time, or the tail of a name.
+  const index = tokens.reduce(
+    (best, token, i) =>
+      (token.match(/\d/g)?.length ?? 0) > (tokens[best]?.match(/\d/g)?.length ?? 0) ? i : best,
+    -1
+  );
+  if (index < 0) return null;
+
+  const token = tokens[index];
+  const previous = tokens[index - 1];
+  // "₹" survives OCR as a glyph of its own as often as it survives glued on:
+  // a short wordless token in front of the figure is that glyph.
+  const symbolFound =
+    /^\D/.test(token) || (previous !== undefined && previous.length <= 3 && !/\d/.test(previous));
+  return toAmount(token, symbolFound);
+}
+
+/** What OCR turns "₹" into, alongside the symbol itself and the spelt-out forms. */
+const RUPEE_CUE = /(?:₹|Rs\.?|INR|(?<![\w.])[%€¥X*])\s?([\d][\d.,]*)/gi;
+const CUE_WORD = /(?:paid|amount|received|sent|debited|credited)\s*[:\-]?\s*([\d][\d.,]*)/gi;
+
+/**
+ * Falls back to scanning the flattened text, for when the OCR layout data
+ * isn't there. Balances and limits sit next to the amount on plenty of
+ * receipts, so a figure introduced as one of those is passed over.
+ */
+function amountFromText(text: string): number | null {
+  for (const pattern of [RUPEE_CUE, CUE_WORD]) {
+    pattern.lastIndex = 0;
+    for (const match of text.matchAll(pattern)) {
+      // Only what introduces this figure counts — a balance printed earlier on
+      // the receipt must not disqualify the payment printed after it.
+      const before = text.slice(0, match.index).split(/\s+/).slice(-2).join(" ");
+      if (/balance|available|limit|due|outstanding/i.test(before)) continue;
+      const amount = toAmount(match[1], true);
+      if (amount !== null) return amount;
+    }
+  }
+  return null;
+}
+
 /**
  * Pulls what it can from OCR'd text of a UPI payment screenshot. Screenshots
  * vary by app and OCR is imperfect, so every field is a suggestion the user
  * confirms — nothing here is trusted blindly.
+ *
+ * `amountLine` is the line the figure was printed largest on. Every payment app
+ * shows the amount several times the size of anything else, so that one line
+ * settles which of a screenshot's numbers is the money — the transaction
+ * reference, the masked account digits and the balance underneath are all
+ * numbers too, and the figure alone can't be told apart from them.
  */
-export function parsePaymentScreenshotText(raw: string): ParsedPaymentScreenshot {
+export function parsePaymentScreenshotText(
+  raw: string,
+  amountLine?: string | null
+): ParsedPaymentScreenshot {
   const text = raw.replace(/\s+/g, " ");
 
-  // Amounts appear as "₹1,70,000", "Rs. 10000" or "INR 10,000.00". OCR often
-  // reads ₹ as a stray character, so also accept a bare figure after a cue word.
-  const amountMatch =
-    /(?:₹|Rs\.?|INR)\s*([\d][\d,]*(?:\.\d{1,2})?)/i.exec(text) ??
-    /(?:paid|amount|received|sent)\s*[:\-]?\s*([\d][\d,]*(?:\.\d{1,2})?)/i.exec(text);
-
-  let amount: number | null = null;
-  if (amountMatch) {
-    const n = Number(amountMatch[1].replace(/,/g, ""));
-    // Guard against OCR picking up a date or reference number as the amount.
-    if (Number.isFinite(n) && n > 0 && n < 100_000_000) amount = n;
-  }
+  const amount = (amountLine ? amountFromLine(amountLine) : null) ?? amountFromText(text);
 
   const method = APPS.find(([re]) => re.test(text))?.[1] ?? null;
 
