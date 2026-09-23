@@ -84,7 +84,14 @@ export function SendInvoiceEmail({
       <div className="flex flex-wrap items-center gap-2 print:hidden">
         <Button type="button" variant="secondary" onClick={openComposer}>
           <Mail className="h-4 w-4" />
-          {sentAt ? "Send again" : "Email invoice"}
+          {sentAt ? (
+            "Send again"
+          ) : (
+            <>
+              <span className="sm:hidden">Email</span>
+              <span className="hidden sm:inline">Email invoice</span>
+            </>
+          )}
         </Button>
         {sentAt && (
           <span className="inline-flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-400">

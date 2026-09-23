@@ -71,7 +71,7 @@ function InvoiceTable({
               {lines.map((l) => (
                 <TR key={l.id}>
                   <TD>
-                    <span className="font-medium text-neutral-900 dark:text-neutral-100">{l.invoiceNumber}</span>
+                    <span className="whitespace-nowrap font-medium text-neutral-900 dark:text-neutral-100">{l.invoiceNumber}</span>
                     {l.interState && (
                       <span className="ml-1.5">
                         <Badge tone="warning">IGST</Badge>
@@ -293,7 +293,7 @@ export default async function GstReportPage({
             subtitle={`Costs ${formatCurrency(report.input.costs)} · gateway fees ${formatCurrency(report.input.gatewayFees)}`}
             action={
               <Link href="/money" className="text-xs font-medium text-brand-600 hover:text-brand-500 dark:text-brand-400">
-                Expenses →
+                Money in &amp; out →
               </Link>
             }
           />

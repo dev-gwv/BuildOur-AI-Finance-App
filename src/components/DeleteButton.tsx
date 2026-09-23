@@ -25,6 +25,7 @@ export function DeleteButton({
       type="button"
       disabled={pending}
       title={`Delete ${label}`}
+      aria-label={`Delete ${label}`}
       onClick={async () => {
         const ok = await confirm({
           title: `Delete ${label}?`,

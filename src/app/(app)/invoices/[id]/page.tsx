@@ -55,7 +55,8 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
               {invoice.doFilePath && (
                 <Link href={`/api/uploads/${invoice.doFilePath}`} target="_blank" rel="noopener noreferrer" className={secondaryAction}>
                   <FileText className="h-4 w-4" />
-                  {invoice.brand === "MULBERRY" ? "View quotation" : "View original document"}
+                  <span className="sm:hidden">{invoice.brand === "MULBERRY" ? "Quotation" : "Original"}</span>
+                  <span className="hidden sm:inline">{invoice.brand === "MULBERRY" ? "View quotation" : "View original document"}</span>
                 </Link>
               )}
               <Link href={`/invoices/${invoice.id}/edit`} className={secondaryAction}>

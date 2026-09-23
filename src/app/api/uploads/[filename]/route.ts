@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { readUpload } from "@/lib/storage";
-import { badRequest, notFound, withApiErrors } from "@/server/errors";
+import { ApiError, badRequest, notFound, withApiErrors } from "@/server/errors";
 import { requireUser } from "@/server/session";
 import { assertBusinessAccess } from "@/server/access";
 
@@ -26,8 +26,13 @@ export const GET = withApiErrors(async (_req: NextRequest, { params }: Params) =
   if (!businessId) throw notFound("That file");
   await assertBusinessAccess(user, businessId);
 
-  const result = await readUpload(filename);
-  if (!result?.stream) throw notFound("That file");
+  // A file missing from storage (or storage being unreachable) is "not
+  // available" to the person clicking the link, not a server crash.
+  const result = await readUpload(filename).catch((e) => {
+    console.error(`Couldn't read upload ${filename}:`, e);
+    return null;
+  });
+  if (!result?.stream) throw new ApiError(404, "That file is no longer available");
 
   return new NextResponse(result.stream, {
     headers: {

@@ -61,6 +61,7 @@ export function EntryForm({
   );
   const [pending, setPending] = useState(false);
   const [direction, setDirection] = useState<"IN" | "OUT">(expense?.direction === "OUT" ? "OUT" : "IN");
+  const [proofName, setProofName] = useState<string | null>(null);
   const isOut = direction === "OUT";
 
   const gateway = business?.gateways.find((g) => g.id === gatewayId);
@@ -114,9 +115,10 @@ export function EntryForm({
   }
 
   return (
-    <form onSubmit={onSubmit} className="grid max-w-2xl gap-6">
+    <form onSubmit={onSubmit} className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_340px] lg:items-start">
       <input type="hidden" name="direction" value={direction} />
-      <div className="grid grid-cols-2 gap-2 rounded-2xl border border-neutral-200/80 bg-white p-1.5 shadow-card dark:border-white/[0.07] dark:bg-neutral-900/70">
+      <div className="grid min-w-0 gap-6">
+      <div className="grid gap-2 rounded-2xl border sm:grid-cols-2 border-neutral-200/80 bg-white p-1.5 shadow-card dark:border-white/[0.07] dark:bg-neutral-900/70">
         {(
           [
             { key: "IN", label: "Money in", hint: "Received via a gateway — charges and GST come off", icon: ArrowDownLeft, on: "bg-emerald-50 text-emerald-800 ring-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-300 dark:ring-emerald-500/30" },
@@ -168,7 +170,7 @@ export function EntryForm({
             </p>
           )}
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid gap-4 sm:grid-cols-2">
             <div>
               <label className="block text-sm font-medium text-neutral-700 dark:text-neutral-300">
                 Category
@@ -180,7 +182,7 @@ export function EntryForm({
                 onChange={(e) => setCategoryId(e.target.value)}
                 className="mt-1 w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 shadow-xs text-sm outline-none focus:border-brand-500 focus:ring-4 focus:ring-brand-500/15 dark:border-white/10 dark:bg-neutral-950/60"
               >
-                {business?.categories.length === 0 && <option value="">No categories — add one in Settings</option>}
+                {business?.categories.length === 0 && <option value="">No categories yet — an admin adds them in Settings → Businesses</option>}
                 {business?.categories.map((cat) => (
                   <option key={cat.id} value={cat.id}>
                     {cat.name}
@@ -203,7 +205,7 @@ export function EntryForm({
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid gap-4 sm:grid-cols-2">
             <div>
               <label className="block text-sm font-medium text-neutral-700 dark:text-neutral-300">
                 {isOut ? "Amount paid (incl. GST)" : "Gross amount received"}
@@ -242,7 +244,7 @@ export function EntryForm({
             )}
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid gap-4 sm:grid-cols-2">
             <div>
               <label className="block text-sm font-medium text-neutral-700 dark:text-neutral-300">
                 GST %
@@ -263,9 +265,17 @@ export function EntryForm({
                 Screenshot (proof of payment)
               </label>
               <label className="mt-1 flex cursor-pointer items-center gap-2 rounded-lg border border-dashed border-neutral-200 px-3 py-2 text-sm text-neutral-500 hover:border-brand-400 hover:text-brand-600 dark:border-white/10 dark:text-neutral-400">
-                <Upload className="h-4 w-4" />
-                {expense?.screenshotPath ? "Replace file" : "Choose file"}
-                <input name="screenshot" type="file" accept="image/*,.pdf" className="hidden" />
+                <Upload className="h-4 w-4 shrink-0" />
+                <span className={`truncate ${proofName ? "text-neutral-900 dark:text-neutral-100" : ""}`}>
+                  {proofName ?? (expense?.screenshotPath ? "Replace the saved proof" : "Choose an image or PDF")}
+                </span>
+                <input
+                  name="screenshot"
+                  type="file"
+                  accept="image/*,.pdf"
+                  className="hidden"
+                  onChange={(e) => setProofName(e.target.files?.[0]?.name ?? null)}
+                />
               </label>
             </div>
           </div>
@@ -284,7 +294,17 @@ export function EntryForm({
         </CardBody>
       </Card>
 
-      <Card className="border-brand-100 dark:border-brand-950">
+      <div className="flex flex-wrap items-center gap-2">
+        <Button type="submit" loading={pending}>
+          {isEdit ? "Save changes" : isOut ? "Save money out" : "Save money in"}
+        </Button>
+        <Button type="button" variant="secondary" onClick={() => router.push("/money")}>
+          Cancel
+        </Button>
+      </div>
+      </div>
+
+      <Card className="border-brand-100 lg:sticky lg:top-20 dark:border-brand-950">
         <CardBody>
           <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-neutral-700 dark:text-neutral-300">
             <Receipt className="h-4 w-4 text-brand-500" />
@@ -327,15 +347,6 @@ export function EntryForm({
           )}
         </CardBody>
       </Card>
-
-      <div className="flex items-center gap-2">
-        <Button type="submit" loading={pending}>
-          {isEdit ? "Save changes" : isOut ? "Save money out" : "Save money in"}
-        </Button>
-        <Button type="button" variant="secondary" onClick={() => router.push("/money")}>
-          Cancel
-        </Button>
-      </div>
     </form>
   );
 }

@@ -115,30 +115,34 @@ export default async function PaymentsPage({
         description="Every payment received against an invoice. To record or change one, open its invoice."
       />
 
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+      <div className="grid grid-cols-3 gap-2 sm:gap-3">
         {[
           { label: "Received", value: totals.received, hint: `${payments.length} payment${payments.length === 1 ? "" : "s"}`, cls: "text-neutral-950 dark:text-white" },
           { label: "Gateway fees", value: totals.fees, hint: "commission + GST on it", cls: totals.fees > 0 ? "text-amber-700 dark:text-amber-400" : "text-neutral-950 dark:text-white" },
           { label: "Landed in the bank", value: totals.net, hint: "received − fees", cls: "text-emerald-600 dark:text-emerald-400" },
         ].map((m) => (
-          <Card key={m.label} className="px-5 py-4">
-            <p className="text-[13px] font-medium text-neutral-500 dark:text-neutral-400">{m.label}</p>
-            <p className={`mt-1.5 text-xl font-semibold tracking-tight tabular-nums ${m.cls}`}>{formatCurrencyWhole(m.value)}</p>
-            <p className="mt-0.5 text-xs text-neutral-400">{m.hint}</p>
+          <Card key={m.label} className="px-3 py-3 sm:px-5 sm:py-4">
+            <p className="truncate text-xs font-medium text-neutral-500 sm:text-[13px] dark:text-neutral-400">{m.label}</p>
+            <p className={`mt-1 truncate text-[15px] font-semibold tracking-tight tabular-nums sm:mt-1.5 sm:text-xl ${m.cls}`}>
+              {formatCurrencyWhole(m.value)}
+            </p>
+            <p className="mt-0.5 truncate text-[11px] text-neutral-400 sm:text-xs">{m.hint}</p>
           </Card>
         ))}
       </div>
 
       <Card className="overflow-hidden">
-        <div className="flex flex-col gap-3 border-b border-neutral-100 px-4 py-3 xl:flex-row xl:items-center xl:justify-between dark:border-white/[0.06]">
-          <div className="flex flex-wrap gap-2">
+        <div className="flex flex-col gap-3 border-b border-neutral-100 px-4 py-3 dark:border-white/[0.06]">
+          <div className="flex flex-wrap items-center gap-2">
             <Segmented items={LIST_PERIODS.map((p) => ({ key: p.key, label: p.label, href: href({ period: p.key }), active: period === p.key }))} />
             <Segmented items={GATEWAYS.map((g) => ({ key: g.key, label: g.label, href: href({ gateway: g.key }), active: gateway === g.key }))} />
           </div>
           <form method="get" action="/payments" className="flex flex-wrap items-center gap-2">
+            <label className="sr-only" htmlFor="payments-method">Method</label>
             {period !== "all" && <input type="hidden" name="period" value={period} />}
             {gateway !== "all" && <input type="hidden" name="gateway" value={gateway} />}
             <select
+              id="payments-method"
               name="method"
               defaultValue={method}
               className="h-9 rounded-xl border border-neutral-200/80 bg-white px-3 text-sm shadow-card dark:border-white/10 dark:bg-neutral-900/70"
@@ -150,14 +154,15 @@ export default async function PaymentsPage({
                 </option>
               ))}
             </select>
-            <div className="relative">
+            <div className="relative min-w-[220px] flex-1 sm:max-w-sm">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
               <input
                 type="search"
                 name="q"
                 defaultValue={q}
                 placeholder="Customer or invoice no.…"
-                className="h-9 w-64 rounded-xl border border-neutral-200/80 bg-white pl-9 pr-3 text-sm shadow-card outline-none focus:border-brand-500 focus:ring-4 focus:ring-brand-500/15 dark:border-white/10 dark:bg-neutral-900/70"
+                aria-label="Search payments"
+                className="h-9 w-full rounded-xl border border-neutral-200/80 bg-white pl-9 pr-3 text-sm shadow-card outline-none focus:border-brand-500 focus:ring-4 focus:ring-brand-500/15 dark:border-white/10 dark:bg-neutral-900/70"
               />
             </div>
             <button className="h-9 rounded-xl bg-neutral-900 px-3 text-sm font-medium text-white dark:bg-white dark:text-neutral-900">
@@ -175,7 +180,35 @@ export default async function PaymentsPage({
             />
           </div>
         ) : (
-          <div className="overflow-x-auto">
+          <>
+          {/* Phones: one card per payment. */}
+          <ul className="divide-y divide-neutral-100 sm:hidden dark:divide-white/[0.05]">
+            {payments.map((p) => {
+              const fees = p.feeAmount + p.feeGstAmount;
+              return (
+                <li key={p.id}>
+                  <Link href={`/invoices/${p.invoice.id}`} className="block px-4 py-3 active:bg-neutral-50 dark:active:bg-white/[0.03]">
+                    <div className="flex items-baseline justify-between gap-3">
+                      <span className="truncate font-medium text-neutral-900 dark:text-neutral-100">{p.invoice.customerName}</span>
+                      <span className="shrink-0 font-semibold tabular-nums text-emerald-600 dark:text-emerald-400">
+                        {formatCurrency(p.amount - fees)}
+                      </span>
+                    </div>
+                    <div className="mt-1 flex items-center justify-between gap-3 text-xs text-neutral-500 dark:text-neutral-400">
+                      <span className="flex min-w-0 items-center gap-1.5">
+                        {showBusiness && <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: p.invoice.business.color }} />}
+                        <span className="truncate">
+                          {formatDate(p.paidOn)} · {p.method || p.gateway || "—"} · {p.invoice.invoiceNumber}
+                        </span>
+                      </span>
+                      {fees > 0 && <span className="shrink-0 text-amber-700 dark:text-amber-400">−{formatCurrency(fees)} fees</span>}
+                    </div>
+                  </Link>
+                </li>
+              );
+            })}
+          </ul>
+          <div className="hidden overflow-x-auto sm:block">
             <Table className="min-w-[900px]">
               <THead>
                 <tr>
@@ -199,7 +232,7 @@ export default async function PaymentsPage({
                       <TD>
                         <Link
                           href={`/invoices/${p.invoice.id}`}
-                          className="font-medium text-neutral-900 hover:text-brand-600 dark:text-neutral-100 dark:hover:text-brand-400"
+                          className="whitespace-nowrap font-medium text-neutral-900 hover:text-brand-600 dark:text-neutral-100 dark:hover:text-brand-400"
                         >
                           {p.invoice.invoiceNumber}
                         </Link>
@@ -214,16 +247,16 @@ export default async function PaymentsPage({
                       )}
                       <TD>
                         <div className="flex flex-wrap items-center gap-1">
-                          <span>{p.method ?? "—"}</span>
-                          {p.gateway && p.gateway !== p.method && <Badge tone="brand">{p.gateway}</Badge>}
+                          <span>{p.method || p.gateway || "—"}</span>
+                          {p.gateway && p.method && p.gateway !== p.method && <Badge tone="brand">via {p.gateway}</Badge>}
                         </div>
                         {p.gatewayRef && <p className="font-mono text-[11px] text-neutral-400">{p.gatewayRef}</p>}
                       </TD>
-                      <TD className="text-right tabular-nums font-medium text-neutral-900 dark:text-neutral-100">{formatCurrency(p.amount)}</TD>
-                      <TD className={`text-right tabular-nums ${fees > 0 ? "text-amber-700 dark:text-amber-400" : "text-neutral-300 dark:text-neutral-600"}`}>
+                      <TD className="whitespace-nowrap text-right tabular-nums font-medium text-neutral-900 dark:text-neutral-100">{formatCurrency(p.amount)}</TD>
+                      <TD className={`whitespace-nowrap text-right tabular-nums ${fees > 0 ? "text-amber-700 dark:text-amber-400" : "text-neutral-300 dark:text-neutral-600"}`}>
                         {fees > 0 ? `−${formatCurrency(fees)}` : "—"}
                       </TD>
-                      <TD className="text-right tabular-nums font-semibold text-emerald-600 dark:text-emerald-400">
+                      <TD className="whitespace-nowrap text-right tabular-nums font-semibold text-emerald-600 dark:text-emerald-400">
                         {formatCurrency(p.amount - fees)}
                       </TD>
                     </TR>
@@ -232,6 +265,7 @@ export default async function PaymentsPage({
               </TBody>
             </Table>
           </div>
+          </>
         )}
       </Card>
     </div>

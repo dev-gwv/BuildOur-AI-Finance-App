@@ -48,8 +48,12 @@ export const isoDate = (label = "Date") =>
   z
     .string({ error: `${label} is required` })
     .regex(/^\d{4}-\d{2}-\d{2}$/, `${label} must be a date`)
-    .transform((s) => new Date(`${s}T00:00:00.000Z`))
-    .refine((d) => !Number.isNaN(d.getTime()), `${label} must be a real date`);
+    // 2026-02-31 must be rejected, not quietly become 3 March.
+    .refine((s) => {
+      const d = new Date(`${s}T00:00:00.000Z`);
+      return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s;
+    }, `${label} must be a real date`)
+    .transform((s) => new Date(`${s}T00:00:00.000Z`));
 
 export const requiredText = (label: string, max = 500) =>
   z.string({ error: `${label} is required` }).trim().min(1, `${label} is required`).max(max, `${label} is too long`);

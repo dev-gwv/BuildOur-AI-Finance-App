@@ -11,6 +11,6 @@ export const POST = withApiErrors(async (req: NextRequest, { params }: Params) =
   const { id } = await params;
   const form = await req.formData().catch(() => null);
   if (!form) throw badRequest("Expected a form submission");
-  const payment = await recordPayment(user, id, form, req);
-  return NextResponse.json({ payment }, { status: 201 });
+  const { payment, warning } = await recordPayment(user, id, form, req);
+  return NextResponse.json({ payment, ...(warning ? { warning } : {}) }, { status: 201 });
 });

@@ -10,7 +10,8 @@ export const PATCH = withApiErrors(async (req: NextRequest, { params }: Params) 
   const { id } = await params;
   const form = await req.formData().catch(() => null);
   if (!form) throw badRequest("Expected a form submission");
-  return NextResponse.json({ payment: await updatePayment(user, id, form, req) });
+  const { payment, warning } = await updatePayment(user, id, form, req);
+  return NextResponse.json({ payment, ...(warning ? { warning } : {}) });
 });
 
 export const DELETE = withApiErrors(async (req: NextRequest, { params }: Params) => {

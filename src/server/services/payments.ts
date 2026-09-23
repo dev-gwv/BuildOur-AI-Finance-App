@@ -12,11 +12,23 @@ import { guardWrite, round2, rupees } from "./common";
 const PROOF_TYPES = ["application/pdf", "image/png", "image/jpeg", "image/webp", "image/heic", "image/heif"];
 const MAX_PROOF = 4 * 1024 * 1024;
 
-async function storeProof(proof: FormDataEntryValue | null): Promise<string | null> {
-  if (!(proof instanceof File) || proof.size === 0) return null;
+const PROOF_NOT_SAVED = "The payment was saved, but its screenshot couldn't be attached.";
+
+/**
+ * Stores the payment's screenshot. The money received is what matters: if
+ * storage is unavailable the payment is still recorded, with a warning, rather
+ * than lost. A wrong file type or size is still refused — that's the user's to fix.
+ */
+async function storeProof(proof: FormDataEntryValue | null): Promise<{ path: string | null; warning: string | null }> {
+  if (!(proof instanceof File) || proof.size === 0) return { path: null, warning: null };
   if (proof.type && !PROOF_TYPES.includes(proof.type)) throw badRequest("Proof must be an image or a PDF");
   if (proof.size > MAX_PROOF) throw badRequest("Proof must be under 4 MB");
-  return saveUpload(proof);
+  try {
+    return { path: await saveUpload(proof), warning: null };
+  } catch (e) {
+    console.error("Couldn't store a payment screenshot; saving the payment without it:", e);
+    return { path: null, warning: PROOF_NOT_SAVED };
+  }
 }
 
 const LABELS = {
@@ -46,7 +58,7 @@ export async function recordPayment(user: SessionUser, invoiceId: string, form: 
     throw badRequest(`That's more than the ${rupees(outstanding)} still outstanding`, { amount: `At most ${rupees(outstanding)}` });
   }
 
-  const proofPath = await storeProof(form.get("proof"));
+  const { path: proofPath, warning } = await storeProof(form.get("proof"));
   const payment = await prisma.payment.create({ data: { invoiceId, ...input, proofPath } });
 
   await audit({
@@ -63,7 +75,7 @@ export async function recordPayment(user: SessionUser, invoiceId: string, form: 
 
   // Sent after the response: Apps Script takes seconds to answer.
   after(() => syncPayment(payment.id));
-  return payment;
+  return { payment, warning };
 }
 
 export async function updatePayment(user: SessionUser, paymentId: string, form: FormData, req: Request) {
@@ -82,7 +94,7 @@ export async function updatePayment(user: SessionUser, paymentId: string, form: 
     throw badRequest(`That's more than the ${rupees(available)} this invoice has left to pay`, { amount: `At most ${rupees(available)}` });
   }
 
-  const newProof = await storeProof(form.get("proof"));
+  const { path: newProof, warning } = await storeProof(form.get("proof"));
   const payment = await prisma.payment.update({
     where: { id: paymentId },
     data: { ...input, ...(newProof ? { proofPath: newProof } : {}) },
@@ -103,7 +115,7 @@ export async function updatePayment(user: SessionUser, paymentId: string, form: 
 
   // Rewrites the same sheet row (or moves it, if the date changed its month).
   after(() => syncPayment(paymentId));
-  return payment;
+  return { payment, warning };
 }
 
 export async function deletePayment(user: SessionUser, paymentId: string, req: Request) {

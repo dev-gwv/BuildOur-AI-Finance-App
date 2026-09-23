@@ -2,7 +2,7 @@ import NextAuth, { CredentialsSignin } from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
-import { LIMITS, clientIp, hit, reset } from "@/server/rateLimit";
+import { LIMITS, clientIp, hit, isLimited, reset } from "@/server/rateLimit";
 
 /** Signalled to the login form so it can say "wait" rather than "wrong password". */
 export class TooManyAttempts extends CredentialsSignin {
@@ -41,17 +41,22 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
 
         // Two limits: per account (guessing one user's password) and per
         // address (spraying many accounts). Checked before bcrypt, so a flood
-        // costs us a row update rather than CPU.
+        // costs us a row update rather than CPU. The address limit only counts
+        // failures, so a whole office signing in from one IP is never blocked.
         const ip = clientIp(request.headers);
-        const [perEmail, perIp] = await Promise.all([
+        const ipKey = `login-ip:${ip}`;
+        const [perEmail, ipBlocked] = await Promise.all([
           hit(`login:${email}`, LIMITS.loginPerEmail.limit, LIMITS.loginPerEmail.window),
-          hit(`login-ip:${ip}`, LIMITS.loginPerIp.limit, LIMITS.loginPerIp.window),
+          isLimited(ipKey, LIMITS.loginPerIp.limit, LIMITS.loginPerIp.window),
         ]);
-        if (!perEmail.ok || !perIp.ok) throw new TooManyAttempts();
+        if (!perEmail.ok || ipBlocked) throw new TooManyAttempts();
 
         const user = await prisma.user.findUnique({ where: { email } });
         const valid = await bcrypt.compare(password, user?.passwordHash ?? DUMMY_HASH);
-        if (!user || !valid || !user.active) return null;
+        if (!user || !valid || !user.active) {
+          await hit(ipKey, LIMITS.loginPerIp.limit, LIMITS.loginPerIp.window);
+          return null;
+        }
 
         await Promise.all([
           reset(`login:${email}`),

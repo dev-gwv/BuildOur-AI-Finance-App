@@ -181,7 +181,7 @@ export function MoneyFlowChart({
           <Tooltip cursor={{ fill: "rgba(120,120,140,0.08)", radius: 6 }} content={<FlowTooltip />} />
           <Bar dataKey="in" fill="#10b981" radius={[4, 4, 0, 0]} maxBarSize={22} />
           <Bar dataKey="out" fill="#f43f5e" radius={[4, 4, 0, 0]} maxBarSize={22} />
-          <Line type="monotone" dataKey="profit" stroke="#6a6cf0" strokeWidth={2} dot={{ r: 2.5, fill: "#6a6cf0" }} />
+          <Line type="linear" dataKey="profit" stroke="#6a6cf0" strokeWidth={2} dot={{ r: 2.5, fill: "#6a6cf0" }} />
         </ComposedChart>
       </ResponsiveContainer>
     </div>
@@ -240,6 +240,41 @@ export function DonutBreakdown({ data, centerLabel }: { data: { name: string; va
         ))}
       </ul>
     </div>
+    </div>
+  );
+}
+
+/** Categories ranked by amount, as bars — easier to compare than a second donut. */
+export function CategoryBars({ title, data, color }: { title: string; data: { name: string; value: number }[]; color: string }) {
+  const total = data.reduce((s, d) => s + d.value, 0);
+  const max = Math.max(...data.map((d) => d.value), 1);
+  const top = data.slice(0, 6);
+  const rest = data.slice(6).reduce((s, d) => s + d.value, 0);
+  const rows = rest > 0 ? [...top, { name: "Other", value: rest }] : top;
+  return (
+    <div>
+      <p className="mb-3 flex items-baseline justify-between text-sm font-medium text-neutral-900 dark:text-neutral-100">
+        {title}
+        <span className="text-sm font-semibold tabular-nums">{formatCurrencyWhole(total)}</span>
+      </p>
+      <ul className="space-y-2.5">
+        {rows.map((r) => (
+          <li key={r.name}>
+            <div className="mb-1 flex items-center justify-between gap-3 text-sm">
+              <span className="min-w-0 truncate text-neutral-700 dark:text-neutral-300">{r.name}</span>
+              <span className="shrink-0 tabular-nums text-neutral-900 dark:text-neutral-100">
+                {formatCompactINR(r.value)}
+                <span className="ml-2 inline-block w-9 text-right text-xs text-neutral-400">
+                  {total > 0 ? Math.round((r.value / total) * 100) : 0}%
+                </span>
+              </span>
+            </div>
+            <div className="h-1.5 overflow-hidden rounded-full bg-neutral-100 dark:bg-white/[0.06]">
+              <div className="h-full rounded-full" style={{ width: `${Math.max(2, (r.value / max) * 100)}%`, background: color }} />
+            </div>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }

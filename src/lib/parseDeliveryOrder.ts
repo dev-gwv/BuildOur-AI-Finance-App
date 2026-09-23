@@ -32,7 +32,9 @@ export function parseDeliveryOrderText(text: string): ParsedDeliveryOrder {
   // as "1,17,999.00" — some DOs state a round figure like "1,77,000".
   // Spacing and colons are optional so a photographed DO read by OCR still
   // matches ("DO ID : B42…", "Product Price ₹ 1,17,999").
-  const priceMatch = /Product\s*Price\s*:?\s*(?:₹|Rs\.?)?\s*([\d,]+(?:\.\d{1,2})?)/.exec(text);
+  // OCR of a photographed DO reads the price table's borders as "[", "|" or
+  // ":" between the label and the figure, so allow a few non-digits there.
+  const priceMatch = /Product\s*Price[^\d\n]{0,12}?(?:₹|Rs\.?)?\s*([\d,]+(?:\.\d{1,2})?)/.exec(text);
 
   return {
     doId: match(/DO\s*ID\s*:?\s*([A-Z0-9]{6,})/, text),

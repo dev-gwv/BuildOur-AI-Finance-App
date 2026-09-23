@@ -65,15 +65,15 @@ export default async function BusinessesPage() {
       ) : (
         <Card className="overflow-hidden">
           <div className="overflow-x-auto">
-            <Table className="min-w-[860px]">
+            <Table className="min-w-[680px]">
               <THead>
                 <tr>
                   <TH>Business</TH>
                   <TH>Bills as</TH>
                   <TH>Next invoice</TH>
                   <TH>Google Sheet</TH>
-                  <TH className="text-right">Invoices</TH>
-                  <TH className="text-right">Members</TH>
+                  <TH className="hidden text-right xl:table-cell">Invoices</TH>
+                  <TH className="hidden text-right xl:table-cell">Members</TH>
                   <TH />
                 </tr>
               </THead>
@@ -83,26 +83,30 @@ export default async function BusinessesPage() {
                   return (
                     <TR key={b.id} className={b.archivedAt ? "opacity-60" : ""}>
                       <TD>
-                        <Link href={`/settings/businesses/${b.id}`} className="group flex items-center gap-2.5">
-                          <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: b.color }} />
-                          <span className="font-medium text-neutral-900 group-hover:text-brand-600 dark:text-neutral-100 dark:group-hover:text-brand-400">
-                            {b.name}
+                        <Link href={`/settings/businesses/${b.id}`} className="group flex items-start gap-2.5">
+                          <span className="mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: b.color }} />
+                          <span className="min-w-0">
+                            <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                              <span className="font-medium text-neutral-900 group-hover:text-brand-600 dark:text-neutral-100 dark:group-hover:text-brand-400">
+                                {b.name}
+                              </span>
+                              {b.needsReview && !b.archivedAt && <Badge tone="warning">Review</Badge>}
+                              {b.archivedAt && <Badge>Archived</Badge>}
+                            </span>
+                            <span className="mt-0.5 block font-mono text-xs text-neutral-400">/{b.slug}</span>
                           </span>
-                          {b.needsReview && !b.archivedAt && <Badge tone="warning">Review</Badge>}
-                          {b.archivedAt && <Badge>Archived</Badge>}
                         </Link>
-                        <span className="ml-5 font-mono text-xs text-neutral-400">{b.slug}</span>
                       </TD>
-                      <TD>{entityName(b.entity)}</TD>
-                      <TD className="font-mono text-xs">{previewInvoiceNumber(b)}</TD>
-                      <TD>
+                      <TD className="max-w-[16rem]">{entityName(b.entity)}</TD>
+                      <TD className="whitespace-nowrap font-mono text-xs">{previewInvoiceNumber(b)}</TD>
+                      <TD className="whitespace-nowrap">
                         {sheet === "settings" ? (
                           <Badge tone="success" dot>
                             Connected
                           </Badge>
                         ) : sheet === "environment" ? (
-                          <Badge tone="warning" dot>
-                            Via env vars
+                          <Badge tone="success" dot>
+                            Connected (older setup)
                           </Badge>
                         ) : (
                           <span className="inline-flex items-center gap-1 text-xs text-neutral-400">
@@ -111,12 +115,12 @@ export default async function BusinessesPage() {
                           </span>
                         )}
                       </TD>
-                      <TD className="text-right tabular-nums">{b._count.invoices}</TD>
-                      <TD className="text-right tabular-nums">{b._count.members}</TD>
+                      <TD className="hidden text-right tabular-nums xl:table-cell">{b._count.invoices}</TD>
+                      <TD className="hidden text-right tabular-nums xl:table-cell">{b._count.members}</TD>
                       <TD className="text-right">
                         <Link
                           href={`/settings/businesses/${b.id}`}
-                          className="inline-flex items-center gap-1 text-xs font-medium text-brand-600 hover:text-brand-500 dark:text-brand-400"
+                          className="inline-flex items-center gap-1 whitespace-nowrap text-xs font-medium text-brand-600 hover:text-brand-500 dark:text-brand-400"
                         >
                           Manage <ArrowRight className="h-3 w-3" />
                         </Link>

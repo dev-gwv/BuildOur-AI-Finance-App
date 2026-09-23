@@ -43,6 +43,37 @@ function when(date: Date) {
 
 const show = (v: unknown) => (v === null || v === undefined || v === "" ? "—" : typeof v === "object" ? JSON.stringify(v) : String(v));
 
+/** Field names as a person would say them. */
+const FIELD_LABELS: Record<string, string> = {
+  businessId: "Business",
+  categoryId: "Category",
+  gatewayId: "Gateway",
+  grossAmount: "Amount",
+  gstPercent: "GST %",
+  gstAmount: "GST",
+  netAmount: "Net",
+  invoiceNumber: "Invoice number",
+  invoiceDate: "Invoice date",
+  dueDate: "Due date",
+  paidOn: "Paid on",
+  customerName: "Customer",
+  customerAddress: "Address",
+  customerGstin: "GSTIN",
+  customerEmail: "Email",
+  placeOfSupply: "Place of supply",
+  itemDescription: "Item",
+  hsnSac: "HSN/SAC",
+  feeAmount: "Gateway fee",
+  feeGstAmount: "GST on fee",
+  gatewayRef: "Gateway reference",
+  invoicePrefix: "Invoice prefix",
+  invoiceNextNumber: "Next number",
+  defaultGstPercent: "Default GST %",
+  sheetUrl: "Sheet URL",
+};
+const fieldLabel = (key: string) =>
+  FIELD_LABELS[key] ?? key.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/^./, (c) => c.toUpperCase());
+
 export default async function AuditLogPage({
   searchParams,
 }: {
@@ -71,6 +102,18 @@ export default async function AuditLogPage({
     prisma.user.findMany({ orderBy: { name: "asc" }, select: { id: true, name: true } }),
     prisma.auditLog.findMany({ distinct: ["entityType"], select: { entityType: true } }),
   ]);
+  // Records point at each other by id; a log line reads "Rent", not "cat_iwc_0".
+  const [categories, gateways] = await Promise.all([
+    prisma.category.findMany({ select: { id: true, name: true } }),
+    prisma.gateway.findMany({ select: { id: true, name: true } }),
+  ]);
+  const names = new Map<string, string>([
+    ...businesses.map((b) => [b.id, b.name] as [string, string]),
+    ...categories.map((c) => [c.id, c.name] as [string, string]),
+    ...gateways.map((g) => [g.id, g.name] as [string, string]),
+    ...users.map((u) => [u.id, u.name] as [string, string]),
+  ]);
+  const humanize = (text: string) => text.replace(/[\w-]{2,40}/g, (token) => names.get(token) ?? token);
   const hasMore = rows.length > PAGE_SIZE;
   const page = rows.slice(0, PAGE_SIZE);
   const businessById = new Map(businesses.map((b) => [b.id, b]));
@@ -173,7 +216,7 @@ export default async function AuditLogPage({
                           </span>
                         )}
                       </div>
-                      <p className="mt-1 text-sm text-neutral-800 dark:text-neutral-200">{row.summary}</p>
+                      <p className="mt-1 text-sm text-neutral-800 dark:text-neutral-200">{humanize(row.summary)}</p>
                     </div>
                     <div className="text-right text-xs text-neutral-500">
                       <p className="font-medium text-neutral-700 dark:text-neutral-300">{row.user?.name ?? "System"}</p>
@@ -189,11 +232,11 @@ export default async function AuditLogPage({
                         <tbody>
                           {changeKeys.map((key) => (
                             <tr key={key} className="border-t border-neutral-100 dark:border-white/[0.05]">
-                              <td className="py-1.5 pr-4 font-medium text-neutral-600 dark:text-neutral-300">{key}</td>
+                              <td className="py-1.5 pr-4 font-medium text-neutral-600 dark:text-neutral-300">{fieldLabel(key)}</td>
                               <td className="py-1.5 pr-4 text-red-700 line-through decoration-red-300 dark:text-red-400">
-                                {show(changes![key].from)}
+                                {humanize(show(changes![key].from))}
                               </td>
-                              <td className="py-1.5 text-emerald-700 dark:text-emerald-400">{show(changes![key].to)}</td>
+                              <td className="py-1.5 text-emerald-700 dark:text-emerald-400">{humanize(show(changes![key].to))}</td>
                             </tr>
                           ))}
                         </tbody>

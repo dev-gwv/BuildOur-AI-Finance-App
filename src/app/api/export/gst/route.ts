@@ -7,7 +7,12 @@ import { monthLabel, parseGstPeriod, type GstLine } from "@/lib/gstReport";
 import { loadGstReport, resolveGstBusinessIds } from "@/lib/gstReportData";
 
 const MONEY = "#,##0.00";
+// Stored dates are calendar days at midnight UTC, so ISO gives the right day.
 const day = (d: Date) => d.toISOString().slice(0, 10);
+// The period's range is built from local calendar dates (1 April...), which ISO
+// would shift back a day east of UTC — format those from their local parts.
+const localDay = (d: Date) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 
 /** The GST report as a workbook for the CA: summary, B2B, B2C and input GST. */
 export const GET = withApiErrors(async (req: NextRequest) => {
@@ -104,7 +109,8 @@ export const GET = withApiErrors(async (req: NextRequest) => {
 
   const buffer = await workbook.xlsx.writeBuffer();
   const label = businessIds.length === 1 ? (scope.businesses.find((b) => b.id === businessIds[0])?.slug ?? "business") : "grateful";
-  const name = `gst-${label}-${day(report.range.start)}-to-${day(new Date(report.range.end.getTime() - 86_400_000))}.xlsx`;
+  const lastDay = new Date(report.range.end.getFullYear(), report.range.end.getMonth(), report.range.end.getDate() - 1);
+  const name = `gst-${label}-${localDay(report.range.start)}-to-${localDay(lastDay)}.xlsx`;
   return new NextResponse(buffer as ArrayBuffer, {
     headers: {
       "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

@@ -7,6 +7,7 @@ export const ENTITY_OPTIONS: EntityOption[] = (Object.keys(BRANDS) as BrandKey[]
   return {
     key,
     name: b.name,
+    gstRegistered: b.gstRegistered,
     detail: b.gstRegistered
       ? `GST-registered (${b.gstin}). Prints a Tax Invoice with CGST+SGST or IGST, and its bank details.`
       : "Not GST-registered. Prints a plain Invoice with no tax breakup.",

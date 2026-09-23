@@ -48,9 +48,9 @@ export default async function MoneyPage({
     take: 300,
   });
 
-  const href = (d: "IN" | "OUT" | null) => ({
+  const href = (d: "IN" | "OUT" | null, keepQuery = true) => ({
     pathname: "/money",
-    query: { ...(d ? { direction: d } : {}), ...(q ? { q } : {}) },
+    query: { ...(d ? { direction: d } : {}), ...(q && keepQuery ? { q } : {}) },
   });
 
   // Money in and money out never share a total: adding a receipt to a cost means nothing.
@@ -90,9 +90,9 @@ export default async function MoneyPage({
             { key: "OUT", label: "Money out", href: href("OUT"), active: direction === "OUT" },
           ]}
         />
-        <form method="get" className="flex items-center gap-2">
+        <form method="get" className="flex w-full items-center gap-2 lg:w-auto">
           {direction && <input type="hidden" name="direction" value={direction} />}
-          <div className="relative">
+          <div className="relative flex-1 lg:flex-none">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
             <input
               type="text"
@@ -102,6 +102,11 @@ export default async function MoneyPage({
               className="h-9 w-full rounded-xl border border-neutral-200/80 bg-white pl-9 pr-3 text-sm shadow-card outline-none focus:border-brand-500 focus:ring-4 focus:ring-brand-500/15 sm:w-72 dark:border-white/10 dark:bg-neutral-900/70"
             />
           </div>
+          {q && (
+            <Link href={href(direction, false)} className="shrink-0 text-xs font-medium text-neutral-500 hover:text-neutral-900 dark:hover:text-white">
+              Clear
+            </Link>
+          )}
         </form>
       </div>
 
@@ -136,7 +141,63 @@ export default async function MoneyPage({
         />
       ) : (
         <Card className="overflow-hidden">
-          <div className="overflow-x-auto">
+          {/* Phones: one card per entry — a nine-column table can't be read at 390px. */}
+          <ul className="divide-y divide-neutral-100 sm:hidden dark:divide-white/[0.05]">
+            {entries.map((e) => (
+              <li key={e.id} className="flex gap-3 px-4 py-3.5">
+                <div className="min-w-0 flex-1">
+                  <p className="flex items-center gap-2 text-sm font-medium text-neutral-900 dark:text-neutral-100">
+                    <span className="truncate">{e.description || e.category.name}</span>
+                  </p>
+                  <p className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-xs text-neutral-500 dark:text-neutral-400">
+                    {e.direction === "OUT" ? <Badge tone="danger" dot>Out</Badge> : <Badge tone="success" dot>In</Badge>}
+                    <span>{formatDate(e.date)}</span>
+                    <span>· {e.category.name}</span>
+                    {showBusiness && (
+                      <span className="inline-flex items-center gap-1">
+                        <span className="h-1.5 w-1.5 rounded-full" style={{ background: e.business.color }} />
+                        {e.business.name}
+                      </span>
+                    )}
+                  </p>
+                  {e.gateway && (
+                    <p className="mt-1 text-xs text-amber-700 dark:text-amber-400">
+                      {e.gateway.name} −{formatCurrency(e.gatewayChargeAmount)}
+                    </p>
+                  )}
+                </div>
+                <div className="flex shrink-0 flex-col items-end gap-1">
+                  <span
+                    className={`text-sm font-semibold tabular-nums ${e.direction === "OUT" ? "text-red-600 dark:text-red-400" : "text-emerald-600 dark:text-emerald-400"}`}
+                  >
+                    {e.direction === "OUT" ? "−" : "+"}
+                    {formatCurrency(e.grossAmount)}
+                  </span>
+                  <div className="flex items-center gap-0.5">
+                    {e.screenshotPath && (
+                      <a
+                        href={`/api/uploads/${e.screenshotPath}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="px-1.5 text-xs text-brand-600 dark:text-brand-400"
+                      >
+                        Proof
+                      </a>
+                    )}
+                    <Link
+                      href={`/money/${e.id}/edit`}
+                      className="rounded-md p-1.5 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700 dark:hover:bg-neutral-800 dark:hover:text-neutral-200"
+                      aria-label="Edit entry"
+                    >
+                      <Pencil className="h-3.5 w-3.5" />
+                    </Link>
+                    <DeleteButton url={`/api/entries/${e.id}`} label="this entry" />
+                  </div>
+                </div>
+              </li>
+            ))}
+          </ul>
+          <div className="hidden overflow-x-auto sm:block">
             <Table className="min-w-[900px]">
               <THead>
                 <tr>
@@ -159,7 +220,7 @@ export default async function MoneyPage({
                     <TD>{e.direction === "OUT" ? <Badge tone="danger" dot>Out</Badge> : <Badge tone="success" dot>In</Badge>}</TD>
                     {showBusiness && (
                       <TD>
-                        <span className="flex items-center gap-2 font-medium text-neutral-900 dark:text-neutral-100">
+                        <span className="flex items-center gap-2 whitespace-nowrap font-medium text-neutral-900 dark:text-neutral-100">
                           <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: e.business.color }} />
                           {e.business.name}
                         </span>
@@ -179,7 +240,9 @@ export default async function MoneyPage({
                         <span className="text-neutral-400">—</span>
                       )}
                     </TD>
-                    <TD className="text-right tabular-nums">−{formatCurrency(e.gstAmount)}</TD>
+                    <TD className="text-right tabular-nums">
+                      {e.gstAmount > 0 ? `−${formatCurrency(e.gstAmount)}` : <span className="text-neutral-400">—</span>}
+                    </TD>
                     <TD
                       className={`text-right tabular-nums font-semibold ${e.direction === "OUT" ? "text-red-600 dark:text-red-400" : "text-emerald-600 dark:text-emerald-400"}`}
                     >

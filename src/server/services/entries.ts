@@ -176,7 +176,22 @@ export async function updateEntry(user: SessionUser, entryId: string, input: z.i
   });
   if (newScreenshot && existing.screenshotPath) await deleteUpload(existing.screenshotPath).catch(() => {});
 
-  const changed = diff(existing, data, LABELS);
+  // Compare by name, not id, so the stored summary reads "category Ads → Rent".
+  const ids = [existing.businessId, data.businessId, existing.categoryId, data.categoryId, existing.gatewayId, data.gatewayId]
+    .filter((v): v is string => Boolean(v));
+  const [businesses, categories, gateways] = await Promise.all([
+    prisma.business.findMany({ where: { id: { in: ids } }, select: { id: true, name: true } }),
+    prisma.category.findMany({ where: { id: { in: ids } }, select: { id: true, name: true } }),
+    prisma.gateway.findMany({ where: { id: { in: ids } }, select: { id: true, name: true } }),
+  ]);
+  const names = new Map([...businesses, ...categories, ...gateways].map((r) => [r.id, r.name]));
+  const named = <T extends { businessId: string; categoryId: string; gatewayId: string | null }>(r: T) => ({
+    ...r,
+    businessId: names.get(r.businessId) ?? r.businessId,
+    categoryId: names.get(r.categoryId) ?? r.categoryId,
+    gatewayId: r.gatewayId ? (names.get(r.gatewayId) ?? r.gatewayId) : null,
+  });
+  const changed = diff(named(existing), named(data), LABELS);
   await audit({
     user,
     businessId: entry.businessId,

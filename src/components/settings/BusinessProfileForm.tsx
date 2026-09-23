@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/Button";
 import { useToast } from "@/components/ui/Toast";
 import { hintClass, inputClass, labelClass, request } from "./request";
 
-export type EntityOption = { key: string; name: string; detail: string };
+export type EntityOption = { key: string; name: string; detail: string; gstRegistered?: boolean };
 
 export type BusinessProfile = {
   id?: string;
@@ -24,6 +24,7 @@ const SWATCHES = ["#6a6cf0", "#0ea5e9", "#e11d48", "#10b981", "#f59e0b", "#a855f
 
 const slugify = (s: string) =>
   s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40);
+
 
 /**
  * Who the business is, who bills for it, and how its invoices are numbered.
@@ -50,7 +51,9 @@ export function BusinessProfileForm({
   const set = <K extends keyof BusinessProfile>(key: K, value: BusinessProfile[K]) =>
     setForm((f) => ({ ...f, [key]: value }));
 
-  const preview = `${form.invoicePrefix}${String(form.invoiceNextNumber || 1).padStart(6, "0")}`;
+  // An unregistered seller (Mulberry) charges no GST, so its rate would mean nothing.
+  const gstRegistered = entities.find((e) => e.key === form.entity)?.gstRegistered ?? true;
+  const preview = `${form.invoicePrefix.trim().toUpperCase()}${String(form.invoiceNextNumber || 1).padStart(6, "0")}`;
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -58,10 +61,10 @@ export function BusinessProfileForm({
     setFields(undefined);
     const body = {
       name: form.name,
-      slug: form.slug,
+      slug: slugify(form.slug),
       entity: form.entity,
       color: form.color,
-      invoicePrefix: form.invoicePrefix,
+      invoicePrefix: form.invoicePrefix.trim().toUpperCase(),
       invoiceNextNumber: Number(form.invoiceNextNumber),
       defaultGstPercent: Number(form.defaultGstPercent),
     };
@@ -108,8 +111,9 @@ export function BusinessProfileForm({
             value={form.slug}
             onChange={(e) => {
               setSlugTouched(true);
-              set("slug", slugify(e.target.value));
+              set("slug", e.target.value);
             }}
+            onBlur={() => set("slug", slugify(form.slug))}
             required
             maxLength={40}
             placeholder="ipc"
@@ -182,11 +186,14 @@ export function BusinessProfileForm({
           Invoice prefix
           <input
             value={form.invoicePrefix}
-            onChange={(e) => set("invoicePrefix", e.target.value.toUpperCase())}
+            // Stored as typed and only shown upper-case: rewriting the value on
+            // every keystroke would throw the caret to the end of the field.
+            onChange={(e) => set("invoicePrefix", e.target.value)}
+            onBlur={() => set("invoicePrefix", form.invoicePrefix.trim().toUpperCase())}
             required
             maxLength={20}
             placeholder="IPC-INV-"
-            className={`${inputClass} font-mono`}
+            className={`${inputClass} font-mono uppercase`}
           />
           {err("invoicePrefix")}
         </label>
@@ -213,8 +220,10 @@ export function BusinessProfileForm({
             value={form.defaultGstPercent}
             onChange={(e) => set("defaultGstPercent", Number(e.target.value))}
             required
-            className={`${inputClass} tabular-nums`}
+            disabled={!gstRegistered}
+            className={`${inputClass} tabular-nums disabled:cursor-not-allowed disabled:opacity-50`}
           />
+          {!gstRegistered && <p className={hintClass}>Not used — this entity isn&apos;t GST-registered, so no tax is charged.</p>}
           {err("defaultGstPercent")}
         </label>
       </div>

@@ -48,15 +48,47 @@ export default async function TeamPage() {
         actions={<CreateUserForm businesses={businesses} />}
       />
 
-      <Card className="overflow-visible">
-        {/* Scrolls sideways on phones; on wide screens it doesn't, so row menus aren't clipped. */}
-        <div className="overflow-x-auto lg:overflow-visible">
-          <Table className="min-w-[860px]">
+      {/* Phones: one card per person, so access and actions are never scrolled out of view. */}
+      <div className="space-y-3 md:hidden">
+        {users.map((u) => (
+          <Card key={u.id} className={`p-4 ${u.active ? "" : "opacity-60"}`}>
+            <div className="flex items-start gap-3">
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-neutral-200 text-xs font-semibold text-neutral-700 dark:bg-neutral-700 dark:text-neutral-200">
+                {initials(u.name)}
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className="flex flex-wrap items-center gap-1.5 font-medium text-neutral-900 dark:text-neutral-100">
+                  <span className="truncate">{u.name}</span>
+                  <Badge tone={u.role === "ADMIN" ? "brand" : "neutral"}>{u.role === "ADMIN" ? "Admin" : "Member"}</Badge>
+                  {!u.active && <Badge tone="danger">Deactivated</Badge>}
+                </p>
+                <p className="truncate text-xs text-neutral-500">{u.email}</p>
+                <p className="mt-0.5 text-xs text-neutral-400">Last sign-in: {lastSeen(u.lastLoginAt)}</p>
+              </div>
+              <UserActions user={u} isSelf={u.id === me.id} />
+            </div>
+            <div className="mt-3 border-t border-neutral-100 pt-3 dark:border-white/[0.06]">
+              {u.role === "ADMIN" ? (
+                <span className="text-xs text-neutral-500">Sees all businesses</span>
+              ) : (
+                <UserBusinessAccess userId={u.id} businesses={businesses} assigned={u.businesses.map((b) => b.businessId)} />
+              )}
+            </div>
+          </Card>
+        ))}
+      </div>
+
+      <Card className="hidden overflow-visible md:block">
+        {/* Wide enough on tablets and up; not clipped, so row menus can open over the page. */}
+        <div className="overflow-visible">
+          <Table className="min-w-[720px]">
             <THead>
               <tr>
                 <TH>Person</TH>
                 <TH>Role</TH>
-                <TH>Businesses</TH>
+                <TH>
+                  Businesses <span className="font-normal normal-case tracking-normal text-neutral-400">· click to give or remove access</span>
+                </TH>
                 <TH>Last sign-in</TH>
                 <TH className="w-12" />
               </tr>

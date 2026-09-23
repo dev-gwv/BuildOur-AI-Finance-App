@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
 import { AlertCircle, TrendingUp, Wallet } from "lucide-react";
 import { loginAction } from "@/lib/actions/auth";
 import { Button } from "@/components/ui/Button";
@@ -8,6 +8,10 @@ import { Button } from "@/components/ui/Button";
 /** The sign-in form. `next` is where to go afterwards (validated again on the server). */
 export function LoginForm({ next }: { next?: string }) {
   const [error, formAction, pending] = useActionState(loginAction, undefined);
+  // Held in state because React resets a form's fields after its action runs:
+  // without this a wrong password would also wipe the email, and the retry
+  // would silently fail the browser's "required" check.
+  const [email, setEmail] = useState("");
 
   return (
     <div className="grid min-h-screen lg:grid-cols-2">
@@ -97,6 +101,8 @@ export function LoginForm({ next }: { next?: string }) {
                 id="email"
                 name="email"
                 type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
                 required
                 autoComplete="email"
                 placeholder="you@company.com"
@@ -116,6 +122,7 @@ export function LoginForm({ next }: { next?: string }) {
                 name="password"
                 type="password"
                 required
+                autoFocus={Boolean(error)}
                 autoComplete="current-password"
                 placeholder="••••••••"
                 className="mt-1.5 h-10 w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 shadow-xs text-sm outline-none focus:border-brand-500 focus:ring-4 focus:ring-brand-500/15 dark:border-white/10 dark:bg-neutral-950/60"

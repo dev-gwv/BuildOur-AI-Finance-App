@@ -6,7 +6,7 @@ import { syncInvoicePayments, syncPayment, unsyncPayment } from "@/lib/sheet";
 import { accessibleBusinessIds, accessWhere, assertBusinessAccess, requireInvoiceAccess } from "../access";
 import { audit, diff } from "../audit";
 import { allocateInvoiceNumber, formatInvoiceNumber, previewInvoiceNumber, seqInSeries } from "../businesses";
-import { badRequest, conflict, forbidden, notFound } from "../errors";
+import { ApiError, badRequest, conflict, forbidden, notFound } from "../errors";
 import { isAdmin, type SessionUser } from "../session";
 import {
   email,
@@ -29,13 +29,22 @@ const MAX_DIRECT_UPLOAD = 4 * 1024 * 1024;
 const UPLOAD_TYPES = ["application/pdf", "image/png", "image/jpeg", "image/webp"];
 const STORED_NAME = /^[a-zA-Z0-9-]+\.[a-zA-Z0-9]{1,5}$/;
 
+/**
+ * A cleared field arrives as "" from the JSON edit form; that means "not
+ * given", not an invalid email or GSTIN. (Form uploads already drop blanks.)
+ */
+const blankAsMissing = <T extends z.ZodType>(schema: T) =>
+  z.preprocess((v) => (typeof v === "string" && v.trim() === "" ? undefined : v), schema);
+
 const invoiceFields = {
   invoiceDate: isoDate("Invoice date"),
   dueDate: isoDate("Due date").optional(),
   customerName: requiredText("Customer name", 200),
-  customerAddress: requiredText("Customer address", 1000),
-  customerEmail: email,
-  customerGstin: gstin,
+  // Required on a tax invoice (checked per entity below); a Mulberry quotation
+  // names the couple but not their address, so there it may be left blank.
+  customerAddress: z.string().trim().max(1000, "Customer address is too long").default(""),
+  customerEmail: blankAsMissing(email),
+  customerGstin: blankAsMissing(gstin),
   // Mulberry's quotation invoices have no place of supply or HSN.
   placeOfSupply: z.string().trim().max(100).default(""),
   itemDescription: requiredText("Item", 500),
@@ -66,6 +75,13 @@ export const updateInvoiceSchema = z.object({
   /** Move to another business of the same legal entity (admins only). */
   businessId: id.optional(),
 });
+
+/** A GST tax invoice must name the buyer's address; Mulberry's plain invoice needn't. */
+function requireAddressForTaxInvoice(isMulberry: boolean, address: string) {
+  if (!isMulberry && !address) {
+    throw badRequest("Customer address is required on a tax invoice", { customerAddress: "Customer address is required" });
+  }
+}
 
 async function storeUpload(file: FormDataEntryValue | null): Promise<string | null> {
   if (!(file instanceof File) || file.size === 0) return null;
@@ -115,10 +131,24 @@ export async function createInvoice(user: SessionUser, input: z.infer<typeof cre
   if (business.archivedAt) throw badRequest(`${business.name} is archived — restore it in Settings to raise invoices`);
 
   const isMulberry = business.entity === "MULBERRY";
+  requireAddressForTaxInvoice(isMulberry, input.customerAddress);
   // An unregistered entity can't charge GST, whatever the form sent.
   const gstPercent = isMulberry ? 0 : input.gstPercent;
 
-  const doFilePath = input.doFilePath ?? (await storeUpload(form.get("doFile")));
+  // The source document is a convenience copy; the invoice must not be lost
+  // because storage hiccupped. A rejected file (wrong type, too big) is still
+  // the user's to fix, so that error goes back to them.
+  let doFilePath = input.doFilePath ?? null;
+  let warning: string | null = null;
+  if (!doFilePath) {
+    try {
+      doFilePath = await storeUpload(form.get("doFile"));
+    } catch (e) {
+      if (e instanceof ApiError) throw e;
+      console.error("Couldn't store the invoice's source document; saving the invoice without it:", e);
+      warning = "The invoice was saved, but the original document couldn't be attached. You can still print and email the invoice.";
+    }
+  }
 
   // A Bajaj-financed sale (raised from its DO) is disbursed in full, so it's
   // settled the moment it's raised. A GST-certificate sale is a direct B2B sale
@@ -199,7 +229,7 @@ export async function createInvoice(user: SessionUser, input: z.infer<typeof cre
 
   const [payment] = invoice.payments;
   if (payment) after(() => syncPayment(payment.id));
-  return invoice;
+  return { invoice, warning };
 }
 
 const EDIT_LABELS = {
@@ -230,6 +260,7 @@ export async function updateInvoice(user: SessionUser, invoiceId: string, input:
     include: { payments: { select: { id: true, amount: true, method: true } } },
   });
   const isMulberry = existing.brand === "MULBERRY";
+  requireAddressForTaxInvoice(isMulberry, input.customerAddress);
 
   // Moving between businesses keeps the legal entity: the printed seller can't change.
   let targetBusinessId = existing.businessId;

@@ -20,7 +20,8 @@ export function Segmented({
           key={item.key}
           href={item.href}
           scroll={false}
-          className={`whitespace-nowrap rounded-[9px] px-3 py-1.5 text-[13px] font-medium transition-colors ${
+          aria-current={item.active ? "page" : undefined}
+          className={`whitespace-nowrap rounded-[9px] px-3 py-1.5 text-[13px] font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-brand-500 ${
             item.active
               ? "bg-neutral-900 text-white shadow-sm dark:bg-white dark:text-neutral-900"
               : "text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900 dark:text-neutral-400 dark:hover:bg-white/[0.06] dark:hover:text-white"

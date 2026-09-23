@@ -64,7 +64,9 @@ export async function readPaymentForm(form: FormData): Promise<PaymentInput> {
   return {
     amount: input.amount,
     paidOn: input.paidOn,
-    method: input.method,
+    // No platform typed on a Razorpay payment: it came through Razorpay, and
+    // that's what the platform totals and sheet remarks should say.
+    method: input.method ?? gateway,
     note: input.note,
     gateway,
     gatewayRef,

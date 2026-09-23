@@ -43,23 +43,30 @@ export function StatCard({
   trend?: number[];
 }) {
   const hasDelta = typeof delta === "number" && Number.isFinite(delta);
+  // A trend needs at least two periods with something in them; one spike
+  // among zeros reads as noise, not as a trend.
+  const showTrend = Boolean(trend && trend.filter((v) => v > 0).length >= 2);
   const up = hasDelta && delta! >= 0;
   const good = invertDelta ? !up : up;
 
   return (
-    <Card className="relative overflow-hidden p-5">
+    <Card className="@container flex flex-col overflow-hidden p-5">
       <div className="flex items-center justify-between gap-2">
-        <p className="text-[13px] font-medium text-neutral-500 dark:text-neutral-400">{label}</p>
+        <p className="truncate text-[13px] font-medium text-neutral-500 dark:text-neutral-400">{label}</p>
         {Icon && (
-          <span className={`flex h-7 w-7 items-center justify-center rounded-lg ${ICON_TONE[tone]}`}>
+          <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ${ICON_TONE[tone]}`}>
             <Icon className="h-3.5 w-3.5" />
           </span>
         )}
       </div>
-      <p className="mt-3 truncate text-[26px] font-semibold leading-none tracking-tight tabular-nums text-neutral-950 dark:text-white">
+      {/* Scales with the card rather than truncating: a cut-off figure is worse than a smaller one. */}
+      <p
+        className="mt-3 whitespace-nowrap text-[20px] font-semibold leading-none tracking-tight tabular-nums text-neutral-950 @[13rem]:text-[24px] @[16rem]:text-[26px] dark:text-white"
+        title={value}
+      >
         {value}
       </p>
-      <div className="mt-3 flex min-h-5 items-center gap-2 text-xs">
+      <div className="mt-3 flex min-h-5 flex-wrap items-center gap-x-2 gap-y-1 text-xs">
         {hasDelta && (
           <span
             className={`inline-flex items-center gap-0.5 rounded-md px-1.5 py-0.5 font-medium tabular-nums ${
@@ -74,9 +81,11 @@ export function StatCard({
         )}
         {hint && <span className="truncate text-neutral-500 dark:text-neutral-400">{hint}</span>}
       </div>
-      {trend && trend.length > 1 && (
-        <div className="pointer-events-none absolute inset-x-0 bottom-0 h-12 opacity-80">
-          <Sparkline data={trend} color={SPARK_COLOR[tone]} />
+      {showTrend && (
+        // Its own strip under the text, bleeding to the card's edges — never
+        // drawn over the figures.
+        <div className="pointer-events-none -mx-5 -mb-5 mt-auto h-10 pt-2 opacity-80" aria-hidden>
+          <Sparkline data={trend!} color={SPARK_COLOR[tone]} />
         </div>
       )}
     </Card>

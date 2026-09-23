@@ -1,9 +1,11 @@
 import type { HTMLAttributes, ReactNode } from "react";
 
 export function Card({ className = "", ...rest }: HTMLAttributes<HTMLDivElement>) {
+  // min-w-0: as a grid/flex item a card must shrink to its track, so a wide
+  // table inside scrolls within the card instead of pushing the page sideways.
   return (
     <div
-      className={`rounded-2xl border border-neutral-200/80 bg-white shadow-card dark:border-white/[0.07] dark:bg-neutral-900/70 ${className}`}
+      className={`min-w-0 rounded-2xl border border-neutral-200/80 bg-white shadow-card dark:border-white/[0.07] dark:bg-neutral-900/70 ${className}`}
       {...rest}
     />
   );

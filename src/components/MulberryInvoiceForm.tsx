@@ -107,11 +107,12 @@ export function MulberryInvoiceForm({
 
       // Sent straight to storage from here for the same size reason; the
       // invoice only needs the resulting file name.
+      let attachFailed = false;
       if (file) {
         try {
           body.append("doFilePath", await uploadDirectToBlob(file));
         } catch {
-          toast.info("Invoice saved, but the quotation file couldn't be attached");
+          attachFailed = true;
         }
       }
 
@@ -121,8 +122,9 @@ export function MulberryInvoiceForm({
         toast.error(err.error ?? "Something went wrong");
         return;
       }
-      const { invoice } = await res.json();
-      toast.success("Invoice generated");
+      const { invoice, warning } = await res.json();
+      toast.success(`Invoice ${invoice.invoiceNumber} generated`);
+      if (attachFailed || warning) toast.info(warning ?? "The invoice was saved, but the quotation file couldn't be attached.");
       router.push(`/invoices/${invoice.id}`);
     } catch {
       toast.error("Network error — please try again");

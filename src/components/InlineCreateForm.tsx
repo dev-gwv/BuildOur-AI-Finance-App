@@ -33,9 +33,11 @@ export function InlineCreateForm({
 
   async function onSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    // Kept before any await: React clears e.currentTarget once the handler yields.
+    const formEl = e.currentTarget;
     setPending(true);
 
-    const form = new FormData(e.currentTarget);
+    const form = new FormData(formEl);
     const payload: Record<string, unknown> = { ...extra };
     for (const field of fields) {
       const raw = form.get(field.name);
@@ -55,7 +57,7 @@ export function InlineCreateForm({
         return;
       }
       toast.success(successMessage);
-      e.currentTarget.reset();
+      formEl.reset();
       router.refresh();
     } catch {
       toast.error("Network error — please try again");

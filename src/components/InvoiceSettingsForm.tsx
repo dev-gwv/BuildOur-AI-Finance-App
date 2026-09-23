@@ -120,6 +120,11 @@ export function InvoiceSettingsForm({
             )}
           </div>
         </div>
+        {(signatureFile || removeSignature) && (
+          <p className="mt-2 inline-flex items-center gap-1.5 rounded-md bg-amber-50 px-2 py-1 text-xs font-medium text-amber-800 dark:bg-amber-500/10 dark:text-amber-300">
+            {removeSignature ? "Signature will be removed" : "New signature not saved yet"} — click Save settings below.
+          </p>
+        )}
         <p className="mt-2 text-xs text-neutral-500 dark:text-neutral-400">
           A PNG with a transparent background looks best. Max 500 KB. This signature is printed on
           every invoice automatically.

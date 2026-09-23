@@ -30,7 +30,7 @@ export async function alertCount(scope: AlertScope = "ALL"): Promise<number> {
       prisma.$queryRaw<{ count: bigint }[]>`
         SELECT COUNT(*)::bigint AS count
         FROM "Invoice" i
-        WHERE i."dueDate" < NOW()
+        WHERE i."dueDate" < date_trunc('day', NOW())
           AND i."grossAmount" - COALESCE((SELECT SUM(p."amount") FROM "Payment" p WHERE p."invoiceId" = i."id"), 0) > 0.5
           ${sqlBusinessFilter(scope)}`,
     ]);
@@ -48,7 +48,7 @@ export interface OverdueSummary {
 
 export async function overdueInvoices(scope: AlertScope): Promise<OverdueSummary> {
   const invoices = await prisma.invoice.findMany({
-    where: { dueDate: { lt: new Date() }, ...businessFilter(scope) },
+    where: { dueDate: { lt: startOfToday() }, ...businessFilter(scope) },
     select: { grossAmount: true, payments: { select: { amount: true } } },
   });
   const open = invoices
@@ -73,4 +73,12 @@ export async function syncFailures(scope: AlertScope): Promise<{ count: number; 
     orderBy: { name: "asc" },
   });
   return { count: rows.length, businesses: names.map((n) => n.name) };
+}
+
+/**
+ * Due dates are calendar days (stored at midnight UTC), so an invoice due today
+ * isn't overdue until tomorrow — compare against the start of today, not now.
+ */
+export function startOfToday(now = new Date()): Date {
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
 }

@@ -405,4 +405,9 @@ assert.equal(api.reference, "123456789012");
 assert.match(api.paidOn, /^\d{4}-\d{2}-\d{2}$/);
 assert.equal(normalizeRazorpayPayment({ id: "pay_x", status: "captured", amount: 500, created_at: 1789000000 }).feeAmount, 0, "no fee reported yet");
 
+// --- DO price read by OCR from a photographed table ---
+assert.equal(parseDeliveryOrderText("A Product Price [117,999.00 117,999.00").productPrice, 117999, "OCR bracket before the price");
+assert.equal(parseDeliveryOrderText("Product Price | 1,77,000").productPrice, 177000, "OCR table bar before the price");
+assert.equal(parseDeliveryOrderText("Product Price: Rs. 354000").productPrice, 354000, "label, colon and Rs.");
+
 console.log("All invoice money-path checks passed.");

@@ -14,6 +14,6 @@ export const GET = withApiErrors(async (req: NextRequest) => {
 export const POST = withApiErrors(async (req: NextRequest) => {
   const user = await requireUser();
   const { data, form } = await parseForm(req, createInvoiceSchema);
-  const invoice = await createInvoice(user, data, form, req);
-  return NextResponse.json({ invoice }, { status: 201 });
+  const { invoice, warning } = await createInvoice(user, data, form, req);
+  return NextResponse.json({ invoice, ...(warning ? { warning } : {}) }, { status: 201 });
 });

@@ -125,7 +125,8 @@ export function PaymentsPanel({
   // Editing a payment frees up its own amount again.
   const limit = round2(outstanding + (editing?.amount ?? 0));
 
-  const byPlatform = totalsByPlatform(payments);
+  // A payment with no platform typed but a gateway set came through that gateway.
+  const byPlatform = totalsByPlatform(payments.map((p) => ({ amount: p.amount, method: p.method || p.gateway || null })));
   const totalFees = round2(payments.reduce((sum, p) => sum + feesOf(p), 0));
 
   // Live Razorpay breakdown. The fee follows the configured rate until typed
@@ -408,7 +409,9 @@ export function PaymentsPanel({
         toast.error(err.error ?? (editing ? "Couldn't update that payment" : "Couldn't record that payment"));
         return;
       }
+      const { warning } = await res.json().catch(() => ({}));
       toast.success(editing ? "Payment updated" : "Payment recorded");
+      if (warning) toast.info(warning);
       closeForm();
       router.refresh();
     } catch {
@@ -440,20 +443,21 @@ export function PaymentsPanel({
 
       <CardBody className="space-y-5">
         <div className="space-y-2.5">
-          <dl className="grid grid-cols-3 gap-3 text-sm">
-            <div>
+          {/* Phones: one row per figure, label left, amount right. */}
+          <dl className="grid grid-cols-1 gap-2 text-sm sm:grid-cols-3 sm:gap-3">
+            <div className="flex items-baseline justify-between gap-3 sm:block">
               <dt className="text-xs text-neutral-500 dark:text-neutral-400">Invoice total</dt>
               <dd className="mt-0.5 text-base font-semibold tabular-nums text-neutral-900 dark:text-neutral-100">
                 {formatCurrency(total)}
               </dd>
             </div>
-            <div>
+            <div className="flex items-baseline justify-between gap-3 sm:block">
               <dt className="text-xs text-neutral-500 dark:text-neutral-400">Received</dt>
               <dd className="mt-0.5 text-base font-semibold tabular-nums text-emerald-600 dark:text-emerald-400">
                 {formatCurrency(paid)}
               </dd>
             </div>
-            <div>
+            <div className="flex items-baseline justify-between gap-3 sm:block">
               <dt className="text-xs text-neutral-500 dark:text-neutral-400">Balance due</dt>
               <dd className="mt-0.5 text-base font-semibold tabular-nums text-neutral-900 dark:text-neutral-100">
                 {formatCurrency(Math.max(outstanding, 0))}
@@ -475,11 +479,14 @@ export function PaymentsPanel({
               style={{ width: `${progress}%` }}
             />
           </div>
-          <p className="text-xs text-neutral-500 dark:text-neutral-400">
-            {settled
-              ? "Settled in full."
-              : `${progress}% received across ${payments.length} payment${payments.length === 1 ? "" : "s"}.`}
-          </p>
+          {/* With nothing received yet, the empty list below already says so. */}
+          {payments.length > 0 && (
+            <p className="text-xs text-neutral-500 dark:text-neutral-400">
+              {settled
+                ? "Settled in full."
+                : `${progress}% received across ${payments.length} payment${payments.length === 1 ? "" : "s"}.`}
+            </p>
+          )}
           {byPlatform.length > 0 && (
             <div className="flex flex-wrap gap-1.5 pt-1">
               {byPlatform.map(([name, amt]) => (

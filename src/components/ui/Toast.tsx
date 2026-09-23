@@ -1,7 +1,7 @@
 "use client";
 
 import { CheckCircle2, AlertCircle, Info, X } from "lucide-react";
-import { createContext, useCallback, useContext, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
 
 type ToastKind = "success" | "error" | "info";
 type Toast = { id: number; kind: ToastKind; message: string };
@@ -20,13 +20,16 @@ const ICONS: Record<ToastKind, typeof CheckCircle2> = {
   info: Info,
 };
 
-const STYLES: Record<ToastKind, string> = {
-  success:
-    "border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-300",
-  error:
-    "border-red-200 bg-red-50 text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-300",
-  info: "border-brand-200 bg-brand-50 text-brand-800 dark:border-brand-900 dark:bg-brand-950 dark:text-brand-300",
+// A neutral card with a coloured icon reads calmer than a full tinted box,
+// and stays legible on both the light and the dark canvas.
+const ICON_STYLES: Record<ToastKind, string> = {
+  success: "text-emerald-500",
+  error: "text-red-500",
+  info: "text-brand-500",
 };
+
+/** Errors stay up longer: they usually need reading, and sometimes acting on. */
+const DURATION: Record<ToastKind, number> = { success: 4500, info: 5000, error: 7000 };
 
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
@@ -39,34 +42,38 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     (kind: ToastKind, message: string) => {
       const id = Date.now() + Math.random();
       setToasts((prev) => [...prev, { id, kind, message }]);
-      setTimeout(() => dismiss(id), 4500);
+      setTimeout(() => dismiss(id), DURATION[kind]);
     },
     [dismiss]
   );
 
-  const value: ToastContextValue = {
-    success: (message) => push("success", message),
-    error: (message) => push("error", message),
-    info: (message) => push("info", message),
-  };
+  const value = useMemo<ToastContextValue>(
+    () => ({
+      success: (message) => push("success", message),
+      error: (message) => push("error", message),
+      info: (message) => push("info", message),
+    }),
+    [push]
+  );
 
   return (
     <ToastContext.Provider value={value}>
       {children}
-      <div className="pointer-events-none fixed bottom-4 right-4 z-50 flex w-full max-w-sm flex-col gap-2">
+      {/* Full-width at the bottom on phones; bottom-right on larger screens. */}
+      <div className="pointer-events-none fixed inset-x-4 bottom-4 z-[60] flex flex-col items-stretch gap-2 sm:left-auto sm:right-5 sm:bottom-5 sm:w-96 print:hidden">
         {toasts.map((toast) => {
           const Icon = ICONS[toast.kind];
           return (
             <div
               key={toast.id}
-              role="status"
-              className={`pointer-events-auto flex items-start gap-2 rounded-lg border px-4 py-3 text-sm shadow-lg backdrop-blur ${STYLES[toast.kind]}`}
+              role={toast.kind === "error" ? "alert" : "status"}
+              className="pointer-events-auto flex animate-fade-up items-start gap-3 rounded-xl border border-neutral-200/80 bg-white/95 px-4 py-3 text-sm text-neutral-800 shadow-pop backdrop-blur dark:border-white/10 dark:bg-neutral-900/95 dark:text-neutral-100"
             >
-              <Icon className="mt-0.5 h-4 w-4 shrink-0" />
-              <span className="flex-1">{toast.message}</span>
+              <Icon className={`mt-0.5 h-4 w-4 shrink-0 ${ICON_STYLES[toast.kind]}`} />
+              <span className="flex-1 leading-5">{toast.message}</span>
               <button
                 onClick={() => dismiss(toast.id)}
-                className="shrink-0 opacity-60 hover:opacity-100"
+                className="-mr-1 shrink-0 rounded-md p-0.5 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700 focus-visible:outline-2 focus-visible:outline-brand-500 dark:hover:bg-white/10 dark:hover:text-white"
                 aria-label="Dismiss"
               >
                 <X className="h-4 w-4" />

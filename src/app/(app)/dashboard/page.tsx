@@ -14,8 +14,9 @@ import {
 import { prisma } from "@/lib/prisma";
 import { requirePageUser } from "@/server/session";
 import { getScope, scopeWhere } from "@/server/scope";
-import { DonutBreakdown, MoneyFlowChart, StackedMonthlyChart, type SeriesDef } from "@/components/DashboardCharts";
+import { CategoryBars, DonutBreakdown, MoneyFlowChart, StackedMonthlyChart, type SeriesDef } from "@/components/DashboardCharts";
 import { AlertsBanner } from "@/components/AlertsBanner";
+import { startOfToday } from "@/lib/alerts";
 import { StatCard } from "@/components/ui/StatCard";
 import { Card, CardBody, CardHeader, CardTitle } from "@/components/ui/Card";
 import { PageHeader } from "@/components/ui/PageHeader";
@@ -138,6 +139,83 @@ export default async function DashboardPage({
   const chartStart = current && current.start < addMonths(chartEnd, -6) ? current.start : addMonths(chartEnd, -6);
   const chartFrom = period === "all" ? undefined : chartStart;
 
+  // A business with nothing in it yet gets a guided start, not seven empty cards.
+  const [invoiceCount, entryCount] = await Promise.all([
+    prisma.invoice.count({ where: invoiceWhere }),
+    prisma.expense.count({ where: entryWhere }),
+  ]);
+  if (invoiceCount === 0 && entryCount === 0) {
+    const isAdmin = user.role === "ADMIN";
+    const scopeName = scope.current?.name ?? "All businesses";
+    const steps = [
+      {
+        icon: FileText,
+        title: "Raise the first invoice",
+        body: scope.current?.entity === "MULBERRY"
+          ? "Upload a package quotation — the client, events and total fill in by themselves."
+          : "Upload a Bajaj delivery order or a customer's GST certificate — PDF, photo or screenshot.",
+        href: "/invoices/new",
+        cta: "New invoice",
+      },
+      {
+        icon: Receipt,
+        title: "Log money in and out",
+        body: "Receipts through gateways and the business's costs, with GST and charges worked out for you.",
+        href: "/money/new",
+        cta: "Add an entry",
+      },
+      ...(isAdmin
+        ? [
+            {
+              icon: Wallet,
+              title: "Connect its Google Sheet",
+              body: "Every payment and entry is then written into the sheet as it's saved.",
+              href: scope.current ? `/settings/businesses/${scope.current.id}` : "/settings/businesses",
+              cta: "Set up the sheet",
+            },
+          ]
+        : []),
+    ];
+    return (
+      <div className="space-y-6">
+        <AlertsBanner
+          scope={scope.current ? [scope.current.id] : scope.access === "ALL" ? "ALL" : scope.businesses.map((b) => b.id)}
+          isAdmin={isAdmin}
+        />
+        <PageHeader
+          eyebrow={`${greeting(now)}, ${user.name.split(" ")[0]}`}
+          title={
+            <span className="flex items-center gap-2.5">
+              {scope.current && <span className="h-2.5 w-2.5 rounded-full" style={{ background: scope.current.color }} />}
+              Overview · {scopeName}
+            </span>
+          }
+          description="Nothing has been recorded here yet. Start with any of these — the overview fills in as you go."
+        />
+        <div className={`grid gap-4 ${steps.length === 3 ? "lg:grid-cols-3" : "lg:grid-cols-2"}`}>
+          {steps.map((s, i) => (
+            <Card key={s.title} className="flex flex-col p-6">
+              <div className="flex items-center gap-3">
+                <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-brand-50 text-brand-600 dark:bg-brand-500/10 dark:text-brand-300">
+                  <s.icon className="h-4 w-4" />
+                </span>
+                <span className="text-xs font-medium uppercase tracking-[0.08em] text-neutral-400">Step {i + 1}</span>
+              </div>
+              <h2 className="mt-4 text-base font-semibold text-neutral-900 dark:text-white">{s.title}</h2>
+              <p className="mt-1 flex-1 text-sm text-neutral-500 dark:text-neutral-400">{s.body}</p>
+              <Link
+                href={s.href}
+                className="mt-5 inline-flex h-9 w-fit items-center gap-1.5 rounded-lg bg-neutral-900 px-4 text-sm font-medium text-white shadow-sm hover:bg-neutral-800 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
+              >
+                {s.cta} <ArrowRight className="h-3.5 w-3.5" />
+              </Link>
+            </Card>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
   const expenseSums = { grossAmount: true, gatewayChargeAmount: true } as const;
   const paymentSums = { amount: true, feeAmount: true, feeGstAmount: true } as const;
 
@@ -232,7 +310,7 @@ export default async function DashboardPage({
       where: invoiceWhere,
       orderBy: { createdAt: "desc" },
       take: 6,
-      select: { id: true, businessId: true, invoiceNumber: true, customerName: true, grossAmount: true, createdAt: true },
+      select: { id: true, businessId: true, invoiceNumber: true, customerName: true, grossAmount: true, invoiceDate: true, createdAt: true },
     }),
     prisma.payment.findMany({
       where: { invoice: invoiceWhere },
@@ -285,7 +363,8 @@ export default async function DashboardPage({
     .filter((inv) => inv.balance > 0.5)
     .sort((a, b) => b.balance - a.balance);
   const outstandingTotal = open.reduce((s, i) => s + i.balance, 0);
-  const overdue = open.filter((i) => i.dueDate < now);
+  const today = startOfToday(now);
+  const overdue = open.filter((i) => i.dueDate < today);
 
   // --- Collections by month, stacked per business; and money in vs out ---
   const seriesKeys: string[] = scope.current ? [scope.current.id] : scope.businesses.map((b) => b.id);
@@ -330,6 +409,7 @@ export default async function DashboardPage({
     const f = flows.get(key) ?? { in: 0, out: 0, fees: 0 };
     return { label: monthLabel(key), in: f.in - f.fees, out: f.out, profit: f.in - f.fees - f.out };
   });
+  const windowProfit = flowData.reduce((sum, f) => sum + f.profit, 0);
   const usedSeries = seriesKeys.filter((s) => chartData.some((row) => ((row as Record<string, number | string>)[s] as number) > 0));
   const series: SeriesDef[] = (usedSeries.length ? usedSeries : seriesKeys).map((key) => ({
     key,
@@ -383,6 +463,7 @@ export default async function DashboardPage({
     ...recentInvoices.map((i) => ({
       id: `i-${i.id}`,
       at: i.createdAt,
+      shownAt: i.invoiceDate,
       kind: "invoice" as const,
       title: `${i.invoiceNumber} raised`,
       subtitle: i.customerName,
@@ -393,6 +474,7 @@ export default async function DashboardPage({
     ...recentPayments.map((p) => ({
       id: `p-${p.id}`,
       at: p.createdAt,
+      shownAt: p.paidOn,
       kind: "payment" as const,
       title: `Received${p.method ? ` via ${p.method}` : ""}`,
       subtitle: `${p.invoice.customerName} · ${p.invoice.invoiceNumber}`,
@@ -414,10 +496,20 @@ export default async function DashboardPage({
     };
     return Object.fromEntries(Object.entries(merged).filter(([, v]) => v)) as Record<string, string>;
   };
+  const PERIOD_PHRASE: Record<string, string> = {
+    month: "this month",
+    lastmonth: "last month",
+    quarter: "this quarter",
+    fy: "this FY",
+    "12m": "the last 12 months",
+    all: "all time",
+  };
   const periodLabel =
     period === "custom"
-      ? `${from ? formatDate(from) : "start"} – ${to ? formatDate(to) : "today"}`
-      : PERIODS.find((p) => p.key === period)!.label.toLowerCase();
+      ? `${from ? formatDate(from) : "the start"} – ${to ? formatDate(to) : "today"}`
+      : PERIOD_PHRASE[period];
+  // The charts span at least six months, which can be longer than the period.
+  const windowLabel = monthKeys.length ? `${monthLabel(monthKeys[0])} – ${monthLabel(monthKeys[monthKeys.length - 1])}` : "";
   const scopeName = scope.current?.name ?? "All businesses";
   const alertScope = scope.current ? [scope.current.id] : scope.access === "ALL" ? "ALL" : scope.businesses.map((b) => b.id);
 
@@ -548,10 +640,13 @@ export default async function DashboardPage({
           <CardHeader>
             <CardTitle
               title="Collections by month"
-              subtitle={scope.current ? `Money received into ${scope.current.name}` : "Money received, split by business"}
+              subtitle={`${scope.current ? `Money received into ${scope.current.name}` : "Money received, split by business"} · ${windowLabel}`}
               action={
-                <span className="text-lg font-semibold tabular-nums text-neutral-900 dark:text-white">
-                  {formatCompactINR(receivedTrend.reduce((s, v) => s + v, 0))}
+                <span className="block text-right">
+                  <span className="block text-lg font-semibold leading-tight tabular-nums text-neutral-900 dark:text-white">
+                    {formatCompactINR(receivedTrend.reduce((s, v) => s + v, 0))}
+                  </span>
+                  <span className="text-[11px] text-neutral-400">in this window</span>
                 </span>
               }
             />
@@ -590,12 +685,15 @@ export default async function DashboardPage({
         <CardHeader>
           <CardTitle
             title="Profit by month"
-            subtitle="Money in after gateway fees (invoice collections + ledger receipts) against money out"
+            subtitle={`Money in after gateway fees (invoice collections + ledger receipts) against money out · ${windowLabel}`}
             action={
-              <span
-                className={`text-lg font-semibold tabular-nums ${profit >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}
-              >
-                {formatCompactINR(flowData.reduce((sum, f) => sum + f.profit, 0))}
+              <span className="block text-right">
+                <span
+                  className={`block text-lg font-semibold leading-tight tabular-nums ${windowProfit >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}
+                >
+                  {formatCompactINR(windowProfit)}
+                </span>
+                <span className="text-[11px] text-neutral-400">profit in this window</span>
               </span>
             }
           />
@@ -616,16 +714,16 @@ export default async function DashboardPage({
             <CardTitle title="By business" subtitle={`Each row matches its Google Sheet · ${periodLabel}`} />
           </CardHeader>
           <div className="overflow-x-auto">
-            <Table className="min-w-[860px]">
+            <Table className="min-w-[980px]">
               <THead>
                 <tr>
                   <TH>Business</TH>
-                  <TH className="text-right">Invoiced</TH>
-                  <TH className="text-right">Collected</TH>
-                  <TH className="text-right">Outstanding</TH>
-                  <TH className="text-right">Money out</TH>
-                  <TH className="text-right">Profit</TH>
-                  <TH className="w-40">Collection rate</TH>
+                  <TH className="whitespace-nowrap text-right">Invoiced</TH>
+                  <TH className="whitespace-nowrap text-right">Collected</TH>
+                  <TH className="whitespace-nowrap text-right">Outstanding</TH>
+                  <TH className="whitespace-nowrap text-right">Money out</TH>
+                  <TH className="whitespace-nowrap text-right">Profit</TH>
+                  <TH className="w-40 whitespace-nowrap">Collection rate</TH>
                   <TH />
                 </tr>
               </THead>
@@ -635,13 +733,13 @@ export default async function DashboardPage({
                   return (
                     <TR key={row.business.id}>
                       <TD>
-                        <span className="flex items-center gap-2 font-medium text-neutral-900 dark:text-neutral-100">
-                          <span className="h-2 w-2 rounded-full" style={{ background: row.business.color }} />
+                        <span className="flex items-center gap-2 whitespace-nowrap font-medium text-neutral-900 dark:text-neutral-100">
+                          <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: row.business.color }} />
                           {row.business.name}
                           <span className="text-xs font-normal text-neutral-400">{row.invoices} inv.</span>
                         </span>
                       </TD>
-                      <TD className="text-right tabular-nums">{formatCurrencyWhole(row.invoiced)}</TD>
+                      <TD className="whitespace-nowrap text-right tabular-nums">{formatCurrencyWhole(row.invoiced)}</TD>
                       <TD className="text-right tabular-nums font-medium text-emerald-600 dark:text-emerald-400">
                         {formatCurrencyWhole(row.received)}
                       </TD>
@@ -684,7 +782,7 @@ export default async function DashboardPage({
       )}
 
       {/* Dues + activity */}
-      <div className="grid gap-4 xl:grid-cols-5">
+      <div className="grid items-start gap-4 xl:grid-cols-5">
         <Card className="overflow-hidden xl:col-span-3">
           <CardHeader>
             <CardTitle
@@ -695,7 +793,11 @@ export default async function DashboardPage({
           </CardHeader>
           {open.length === 0 ? (
             <CardBody>
-              <EmptyState icon={CircleDollarSign} title="All settled" description="Every invoice in scope has been paid in full." />
+              {openInvoices.length === 0 ? (
+                <EmptyState icon={CircleDollarSign} title="No invoices yet" description="Balances owed on invoices show up here." />
+              ) : (
+                <EmptyState icon={CircleDollarSign} title="All settled" description="Every invoice here has been paid in full." />
+              )}
             </CardBody>
           ) : (
             <div className="overflow-x-auto">
@@ -711,7 +813,7 @@ export default async function DashboardPage({
                 <TBody>
                   {open.slice(0, 7).map((inv) => {
                     const days = Math.max(0, Math.floor((now.getTime() - inv.invoiceDate.getTime()) / 86_400_000));
-                    const late = inv.dueDate < now;
+                    const late = inv.dueDate < today;
                     return (
                       <TR key={inv.id}>
                         <TD>
@@ -788,7 +890,7 @@ export default async function DashboardPage({
                         </span>
                       </p>
                       <p className="truncate text-xs text-neutral-500 dark:text-neutral-400">
-                        {a.subtitle} · {formatDate(a.at)}
+                        {a.subtitle} · {formatDate(a.shownAt)}
                       </p>
                     </Link>
                   </li>
@@ -824,41 +926,58 @@ export default async function DashboardPage({
             />
           ) : (
             <div className="grid gap-8 lg:grid-cols-2">
-              <div className="space-y-4">
-                <div>
-                  <p className="mb-2 text-xs font-medium uppercase tracking-[0.06em] text-emerald-600 dark:text-emerald-400">Money in</p>
-                  <dl className="grid grid-cols-3 gap-3">
-                    {[
+              <div className="space-y-5">
+                {[
+                  {
+                    title: "Money in",
+                    titleCls: "text-emerald-600 dark:text-emerald-400",
+                    count: ledgerIn.length,
+                    empty: "No receipts logged in this period.",
+                    tiles: [
                       { label: "Gross", value: ledgerTotals.inGross, cls: "text-neutral-900 dark:text-white" },
                       { label: "Charges + GST", value: ledgerTotals.inCharges, cls: "text-amber-700 dark:text-amber-400" },
                       { label: "Net", value: ledgerTotals.inNet, cls: "text-emerald-600 dark:text-emerald-400" },
-                    ].map((m) => (
-                      <div key={m.label} className="rounded-xl bg-neutral-50 p-3 dark:bg-white/[0.03]">
-                        <dt className="text-xs text-neutral-500 dark:text-neutral-400">{m.label}</dt>
-                        <dd className={`mt-1 text-base font-semibold tabular-nums ${m.cls}`}>{formatCurrencyWhole(m.value)}</dd>
-                      </div>
-                    ))}
-                  </dl>
-                </div>
-                <div>
-                  <p className="mb-2 text-xs font-medium uppercase tracking-[0.06em] text-red-600 dark:text-red-400">Money out</p>
-                  <dl className="grid grid-cols-3 gap-3">
-                    {[
+                    ],
+                  },
+                  {
+                    title: "Money out",
+                    titleCls: "text-red-600 dark:text-red-400",
+                    count: ledgerOut.length,
+                    empty: "No costs logged in this period.",
+                    tiles: [
                       { label: "Incl. GST", value: ledgerTotals.outGross, cls: "text-neutral-900 dark:text-white" },
                       { label: "Input GST", value: ledgerTotals.outGst, cls: "text-amber-700 dark:text-amber-400" },
-                      { label: "Excl. GST", value: ledgerTotals.outNet, cls: "text-red-600 dark:text-red-400" },
-                    ].map((m) => (
-                      <div key={m.label} className="rounded-xl bg-neutral-50 p-3 dark:bg-white/[0.03]">
-                        <dt className="text-xs text-neutral-500 dark:text-neutral-400">{m.label}</dt>
-                        <dd className={`mt-1 text-base font-semibold tabular-nums ${m.cls}`}>{formatCurrencyWhole(m.value)}</dd>
-                      </div>
-                    ))}
-                  </dl>
-                </div>
+                      { label: "Excl. GST", value: ledgerTotals.outNet, cls: "text-neutral-900 dark:text-white" },
+                    ],
+                  },
+                ].map((side) => (
+                  <div key={side.title}>
+                    <p className={`mb-2 flex items-center justify-between text-xs font-medium uppercase tracking-[0.06em] ${side.titleCls}`}>
+                      {side.title}
+                      <span className="font-normal normal-case tracking-normal text-neutral-400">
+                        {side.count} entr{side.count === 1 ? "y" : "ies"}
+                      </span>
+                    </p>
+                    {side.count === 0 ? (
+                      <p className="rounded-xl border border-dashed border-neutral-200 px-3 py-4 text-center text-sm text-neutral-500 dark:border-white/10 dark:text-neutral-400">
+                        {side.empty}
+                      </p>
+                    ) : (
+                      <dl className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                        {side.tiles.map((m) => (
+                          <div key={m.label} className="rounded-xl bg-neutral-50 p-3 dark:bg-white/[0.03]">
+                            <dt className="text-xs text-neutral-500 dark:text-neutral-400">{m.label}</dt>
+                            <dd className={`mt-1 text-base font-semibold tabular-nums ${m.cls}`}>{formatCurrencyWhole(m.value)}</dd>
+                          </div>
+                        ))}
+                      </dl>
+                    )}
+                  </div>
+                ))}
               </div>
               <div className="space-y-6">
-                {costCategories.length > 0 && <DonutBreakdown data={costCategories} centerLabel="Costs" />}
-                {inCategories.length > 0 && <DonutBreakdown data={inCategories} centerLabel="Net in" />}
+                {costCategories.length > 0 && <CategoryBars title="Costs by category" data={costCategories} color="#f43f5e" />}
+                {inCategories.length > 0 && <CategoryBars title="Money in by category (net)" data={inCategories} color="#10b981" />}
               </div>
             </div>
           )}

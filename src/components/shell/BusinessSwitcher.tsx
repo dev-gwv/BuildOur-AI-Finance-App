@@ -55,7 +55,8 @@ export function BusinessSwitcher({
   // A record page (an invoice's id) belongs to one business; switching away
   // should land on the list rather than a page the new scope may not own.
   const segments = pathname.split("/").filter(Boolean);
-  const safePath = segments.length > 1 && segments[1].length > 16 ? `/${segments[0]}` : pathname;
+  const scopedRecord = ["invoices", "money"].includes(segments[0]) && segments.length > 1 && segments[1] !== "new";
+  const safePath = scopedRecord ? `/${segments[0]}` : pathname;
   const href = (slug: string) => `/scope?b=${encodeURIComponent(slug)}&next=${encodeURIComponent(safePath || "/dashboard")}`;
   const anyReview = businesses.some((b) => b.needsReview);
   const single = businesses.length <= 1;
@@ -91,7 +92,7 @@ export function BusinessSwitcher({
       {open && (
         <div
           role="listbox"
-          className="absolute inset-x-0 top-full z-40 mt-1.5 animate-fade-up overflow-hidden rounded-xl border border-white/10 bg-neutral-900 p-1 shadow-pop"
+          className="absolute inset-x-0 top-full z-40 mt-1.5 max-h-[min(70vh,32rem)] animate-fade-up overflow-y-auto rounded-xl border border-white/10 bg-neutral-900 p-1 shadow-pop"
         >
           <SwitcherItem
             href={href("all")}
@@ -155,10 +156,10 @@ function SwitcherItem({
     >
       <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-white/[0.06]">{swatch}</span>
       <span className="min-w-0 flex-1">
-        <span className="flex items-center gap-1.5 truncate text-[13px] font-medium text-neutral-100">
-          {name}
+        <span className="flex min-w-0 items-center gap-1.5 text-[13px] font-medium text-neutral-100">
+          <span className="truncate">{name}</span>
           {review && (
-            <span className="rounded bg-amber-400/15 px-1 text-[10px] font-semibold uppercase tracking-wide text-amber-300">
+            <span className="shrink-0 rounded bg-amber-400/15 px-1 text-[10px] font-semibold uppercase tracking-wide text-amber-300">
               Review
             </span>
           )}

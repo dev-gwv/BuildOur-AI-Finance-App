@@ -27,6 +27,21 @@ export async function hit(key: string, limit: number, windowSeconds: number): Pr
   }
 }
 
+/**
+ * Whether a key is already over its limit, without counting this request —
+ * for limits that should only count failures (see login in src/lib/auth.ts).
+ */
+export async function isLimited(key: string, limit: number, windowSeconds: number): Promise<boolean> {
+  try {
+    const row = await prisma.rateLimit.findUnique({ where: { key } });
+    if (!row) return false;
+    const expired = row.windowStart.getTime() + windowSeconds * 1000 < Date.now();
+    return !expired && row.count >= limit;
+  } catch {
+    return false;
+  }
+}
+
 /** Clears a key, e.g. a user's failed-login counter after they sign in. */
 export async function reset(key: string): Promise<void> {
   await prisma.rateLimit.deleteMany({ where: { key } }).catch(() => {});
@@ -34,7 +49,7 @@ export async function reset(key: string): Promise<void> {
 
 /** The limits the app enforces, in one place so they're easy to tune. */
 export const LIMITS = {
-  /** Wrong passwords per account, then per network address. */
+  /** Sign-in attempts per account (cleared on success), and failed ones per network address. */
   loginPerEmail: { limit: 5, window: 15 * 60 },
   loginPerIp: { limit: 30, window: 15 * 60 },
   /** Emails a user can send customers per hour (a leaked session can't spam). */

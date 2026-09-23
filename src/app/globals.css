@@ -81,7 +81,33 @@
     size: A4;
     margin: 10mm;
   }
+  :root {
+    /* A printed invoice is always the light version, whatever the OS theme. */
+    color-scheme: light;
+  }
   body {
     background: #fff;
+    color: #0a0a0a;
+  }
+  * {
+    /* Browsers drop backgrounds when printing unless told otherwise, which
+       would leave the invoice header's white text on white paper. */
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+}
+
+/* Keyboard focus is always visible; mouse clicks don't leave rings behind. */
+:focus-visible {
+  outline-color: var(--color-brand-500);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
   }
 }

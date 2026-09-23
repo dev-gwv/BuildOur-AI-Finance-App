@@ -6,7 +6,7 @@ import { AlertCircle, CheckCircle2, FileCheck2, Receipt, SlidersHorizontal, Uplo
 import { calculateInvoiceBreakup } from "@/lib/invoiceCalc";
 import { isInterStateSupply, placeOfSupplyFromGstin, stateCodeFromGstin, stateNameFromCode } from "@/lib/gstState";
 import { amountInWords } from "@/lib/numberToWords";
-import { formatCurrency } from "@/lib/format";
+import { formatCurrency, formatDate } from "@/lib/format";
 import { BRANDS } from "@/lib/brands";
 import { readImageText } from "@/lib/clientUpload";
 import { Button } from "@/components/ui/Button";
@@ -201,8 +201,9 @@ export function InvoiceForm({
         toast.error(err.error ?? "Something went wrong");
         return;
       }
-      const { invoice } = await res.json();
-      toast.success("Invoice generated");
+      const { invoice, warning } = await res.json();
+      toast.success(`Invoice ${invoice.invoiceNumber} generated`);
+      if (warning) toast.info(warning);
       router.push(`/invoices/${invoice.id}`);
     } catch {
       toast.error("Network error — please try again");
@@ -265,7 +266,7 @@ export function InvoiceForm({
               {doId && (
                 <span className="text-xs text-neutral-500 dark:text-neutral-400">
                   DO {doId}
-                  {doDate && ` · ${doDate}`}
+                  {doDate && ` · ${formatDate(doDate)}`}
                 </span>
               )}
             </CardHeader>

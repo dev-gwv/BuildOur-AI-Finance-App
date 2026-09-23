@@ -89,6 +89,13 @@ const SEGMENT_LABELS: Record<string, string> = {
   edit: "Edit",
 };
 
+/** What a record id stands for, by the section it sits under. */
+const RECORD_LABELS: Record<string, string> = {
+  invoices: "Invoice",
+  money: "Entry",
+  businesses: "Business",
+};
+
 /**
  * The one nav item to highlight: the longest href the path sits under, so
  * /reports/gst lights up "GST report" and not "Reports" as well.
@@ -184,10 +191,15 @@ export function AppShell({
         <header className="sticky top-0 z-20 flex h-14 items-center gap-3 border-b border-neutral-200/70 bg-canvas/80 px-4 backdrop-blur-xl sm:px-6 lg:px-8 dark:border-white/[0.06] dark:bg-canvas-dark/80 print:hidden">
           <button
             onClick={() => setMobileOpen(true)}
-            className="-ml-1 rounded-md p-1.5 text-neutral-600 hover:bg-neutral-200/60 lg:hidden dark:text-neutral-300 dark:hover:bg-white/10"
-            aria-label="Open menu"
+            className="relative -ml-1 rounded-md p-1.5 text-neutral-600 hover:bg-neutral-200/60 lg:hidden dark:text-neutral-300 dark:hover:bg-white/10"
+            aria-label={`Open menu — ${current?.name ?? "All businesses"}`}
           >
             <Menu className="h-5 w-5" />
+            {/* On phones the scope pill is hidden, so the business colour rides on the menu button. */}
+            <span
+              className="absolute right-0.5 top-0.5 h-2.5 w-2.5 rounded-full ring-2 ring-canvas sm:hidden dark:ring-canvas-dark"
+              style={{ background: current?.color ?? "conic-gradient(#6a6cf0, #0ea5e9, #e11d48, #6a6cf0)" }}
+            />
           </button>
           <ScopePill current={current} />
           <Breadcrumbs pathname={pathname} />
@@ -239,8 +251,9 @@ function Breadcrumbs({ pathname }: { pathname: string }) {
       {segments.map((segment, i) => {
         const href = "/" + segments.slice(0, i + 1).join("/");
         const last = i === segments.length - 1;
-        // Record ids aren't meaningful to read; show them as "Detail".
-        const label = SEGMENT_LABELS[segment] ?? (segment.length > 16 ? "Detail" : segment);
+        // Every fixed segment has a label; anything else is a record id, which
+        // isn't meaningful to read — name what kind of record it is instead.
+        const label = SEGMENT_LABELS[segment] ?? RECORD_LABELS[segments[i - 1] ?? ""] ?? "Details";
         return (
           <span key={href} className="flex min-w-0 items-center gap-1">
             {i > 0 && <ChevronRight className="h-3.5 w-3.5 shrink-0 text-neutral-400" />}

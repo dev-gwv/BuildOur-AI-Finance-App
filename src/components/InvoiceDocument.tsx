@@ -68,7 +68,7 @@ export function InvoiceDocument({
     <div id="invoice-print-area" className="mx-auto max-w-[860px] bg-white text-neutral-900 print:max-w-none">
       <div className="overflow-hidden rounded-2xl border border-neutral-200 shadow-lg print:rounded-none print:border-0 print:shadow-none">
         <div className={`flex flex-col gap-6 px-8 py-8 text-white sm:flex-row sm:items-start sm:justify-between ${brand.headerClass}`}>
-          <div className="flex items-start gap-4">
+          <div className="flex min-w-0 flex-1 items-start gap-4">
             {brand.logoDataUri && (
               // eslint-disable-next-line @next/next/no-img-element -- inline data URI
               <img
@@ -77,7 +77,7 @@ export function InvoiceDocument({
                 className="h-20 w-20 shrink-0 rounded-lg object-cover shadow-md"
               />
             )}
-            <div>
+            <div className="min-w-0">
               <p className={`text-xs font-semibold uppercase tracking-[0.2em] ${brand.accentTextClass}`}>
                 {brand.documentTitle}
                 {invoice.revisedAt && (
@@ -86,7 +86,7 @@ export function InvoiceDocument({
                   </span>
                 )}
               </p>
-              <h1 className="mt-1 text-2xl font-bold">{brand.name}</h1>
+              <h1 className="mt-1 text-xl font-bold leading-snug sm:text-2xl">{brand.name}</h1>
               {brand.addressLines.map((line) => (
                 <p key={line} className="text-sm text-white/80">
                   {line}
@@ -99,7 +99,7 @@ export function InvoiceDocument({
               )}
             </div>
           </div>
-          <div className="sm:text-right">
+          <div className="shrink-0 sm:text-right">
             {settled ? (
               <div className="inline-flex items-center gap-1.5 rounded-full bg-white/15 px-3 py-1 text-xs font-semibold">
                 <CheckCircle2 className="h-3.5 w-3.5" />
@@ -110,7 +110,7 @@ export function InvoiceDocument({
                 Balance due {formatCurrency(balanceDue)}
               </div>
             )}
-            <p className="mt-3 text-3xl font-bold tracking-tight">#{invoice.invoiceNumber}</p>
+            <p className="mt-3 whitespace-nowrap text-2xl font-bold tracking-tight tabular-nums sm:text-[28px]">#{invoice.invoiceNumber}</p>
           </div>
         </div>
 
@@ -146,7 +146,45 @@ export function InvoiceDocument({
           </div>
         </div>
 
-        <div className="overflow-x-auto px-8">
+        {/* Phones: the line item as a stacked card — a 7-column table can't be
+            read at 390px. Screens and print/PDF always get the full table. */}
+        <div className="px-6 sm:hidden print:hidden">
+          <div className="rounded-xl border border-neutral-200">
+            <div className="flex items-start justify-between gap-3 border-b border-neutral-100 px-4 py-3">
+              <div className="min-w-0">
+                <p className="font-medium text-neutral-900">{invoice.itemDescription}</p>
+                <p className="mt-0.5 text-xs text-neutral-500">
+                  {invoice.qty.toFixed(2)} × {formatCurrency(breakup.rate)}
+                  {brand.gstRegistered && invoice.hsnSac ? ` · HSN/SAC ${invoice.hsnSac}` : ""}
+                </p>
+              </div>
+              <p className="shrink-0 font-semibold tabular-nums text-neutral-900">{formatCurrency(breakup.subTotal)}</p>
+            </div>
+            {brand.gstRegistered && (
+              <dl className="grid gap-1 px-4 py-3 text-xs text-neutral-600">
+                {breakup.taxMode === "IGST" ? (
+                  <div className="flex justify-between">
+                    <dt>IGST {breakup.igstPercent}%</dt>
+                    <dd className="tabular-nums">{formatCurrency(breakup.igstAmount)}</dd>
+                  </div>
+                ) : (
+                  <>
+                    <div className="flex justify-between">
+                      <dt>CGST {breakup.cgstPercent}%</dt>
+                      <dd className="tabular-nums">{formatCurrency(breakup.cgstAmount)}</dd>
+                    </div>
+                    <div className="flex justify-between">
+                      <dt>SGST {breakup.sgstPercent}%</dt>
+                      <dd className="tabular-nums">{formatCurrency(breakup.sgstAmount)}</dd>
+                    </div>
+                  </>
+                )}
+              </dl>
+            )}
+          </div>
+        </div>
+
+        <div className="hidden overflow-x-auto px-8 sm:block print:block">
           <table className="w-full min-w-[560px] text-sm">
             <thead>
               <tr className="border-y border-neutral-200 bg-neutral-50 text-left text-xs uppercase tracking-wide text-neutral-500">

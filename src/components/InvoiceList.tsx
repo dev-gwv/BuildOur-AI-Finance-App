@@ -8,6 +8,7 @@ import { Segmented } from "@/components/ui/Segmented";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/Table";
 import { isInterStateSupply } from "@/lib/gstState";
 import { formatCurrency, formatCurrencyWhole, formatDate } from "@/lib/format";
+import { startOfToday } from "@/lib/alerts";
 
 export type ListedInvoice = {
   id: string;
@@ -69,7 +70,8 @@ export function InvoiceList({
   canDelete: boolean;
   newHref: string;
 }) {
-  const now = new Date();
+  // Due dates are calendar days: an invoice due today isn't overdue until tomorrow.
+  const today = startOfToday();
   const rows = invoices.map((inv) => {
     const paid = inv.payments.reduce((s, p) => s + p.amount, 0);
     const balance = Math.round((inv.grossAmount - paid) * 100) / 100;
@@ -81,10 +83,18 @@ export function InvoiceList({
     { billed: 0, paid: 0, due: 0 }
   );
   const openCount = rows.filter((r) => r.balance > 0.5).length;
-  const overdueCount = rows.filter((r) => r.balance > 0.5 && r.dueDate < now).length;
+  const overdueCount = rows.filter((r) => r.balance > 0.5 && r.dueDate < today).length;
   const visible = rows.filter((r) =>
     filters.status === "open" ? r.balance > 0.5 : filters.status === "paid" ? r.balance <= 0.5 : true
   );
+
+  const status = (inv: (typeof rows)[number]) => {
+    const settled = inv.balance <= 0.5;
+    const late = !settled && inv.dueDate < today;
+    if (settled) return <Badge tone="success" dot>Paid</Badge>;
+    if (inv.paid > 0) return <Badge tone={late ? "danger" : "warning"} dot>Part paid</Badge>;
+    return <Badge tone={late ? "danger" : "neutral"} dot>{late ? "Overdue" : "Unpaid"}</Badge>;
+  };
 
   const href = (over: Partial<ListFilters>) => {
     const f = { ...filters, ...over };
@@ -120,7 +130,7 @@ export function InvoiceList({
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+      <div className="grid grid-cols-3 gap-2 sm:gap-3">
         {[
           {
             label: "Billed",
@@ -141,10 +151,12 @@ export function InvoiceList({
             cls: totals.due > 0 ? "text-amber-700 dark:text-amber-400" : "text-neutral-950 dark:text-white",
           },
         ].map((m) => (
-          <Card key={m.label} className="px-5 py-4">
-            <p className="text-[13px] font-medium text-neutral-500 dark:text-neutral-400">{m.label}</p>
-            <p className={`mt-1.5 text-xl font-semibold tracking-tight tabular-nums ${m.cls}`}>{formatCurrencyWhole(m.value)}</p>
-            <p className="mt-0.5 text-xs text-neutral-400">{m.hint}</p>
+          <Card key={m.label} className="px-3 py-3 sm:px-5 sm:py-4">
+            <p className="text-xs font-medium text-neutral-500 sm:text-[13px] dark:text-neutral-400">{m.label}</p>
+            <p className={`mt-1 truncate text-[15px] font-semibold tracking-tight tabular-nums sm:mt-1.5 sm:text-xl ${m.cls}`}>
+              {formatCurrencyWhole(m.value)}
+            </p>
+            <p className="mt-0.5 truncate text-[11px] text-neutral-400 sm:text-xs">{m.hint}</p>
           </Card>
         ))}
       </div>
@@ -178,7 +190,35 @@ export function InvoiceList({
             />
           </form>
         </div>
-        <div className="overflow-x-auto">
+        {/* Phones: one card per invoice with what matters at a glance. */}
+        <ul className="divide-y divide-neutral-100 sm:hidden dark:divide-white/[0.05]">
+          {visible.map((inv) => (
+            <li key={inv.id}>
+              <Link href={`/invoices/${inv.id}`} className="block px-4 py-3 active:bg-neutral-50 dark:active:bg-white/[0.03]">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="truncate font-medium text-neutral-900 dark:text-neutral-100">{inv.invoiceNumber}</span>
+                  {status(inv)}
+                </div>
+                <div className="mt-0.5 flex items-center gap-1.5 text-sm text-neutral-600 dark:text-neutral-400">
+                  {showBusiness && <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: inv.business.color }} />}
+                  <span className="truncate">{inv.customerName}</span>
+                </div>
+                <div className="mt-1.5 flex items-baseline justify-between gap-3 text-xs text-neutral-500 dark:text-neutral-400">
+                  <span>{formatDate(inv.invoiceDate)}</span>
+                  <span className="tabular-nums">
+                    <span className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">{formatCurrency(inv.grossAmount)}</span>
+                    {inv.balance > 0.5 && inv.paid > 0 && (
+                      <span className="ml-1.5 text-amber-700 dark:text-amber-400">{formatCurrency(inv.balance)} due</span>
+                    )}
+                  </span>
+                </div>
+              </Link>
+            </li>
+          ))}
+          {visible.length === 0 && <li className="px-4 py-10 text-center text-sm text-neutral-500">No invoices match these filters.</li>}
+        </ul>
+
+        <div className="hidden overflow-x-auto sm:block">
           <Table className="min-w-[880px]">
             <THead>
               <tr>
@@ -196,7 +236,6 @@ export function InvoiceList({
             <TBody>
               {visible.map((inv) => {
                 const settled = inv.balance <= 0.5;
-                const late = !settled && inv.dueDate < now;
                 return (
                   <TR key={inv.id}>
                     <TD>
@@ -228,21 +267,7 @@ export function InvoiceList({
                       </TD>
                     )}
                     <TD className="whitespace-nowrap">{formatDate(inv.invoiceDate)}</TD>
-                    <TD>
-                      {settled ? (
-                        <Badge tone="success" dot>
-                          Paid
-                        </Badge>
-                      ) : inv.paid > 0 ? (
-                        <Badge tone={late ? "danger" : "warning"} dot>
-                          Part paid
-                        </Badge>
-                      ) : (
-                        <Badge tone={late ? "danger" : "neutral"} dot>
-                          {late ? "Overdue" : "Unpaid"}
-                        </Badge>
-                      )}
-                    </TD>
+                    <TD>{status(inv)}</TD>
                     <TD className="text-right tabular-nums font-medium text-neutral-900 dark:text-neutral-100">
                       {formatCurrency(inv.grossAmount)}
                     </TD>

@@ -33,9 +33,12 @@ export async function extractPdfTextInBrowser(file: File): Promise<string> {
 
 /** Plain OCR of a photographed document (a DO or GST certificate), in the browser. */
 export async function readImageText(file: File): Promise<string> {
-  const { createWorker } = await import("tesseract.js");
+  const { createWorker, PSM } = await import("tesseract.js");
   const worker = await createWorker("eng");
   try {
+    // Automatic page layout: tesseract.js otherwise reads the page as one
+    // block of text and drops tables — which is where a DO keeps its price.
+    await worker.setParameters({ tessedit_pageseg_mode: PSM.AUTO });
     const { data } = await worker.recognize(file);
     return data.text;
   } finally {
