@@ -10,7 +10,7 @@ import { extractPdfTextInBrowser, readImageText, uploadDirectToBlob } from "@/li
 import { Button } from "@/components/ui/Button";
 import { Card, CardBody, CardHeader, CardTitle } from "@/components/ui/Card";
 import { useToast } from "@/components/ui/Toast";
-import { FieldError, focusFirstError, hintClass, inputClass, labelClass, useFieldErrors, type FieldErrors } from "@/components/invoices/LineFields";
+import { FieldError, Rupee, focusFirstError, hintClass, inputClass, labelClass, moneyInputClass, textareaClass, type FieldErrors, useFieldErrors } from "@/components/invoices/LineFields";
 import { LineItemsEditor, lineErrors, newLine, toLineInputs, type EditorLine } from "@/components/invoices/LineItemsEditor";
 
 export function MulberryInvoiceForm({
@@ -257,7 +257,7 @@ export function MulberryInvoiceForm({
                   clear("customerAddress");
                 }}
                 rows={2}
-                className={inputClass}
+                className={textareaClass}
                 {...props("customerAddress")}
               />
               <FieldError id="err-customerAddress" message={shown.customerAddress} />
@@ -288,24 +288,26 @@ export function MulberryInvoiceForm({
             />
             <div className="sm:w-1/2">
               <label className={labelClass} htmlFor="mb-advancePaid">
-                Advance received (₹)
+                Advance received
               </label>
-              <input
-                id="mb-advancePaid"
-                type="number"
-                step="0.01"
-                min="0"
-                inputMode="decimal"
-                value={advancePaid}
-                onChange={(e) => {
-                  setAdvancePaid(e.target.value);
-                  clear("advancePaid");
-                }}
-                placeholder="0"
-                className={`${inputClass} tabular-nums`}
-                {...props("advancePaid")}
-                aria-invalid={shown.advancePaid ? true : undefined}
-              />
+              <Rupee>
+                <input
+                  id="mb-advancePaid"
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  inputMode="decimal"
+                  value={advancePaid}
+                  onChange={(e) => {
+                    setAdvancePaid(e.target.value);
+                    clear("advancePaid");
+                  }}
+                  placeholder="0"
+                  className={`${moneyInputClass}`}
+                  {...props("advancePaid")}
+                  aria-invalid={shown.advancePaid ? true : undefined}
+                />
+              </Rupee>
               <FieldError id="err-advancePaid" message={shown.advancePaid} />
               {!shown.advancePaid && <p className={hintClass}>Leave blank if nothing has been paid yet.</p>}
             </div>
@@ -385,7 +387,7 @@ export function MulberryInvoiceForm({
               <label className={labelClass} htmlFor="mb-terms">
                 Terms &amp; conditions
               </label>
-              <textarea id="mb-terms" value={terms} onChange={(e) => setTerms(e.target.value)} rows={2} className={inputClass} />
+              <textarea id="mb-terms" value={terms} onChange={(e) => setTerms(e.target.value)} rows={2} className={textareaClass} />
             </div>
           </div>
         </details>

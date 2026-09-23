@@ -21,7 +21,7 @@ export default async function EditEntryPage({ params }: { params: Promise<{ id: 
       color: true,
       defaultGstPercent: true,
       gateways: { orderBy: { name: "asc" }, select: { id: true, name: true, chargePercent: true } },
-      categories: { orderBy: { name: "asc" }, select: { id: true, name: true } },
+      categories: { orderBy: { name: "asc" }, select: { id: true, name: true, _count: { select: { expenses: true } } } },
     },
   });
   if (!business) notFound();

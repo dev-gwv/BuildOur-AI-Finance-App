@@ -4,6 +4,7 @@ import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { CheckCircle2, ExternalLink, KeyRound, Plug, ShieldCheck, Unplug } from "lucide-react";
 import { Button } from "@/components/ui/Button";
+import { Field, Input } from "@/components/ui/Field";
 import { Badge } from "@/components/ui/Badge";
 import { Card, CardBody, CardHeader, CardTitle } from "@/components/ui/Card";
 import { useToast } from "@/components/ui/Toast";
@@ -19,9 +20,6 @@ type Status = {
   mode: "test" | "live" | null;
   connectedAt: string | null;
 };
-
-const inputClass =
-  "mt-1.5 h-10 w-full rounded-lg border border-neutral-200 bg-white px-3 font-mono text-sm shadow-xs outline-none focus:border-brand-500 focus:ring-4 focus:ring-brand-500/15 dark:border-white/10 dark:bg-neutral-950/60";
 
 /**
  * Connect / switch / disconnect Razorpay. Keys are verified server-side before
@@ -137,13 +135,13 @@ export function RazorpayIntegrationCard({ initial }: { initial: Status }) {
                   onClick={() =>
                     save({ enabled: !status.enabled }, status.enabled ? "Razorpay switched off" : "Razorpay switched on")
                   }
-                  className={`relative h-6 w-11 rounded-full transition-colors disabled:opacity-50 ${
-                    status.enabled ? "bg-emerald-500" : "bg-neutral-300 dark:bg-neutral-700"
+                  className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500 disabled:opacity-50 ${
+                    status.enabled ? "bg-brand-600" : "bg-neutral-300 dark:bg-neutral-700"
                   }`}
                 >
                   <span
-                    className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all ${
-                      status.enabled ? "left-[22px]" : "left-0.5"
+                    className={`inline-block h-5 w-5 rounded-full bg-white shadow transition-transform ${
+                      status.enabled ? "translate-x-[22px]" : "translate-x-0.5"
                     }`}
                   />
                 </button>
@@ -186,30 +184,28 @@ export function RazorpayIntegrationCard({ initial }: { initial: Status }) {
           ) : (
             <form onSubmit={onConnect} className="grid gap-4">
               <div className="grid gap-4 sm:grid-cols-2">
-                <label className="block text-sm font-medium text-neutral-700 dark:text-neutral-300">
-                  Key ID
-                  <input
+                <Field label="Key ID" hint="Starts with rzp_live_ (or rzp_test_ for trying it out).">
+                  <Input
                     value={keyId}
                     onChange={(e) => setKeyId(e.target.value.trim())}
                     placeholder="rzp_live_XXXXXXXXXXXXXX"
                     autoComplete="off"
                     spellCheck={false}
                     required
-                    className={inputClass}
+                    className="font-mono"
                   />
-                </label>
-                <label className="block text-sm font-medium text-neutral-700 dark:text-neutral-300">
-                  Key Secret
-                  <input
+                </Field>
+                <Field label="Key Secret" hint="Stored encrypted and never shown again.">
+                  <Input
                     type="password"
                     value={keySecret}
                     onChange={(e) => setKeySecret(e.target.value.trim())}
                     placeholder="••••••••••••••••••••"
                     autoComplete="new-password"
                     required
-                    className={inputClass}
+                    className="font-mono"
                   />
-                </label>
+                </Field>
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 <Button type="submit" loading={pending} disabled={!keyId || !keySecret}>

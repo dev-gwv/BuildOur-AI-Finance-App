@@ -7,6 +7,8 @@ import { PageHeader } from "@/components/ui/PageHeader";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { controlClass } from "@/components/ui/controlClass";
+import { Button } from "@/components/ui/Button";
 
 const PAGE_SIZE = 50;
 
@@ -130,8 +132,9 @@ export default async function AuditLogPage({
     },
   };
 
-  const selectClass =
-    "h-9 rounded-lg border border-neutral-200/80 bg-white px-2.5 text-sm shadow-card dark:border-white/10 dark:bg-neutral-900/70";
+  // Toolbar controls: 44px on phones, 36px from sm, like the toolbar buttons.
+const selectClass = controlClass(false, "h-11 w-full sm:h-9 sm:w-auto sm:min-w-40");
+const searchClass = controlClass(false, "h-11 w-full pl-9 sm:h-9 sm:w-64");
 
   return (
     <div className="space-y-6">
@@ -141,7 +144,7 @@ export default async function AuditLogPage({
         description="Every invoice, payment, entry, business and team change: who made it, when, and what it changed."
       />
 
-      <form method="get" className="flex flex-wrap items-center gap-2">
+      <form method="get" className="grid grid-cols-1 gap-2 sm:flex sm:flex-wrap sm:items-center">
         <select name="business" defaultValue={params.business ?? ""} className={selectClass} aria-label="Business">
           <option value="">All businesses</option>
           {businesses.map((b) => (
@@ -167,23 +170,22 @@ export default async function AuditLogPage({
           ))}
         </select>
         <div className="relative">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
-          <input
-            type="search"
-            name="q"
-            defaultValue={q}
-            placeholder="Search what changed…"
-            className="h-9 w-64 rounded-lg border border-neutral-200/80 bg-white pl-9 pr-3 text-sm shadow-card outline-none focus:border-brand-500 focus:ring-4 focus:ring-brand-500/15 dark:border-white/10 dark:bg-neutral-900/70"
-          />
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-500" />
+          <input type="search" name="q" defaultValue={q} placeholder="Search what changed…" aria-label="Search what changed" className={searchClass} />
         </div>
-        <button className="h-9 rounded-lg bg-neutral-900 px-3.5 text-sm font-medium text-white dark:bg-white dark:text-neutral-900">
-          Filter
-        </button>
-        {filtered && (
-          <Link href="/settings/audit" className="text-sm text-neutral-500 hover:text-neutral-900 dark:hover:text-white">
-            Clear
-          </Link>
-        )}
+        <div className="flex items-center gap-1">
+          <Button type="submit" className="flex-1 sm:flex-none">
+            Filter
+          </Button>
+          {filtered && (
+            <Link
+              href="/settings/audit"
+              className="inline-flex h-11 items-center rounded-lg px-3 text-sm font-medium text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900 sm:h-9 dark:text-neutral-300 dark:hover:bg-white/[0.06] dark:hover:text-white"
+            >
+              Clear
+            </Link>
+          )}
+        </div>
       </form>
 
       {page.length === 0 ? (

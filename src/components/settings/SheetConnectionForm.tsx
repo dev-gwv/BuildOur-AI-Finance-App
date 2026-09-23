@@ -7,7 +7,8 @@ import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { useToast } from "@/components/ui/Toast";
 import { useConfirm } from "@/components/ui/ConfirmDialog";
-import { hintClass, inputClass, labelClass, request } from "./request";
+import { request } from "./request";
+import { Field, Input } from "@/components/ui/Field";
 
 /**
  * Connects a business to its Google Sheet: the Apps Script web app's /exec URL
@@ -112,31 +113,27 @@ export function SheetConnectionForm({
       </div>
 
       <form onSubmit={onSave} className="grid gap-4">
-        <label className={labelClass}>
-          Web app URL
-          <input
+        <Field label="Web app URL" hint="From Deploy → Manage deployments in the sheet's Apps Script.">
+          <Input
             type="url"
             value={url}
             onChange={(e) => setUrl(e.target.value)}
             placeholder="https://script.google.com/macros/s/…/exec"
             required
             spellCheck={false}
-            className={`${inputClass} font-mono text-xs`}
+            className="font-mono text-xs"
           />
-          <p className={hintClass}>From Deploy → Manage deployments in the sheet&apos;s Apps Script.</p>
-        </label>
-        <label className={labelClass}>
-          Shared secret
-          <input
+        </Field>
+        <Field label="Shared secret" hint="Stored encrypted and never shown again.">
+          <Input
             type="password"
             value={secret}
             onChange={(e) => setSecret(e.target.value)}
             placeholder={source === "settings" ? "•••••••• saved — type to replace" : "The SECRET at the top of the script"}
             autoComplete="new-password"
-            className={`${inputClass} font-mono`}
+            className="font-mono"
           />
-          <p className={hintClass}>Stored encrypted and never shown again.</p>
-        </label>
+        </Field>
         <div className="flex flex-wrap items-center gap-2">
           <Button type="submit" loading={pending}>
             Save connection

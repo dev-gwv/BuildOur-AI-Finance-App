@@ -4,12 +4,15 @@ import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { CreditCard, Plus, Tag } from "lucide-react";
 import { Button } from "@/components/ui/Button";
+import { controlClass } from "@/components/ui/Field";
 import { DeleteButton } from "@/components/DeleteButton";
 import { useToast } from "@/components/ui/Toast";
 import { request } from "./request";
 
-const smallInput =
-  "h-8 rounded-lg border border-neutral-200 bg-white px-2.5 text-sm outline-none focus:border-brand-500 focus:ring-4 focus:ring-brand-500/15 dark:border-white/10 dark:bg-neutral-950/60";
+// Compact inline editors: the shared control look at the height of a small
+// button (44px on phones, 32px from sm). The shared class is full-width, so
+// each control sits in a sized wrapper.
+const smallInput = controlClass(false, "h-10 px-2.5 sm:h-8");
 
 /** A business's categories for money in/out entries. */
 export function CategoriesEditor({
@@ -62,14 +65,17 @@ export function CategoriesEditor({
         </ul>
       )}
       <form onSubmit={add} className="flex flex-wrap items-center gap-2">
-        <input
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="New category"
-          required
-          maxLength={60}
-          className={`${smallInput} w-56`}
-        />
+        <div className="w-full sm:w-56">
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="New category"
+            aria-label="New category name"
+            required
+            maxLength={60}
+            className={smallInput}
+          />
+        </div>
         <Button type="submit" size="sm" variant="secondary" loading={pending}>
           <Plus className="h-3.5 w-3.5" />
           Add
@@ -123,25 +129,32 @@ export function GatewaysEditor({
         </ul>
       )}
       <form onSubmit={add} className="flex flex-wrap items-center gap-2">
-        <input
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="Gateway (e.g. Razorpay)"
-          required
-          maxLength={60}
-          className={`${smallInput} w-56`}
-        />
-        <input
-          type="number"
-          step="0.01"
-          min={0}
-          max={100}
-          value={percent}
-          onChange={(e) => setPercent(e.target.value)}
-          placeholder="%"
-          required
-          className={`${smallInput} w-20 tabular-nums`}
-        />
+        <div className="min-w-0 flex-1 sm:w-56 sm:flex-none">
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="Gateway (e.g. Razorpay)"
+            aria-label="Gateway name"
+            required
+            maxLength={60}
+            className={smallInput}
+          />
+        </div>
+        <div className="w-20">
+          <input
+            type="number"
+            inputMode="decimal"
+            step="0.01"
+            min={0}
+            max={100}
+            value={percent}
+            onChange={(e) => setPercent(e.target.value)}
+            placeholder="%"
+            aria-label="Charge %"
+            required
+            className={`${smallInput} tabular-nums`}
+          />
+        </div>
         <Button type="submit" size="sm" variant="secondary" loading={pending}>
           <Plus className="h-3.5 w-3.5" />
           Add
@@ -179,16 +192,19 @@ function GatewayRow({
     <li className="flex items-center justify-between gap-3 px-3 py-2">
       <span className="text-sm font-medium text-neutral-900 dark:text-neutral-100">{gateway.name}</span>
       <div className="flex items-center gap-2">
-        <input
-          type="number"
-          step="0.01"
-          min={0}
-          max={100}
-          value={percent}
-          onChange={(e) => setPercent(e.target.value)}
-          aria-label={`${gateway.name} charge %`}
-          className={`${smallInput} w-20 text-right tabular-nums`}
-        />
+        <div className="w-20">
+          <input
+            type="number"
+            inputMode="decimal"
+            step="0.01"
+            min={0}
+            max={100}
+            value={percent}
+            onChange={(e) => setPercent(e.target.value)}
+            aria-label={`${gateway.name} charge %`}
+            className={`${smallInput} text-right tabular-nums`}
+          />
+        </div>
         <span className="text-xs text-neutral-500">%</span>
         {dirty && (
           <Button size="sm" onClick={save} loading={pending}>

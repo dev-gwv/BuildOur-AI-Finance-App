@@ -19,7 +19,7 @@ import { readImageText } from "@/lib/clientUpload";
 import { Button } from "@/components/ui/Button";
 import { Card, CardBody, CardHeader, CardTitle } from "@/components/ui/Card";
 import { useToast } from "@/components/ui/Toast";
-import { FieldError, focusFirstError, hintClass, inputClass, labelClass, useFieldErrors, type FieldErrors } from "@/components/invoices/LineFields";
+import { checkRowClass, FieldError, Rupee, focusFirstError, hintClass, inputClass, labelClass, moneyInputClass, textareaClass, type FieldErrors, useFieldErrors } from "@/components/invoices/LineFields";
 import {
   LineItemsEditor,
   lineErrors,
@@ -318,7 +318,7 @@ export function InvoiceForm({
                 setSaleType(opt.key);
                 setMismatch(null);
               }}
-              className={`flex items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-colors ${
+              className={`flex min-h-12 items-center gap-2.5 rounded-xl px-3 py-2.5 text-left transition-colors sm:gap-3 ${
                 saleType === opt.key
                   ? "bg-neutral-900 text-white shadow-sm dark:bg-white dark:text-neutral-900"
                   : "text-neutral-600 hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-white/[0.06]"
@@ -326,8 +326,8 @@ export function InvoiceForm({
             >
               <opt.icon className="h-4 w-4 shrink-0" />
               <span className="min-w-0">
-                <span className="block truncate text-sm font-semibold">{opt.label}</span>
-                <span className={`block truncate text-xs ${saleType === opt.key ? "opacity-70" : "text-neutral-500"}`}>{opt.hint}</span>
+                <span className="block text-sm font-semibold leading-tight">{opt.label}</span>
+                <span className={`mt-0.5 hidden text-xs sm:block ${saleType === opt.key ? "opacity-70" : "text-neutral-500"}`}>{opt.hint}</span>
               </span>
             </button>
           ))}
@@ -467,7 +467,7 @@ export function InvoiceForm({
                   clear("customerAddress");
                 }}
                 rows={2}
-                className={inputClass}
+                className={textareaClass}
                 {...props("customerAddress")}
                 aria-invalid={shown.customerAddress ? true : undefined}
               />
@@ -527,7 +527,7 @@ export function InvoiceForm({
                         clear("doId");
                       }}
                       placeholder="e.g. B429427477"
-                      className={`${inputClass} font-mono`}
+                      className={`${inputClass} font-mono placeholder:font-sans`}
                       {...props("doId")}
                       aria-invalid={shown.doId ? true : undefined}
                     />
@@ -535,23 +535,25 @@ export function InvoiceForm({
                   </div>
                   <div>
                     <label className={labelClass} htmlFor="inv-downPayment">
-                      Down payment (₹)
+                      Down payment
                     </label>
-                    <input
-                      id="inv-downPayment"
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      inputMode="decimal"
-                      value={downPayment}
-                      onChange={(e) => {
-                        setDownPayment(e.target.value);
-                        clear("downPayment");
-                      }}
-                      className={`${inputClass} tabular-nums`}
-                      {...props("downPayment")}
-                      aria-invalid={shown.downPayment ? true : undefined}
-                    />
+                    <Rupee>
+                      <input
+                        id="inv-downPayment"
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        inputMode="decimal"
+                        value={downPayment}
+                        onChange={(e) => {
+                          setDownPayment(e.target.value);
+                          clear("downPayment");
+                        }}
+                        className={`${moneyInputClass}`}
+                        {...props("downPayment")}
+                        aria-invalid={shown.downPayment ? true : undefined}
+                      />
+                    </Rupee>
                     <FieldError id="err-downPayment" message={shown.downPayment} />
                   </div>
                 </div>
@@ -589,16 +591,16 @@ export function InvoiceForm({
                   </p>
                 )}
                 {down > 0 ? (
-                  <label className="flex cursor-pointer items-start gap-2 text-sm text-neutral-700 dark:text-neutral-300">
+                  <label className={checkRowClass}>
                     <input
                       type="checkbox"
                       checked={downPaymentReceived}
                       onChange={(e) => setDownPaymentReceived(e.target.checked)}
-                      className="mt-0.5 h-4 w-4 rounded border-neutral-300 accent-brand-600"
+                      className="mt-0.5"
                     />
                     <span>
-                      The customer has paid the {formatCurrency(down)} down payment
-                      <span className="block text-xs text-neutral-600 dark:text-neutral-400">
+                      <span className="font-medium">The customer has paid the {formatCurrency(down)} down payment</span>
+                      <span className="mt-0.5 block text-xs text-neutral-600 dark:text-neutral-400">
                         Recorded as received. Bajaj&apos;s payout is recorded on the invoice when it reaches the bank.
                       </span>
                     </span>
@@ -720,7 +722,7 @@ export function InvoiceForm({
               <label className={labelClass} htmlFor="inv-terms">
                 Terms &amp; conditions
               </label>
-              <textarea id="inv-terms" value={terms} onChange={(e) => setTerms(e.target.value)} rows={2} className={inputClass} />
+              <textarea id="inv-terms" value={terms} onChange={(e) => setTerms(e.target.value)} rows={2} className={textareaClass} />
               <p className={hintClass}>Prefilled from Invoice defaults — change here only for this one invoice.</p>
             </div>
           </div>

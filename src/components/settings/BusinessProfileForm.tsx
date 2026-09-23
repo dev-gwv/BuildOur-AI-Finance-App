@@ -174,8 +174,10 @@ export function BusinessProfileForm({
             type="color"
             value={form.color}
             onChange={(e) => set("color", e.target.value)}
-            className="h-9 w-12 cursor-pointer rounded border border-neutral-300 bg-white sm:h-7 sm:w-10 dark:border-white/15"
+            // A round swatch like the presets beside it, with a "+" ring so it reads as "pick your own".
+            className="h-9 w-9 cursor-pointer appearance-none rounded-full border-2 border-dashed border-neutral-300 bg-transparent p-0.5 sm:h-7 sm:w-7 dark:border-white/25 [&::-moz-color-swatch]:rounded-full [&::-moz-color-swatch]:border-0 [&::-webkit-color-swatch-wrapper]:p-0 [&::-webkit-color-swatch]:rounded-full [&::-webkit-color-swatch]:border-0"
             aria-label="Custom colour"
+            title="Pick any colour"
           />
         </div>
         <p className="mt-1.5 text-xs text-neutral-600 dark:text-neutral-400">Used for its dot in the switcher, lists and charts.</p>

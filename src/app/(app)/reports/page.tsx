@@ -8,10 +8,12 @@ import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Segmented } from "@/components/ui/Segmented";
+import { controlClass } from "@/components/ui/controlClass";
+import { Button } from "@/components/ui/Button";
 import { formatCurrency, formatDate } from "@/lib/format";
 
-const inputClass =
-  "h-9 rounded-lg border border-neutral-200 bg-white px-2.5 text-sm shadow-xs outline-none focus:border-brand-500 focus:ring-4 focus:ring-brand-500/15 dark:border-white/10 dark:bg-neutral-950/60";
+// Toolbar controls line up with the toolbar buttons: 44px on phones, 36px from sm.
+const dateClass = controlClass(false, "h-11 w-full sm:h-9 sm:w-40");
 
 const isPdf = (name: string) => /\.pdf$/i.test(name);
 
@@ -175,25 +177,27 @@ export default async function ReportsPage({
 
         <form method="get" className="flex flex-wrap items-end gap-2 text-sm">
           {direction && <input type="hidden" name="direction" value={direction} />}
-          <label className="grid gap-1 text-xs font-medium text-neutral-500 dark:text-neutral-400">
+          <label className="grid flex-1 gap-1 text-xs font-medium text-neutral-600 sm:flex-none dark:text-neutral-400">
             From
-            <input type="date" name="from" defaultValue={from ?? ""} className={inputClass} />
+            <input type="date" name="from" defaultValue={from ?? ""} className={dateClass} />
           </label>
-          <label className="grid gap-1 text-xs font-medium text-neutral-500 dark:text-neutral-400">
+          <label className="grid flex-1 gap-1 text-xs font-medium text-neutral-600 sm:flex-none dark:text-neutral-400">
             To
-            <input type="date" name="to" defaultValue={to ?? ""} className={inputClass} />
+            <input type="date" name="to" defaultValue={to ?? ""} className={dateClass} />
           </label>
-          <button
-            type="submit"
-            className="h-9 rounded-lg border border-neutral-200 bg-white px-4 text-sm font-medium text-neutral-800 shadow-sm hover:bg-neutral-50 dark:border-white/10 dark:bg-white/[0.04] dark:text-neutral-200 dark:hover:bg-white/[0.08]"
-          >
-            Apply
-          </button>
-          {filtered && (
-            <Link href="/reports" className="h-9 px-2 text-xs font-medium leading-9 text-neutral-500 hover:text-neutral-900 dark:hover:text-white">
-              Clear
-            </Link>
-          )}
+          <div className="flex w-full items-center gap-1 sm:w-auto">
+            <Button type="submit" variant="secondary" className="flex-1 sm:flex-none">
+              Apply
+            </Button>
+            {filtered && (
+              <Link
+                href="/reports"
+                className="inline-flex h-11 items-center rounded-lg px-3 text-sm font-medium text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900 sm:h-9 dark:text-neutral-300 dark:hover:bg-white/[0.06] dark:hover:text-white"
+              >
+                Clear
+              </Link>
+            )}
+          </div>
         </form>
       </div>
 

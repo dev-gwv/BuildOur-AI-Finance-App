@@ -19,7 +19,7 @@ export default async function NewEntryPage() {
       color: true,
       defaultGstPercent: true,
       gateways: { orderBy: { name: "asc" }, select: { id: true, name: true, chargePercent: true } },
-      categories: { orderBy: { name: "asc" }, select: { id: true, name: true } },
+      categories: { orderBy: { name: "asc" }, select: { id: true, name: true, _count: { select: { expenses: true } } } },
     },
   });
 

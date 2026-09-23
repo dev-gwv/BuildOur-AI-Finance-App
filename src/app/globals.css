@@ -74,6 +74,264 @@
       border-color 120ms,
       box-shadow 120ms;
   }
+
+  /*
+   * Native widgets (date pickers, dropdown lists, scrollbars) follow the
+   * app's theme instead of always rendering light.
+   */
+  :root {
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      color-scheme: dark;
+    }
+  }
+
+  /* --- Dropdowns: our chevron instead of the OS arrow --------------------- */
+  select:not([multiple]) {
+    appearance: none;
+    cursor: pointer;
+    padding-right: 2.25rem;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none' stroke='%2371717a' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 8 4 4 4-4'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 0.65rem center;
+    background-size: 1.05rem;
+  }
+  @media (prefers-color-scheme: dark) {
+    select:not([multiple]) {
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none' stroke='%23a1a1aa' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 8 4 4 4-4'/%3E%3C/svg%3E");
+    }
+  }
+
+  /* --- Checkboxes and radios --------------------------------------------- */
+  input[type="checkbox"],
+  input[type="radio"] {
+    appearance: none;
+    margin: 0;
+    flex-shrink: 0;
+    width: 1.05rem;
+    height: 1.05rem;
+    display: inline-grid;
+    place-content: center;
+    vertical-align: -0.2em;
+    border: 1.5px solid var(--color-neutral-400);
+    border-radius: 0.35rem;
+    background-color: #fff;
+    cursor: pointer;
+    transition:
+      background-color 120ms,
+      border-color 120ms,
+      box-shadow 120ms;
+  }
+  input[type="radio"] {
+    border-radius: 9999px;
+  }
+  input[type="checkbox"]:hover,
+  input[type="radio"]:hover {
+    border-color: var(--color-brand-500);
+  }
+  input[type="checkbox"]:checked,
+  input[type="checkbox"]:indeterminate {
+    border-color: var(--color-brand-600);
+    background-color: var(--color-brand-600);
+    background-repeat: no-repeat;
+    background-position: center;
+    background-size: 0.8rem;
+  }
+  input[type="checkbox"]:checked {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='white' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m3.5 8.5 3 3 6-7'/%3E%3C/svg%3E");
+  }
+  input[type="checkbox"]:indeterminate {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M4 8h8'/%3E%3C/svg%3E");
+  }
+  input[type="radio"]:checked {
+    border-color: var(--color-brand-600);
+    background-color: #fff;
+    box-shadow: inset 0 0 0 0.24rem var(--color-brand-600);
+  }
+  input[type="checkbox"]:focus-visible,
+  input[type="radio"]:focus-visible {
+    outline: 2px solid var(--color-brand-500);
+    outline-offset: 2px;
+  }
+  input[type="checkbox"]:disabled,
+  input[type="radio"]:disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
+  }
+  @media (prefers-color-scheme: dark) {
+    input[type="checkbox"]:not(:checked):not(:indeterminate),
+    input[type="radio"]:not(:checked) {
+      background-color: var(--color-neutral-900);
+      border-color: var(--color-neutral-600);
+    }
+    input[type="radio"]:checked {
+      background-color: var(--color-neutral-900);
+    }
+  }
+
+  /* --- Date and time: a quiet calendar icon that reads in both themes ---- */
+  input[type="date"]::-webkit-calendar-picker-indicator,
+  input[type="datetime-local"]::-webkit-calendar-picker-indicator,
+  input[type="month"]::-webkit-calendar-picker-indicator {
+    cursor: pointer;
+    opacity: 0.55;
+    border-radius: 0.3rem;
+    padding: 0.15rem;
+    transition: opacity 120ms, background-color 120ms;
+  }
+  input[type="date"]::-webkit-calendar-picker-indicator:hover,
+  input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover,
+  input[type="month"]::-webkit-calendar-picker-indicator:hover {
+    opacity: 1;
+    background-color: color-mix(in oklab, var(--color-brand-500) 12%, transparent);
+  }
+  input[type="date"],
+  input[type="datetime-local"],
+  input[type="month"] {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* --- Numbers: amounts are typed, not nudged with tiny arrows ----------- */
+  input[type="number"] {
+    appearance: textfield;
+    -moz-appearance: textfield;
+    font-variant-numeric: tabular-nums;
+  }
+  input[type="number"]::-webkit-outer-spin-button,
+  input[type="number"]::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+
+  /* --- File pickers that are shown (most are hidden behind a drop zone) -- */
+  input[type="file"]::file-selector-button {
+    margin-right: 0.75rem;
+    border: 1px solid var(--color-neutral-300);
+    border-radius: 0.5rem;
+    background-color: #fff;
+    padding: 0.4rem 0.85rem;
+    font: inherit;
+    font-size: 0.8125rem;
+    font-weight: 500;
+    color: var(--color-neutral-800);
+    cursor: pointer;
+    transition: background-color 120ms, border-color 120ms;
+  }
+  input[type="file"]::file-selector-button:hover {
+    background-color: var(--color-neutral-50);
+    border-color: var(--color-neutral-400);
+  }
+  @media (prefers-color-scheme: dark) {
+    input[type="file"]::file-selector-button {
+      background-color: rgb(255 255 255 / 0.05);
+      border-color: rgb(255 255 255 / 0.15);
+      color: var(--color-neutral-100);
+    }
+  }
+}
+
+/*
+ * Room for the chevron, whatever padding a page gives its dropdown (utility
+ * classes like px-3 would otherwise put the text under the arrow). Unlayered
+ * on purpose so it wins over those utilities.
+ */
+select:not([multiple]) {
+  padding-inline-end: 2.25rem;
+}
+
+/*
+ * Where the browser allows it (Chrome/Edge 135+), the open dropdown list is
+ * ours too: a card with rounded, highlighted options and a check on the
+ * chosen one, instead of the OS's grey list. Other browsers keep the native
+ * list, with the styled field above.
+ */
+@supports (appearance: base-select) {
+  select:not([multiple]) {
+    appearance: base-select;
+    /* The styled control lays its text out like a button: keep it centred. */
+    align-items: center;
+    align-content: center;
+  }
+  select:not([multiple])::picker-icon {
+    display: none;
+  }
+  select:not([multiple])::picker(select) {
+    appearance: base-select;
+    margin-block: 0.35rem;
+    padding: 0.3rem;
+    border: 1px solid rgb(0 0 0 / 0.08);
+    border-radius: 0.75rem;
+    background: #fff;
+    box-shadow: var(--shadow-pop);
+    max-height: min(20rem, 60vh);
+    overflow-y: auto;
+    opacity: 0;
+    transform: translateY(-3px);
+    transition:
+      opacity 120ms ease-out,
+      transform 120ms ease-out,
+      display 120ms allow-discrete,
+      overlay 120ms allow-discrete;
+  }
+  select:not([multiple]):open::picker(select) {
+    opacity: 1;
+    transform: none;
+  }
+  @starting-style {
+    select:not([multiple]):open::picker(select) {
+      opacity: 0;
+      transform: translateY(-3px);
+    }
+  }
+  select:not([multiple]) option {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    min-height: 2.25rem;
+    padding: 0.4rem 0.6rem;
+    border-radius: 0.5rem;
+    font-size: 0.875rem;
+    color: var(--color-neutral-800);
+    cursor: pointer;
+  }
+  select:not([multiple]) option:hover,
+  select:not([multiple]) option:focus-visible {
+    background: var(--color-neutral-100);
+    outline: none;
+  }
+  select:not([multiple]) option:checked {
+    font-weight: 600;
+    color: var(--color-brand-700);
+    background: var(--color-brand-50);
+  }
+  select:not([multiple]) option::checkmark {
+    order: 1;
+    margin-left: auto;
+    color: var(--color-brand-600);
+  }
+  select:not([multiple]) option:disabled {
+    color: var(--color-neutral-400);
+    cursor: not-allowed;
+  }
+  @media (prefers-color-scheme: dark) {
+    select:not([multiple])::picker(select) {
+      background: var(--color-neutral-900);
+      border-color: rgb(255 255 255 / 0.1);
+    }
+    select:not([multiple]) option {
+      color: var(--color-neutral-200);
+    }
+    select:not([multiple]) option:hover,
+    select:not([multiple]) option:focus-visible {
+      background: rgb(255 255 255 / 0.06);
+    }
+    select:not([multiple]) option:checked {
+      color: var(--color-brand-300);
+      background: rgb(106 108 240 / 0.14);
+    }
+  }
 }
 
 @media print {

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { filterSearchClass, searchIconClass } from "@/components/invoices/filterStyles";
 import { FileText, Lock, Plus, Search } from "lucide-react";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
@@ -238,16 +239,17 @@ export function InvoiceList({
               items={periods.map((p) => ({ key: p.key, label: p.label, href: href({ period: p.key }), active: filters.period === p.key }))}
             />
           </div>
-          <form method="get" action="/invoices" className="relative">
+          <form method="get" action="/invoices" className="relative lg:w-72">
             {filters.status !== "all" && <input type="hidden" name="status" value={filters.status} />}
             {filters.period !== "all" && <input type="hidden" name="period" value={filters.period} />}
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
+            <Search className={searchIconClass} aria-hidden />
             <input
               type="search"
               name="q"
               defaultValue={filters.q}
               placeholder="Customer, invoice no. or GSTIN…"
-              className="h-9 w-full rounded-xl border border-neutral-200/80 bg-white pl-9 pr-3 text-sm shadow-card outline-none focus:border-brand-500 focus:ring-4 focus:ring-brand-500/15 lg:w-72 dark:border-white/10 dark:bg-neutral-900/70"
+              aria-label="Search invoices"
+              className={filterSearchClass}
             />
           </form>
         </div>

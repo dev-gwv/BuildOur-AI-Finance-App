@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, useRef, useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowDownLeft, ArrowUpRight, Camera, Loader2, Receipt, ScanText, Upload } from "lucide-react";
 import { todayISO } from "@/lib/dates";
@@ -11,6 +11,7 @@ import { parsePaymentScreenshotText } from "@/lib/parsePaymentScreenshot";
 import { Button } from "@/components/ui/Button";
 import { Card, CardBody } from "@/components/ui/Card";
 import { Field, Input, Select, useFieldErrors } from "@/components/ui/Field";
+import { Combobox } from "@/components/ui/Combobox";
 import { useToast } from "@/components/ui/Toast";
 
 export type EntryBusiness = {
@@ -19,7 +20,7 @@ export type EntryBusiness = {
   color: string;
   defaultGstPercent: number;
   gateways: { id: string; name: string; chargePercent: number }[];
-  categories: { id: string; name: string }[];
+  categories: { id: string; name: string; _count?: { expenses: number } }[];
 };
 
 export type ExistingEntry = {
@@ -52,7 +53,6 @@ const GST_PRESETS = [0, 5, 12, 18, 28];
 export function EntryForm({ businesses, expense }: { businesses: EntryBusiness[]; expense?: ExistingEntry }) {
   const router = useRouter();
   const toast = useToast();
-  const listId = useId();
   const isEdit = !!expense;
   const proofInput = useRef<HTMLInputElement>(null);
   const scanInput = useRef<HTMLInputElement>(null);
@@ -284,17 +284,20 @@ export function EntryForm({ businesses, expense }: { businesses: EntryBusiness[]
             : "Pick one or type a new one. Left empty, it goes under General."
       }
     >
-      <Input
+      <Combobox
         id="entry-category"
-        type="text"
-        list={listId}
         value={categoryName}
-        onChange={(e) => {
-          setCategoryName(e.target.value);
+        onValueChange={(v) => {
+          setCategoryName(v);
           clear("categoryName");
         }}
+        options={(business?.categories ?? []).map((cat) => ({
+          value: cat.name,
+          hint: cat._count ? `${cat._count.expenses} ${cat._count.expenses === 1 ? "entry" : "entries"}` : undefined,
+        }))}
+        createLabel={(t) => `New category “${t}”`}
+        emptyText="No categories yet — type one to add it"
         maxLength={60}
-        autoComplete="off"
         placeholder={isOut ? "e.g. Rent, Travel, Salaries" : "e.g. Course sales"}
       />
     </Field>
@@ -447,11 +450,6 @@ export function EntryForm({ businesses, expense }: { businesses: EntryBusiness[]
                 </div>
               </>
             )}
-            <datalist id={listId}>
-              {business?.categories.map((cat) => (
-                <option key={cat.id} value={cat.name} />
-              ))}
-            </datalist>
           </CardBody>
         </Card>
 

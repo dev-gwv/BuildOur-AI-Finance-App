@@ -15,7 +15,7 @@ import { BRANDS } from "@/lib/brands";
 import { Button } from "@/components/ui/Button";
 import { Card, CardBody, CardHeader, CardTitle } from "@/components/ui/Card";
 import { useToast } from "@/components/ui/Toast";
-import { FieldError, focusFirstError, hintClass, inputClass, labelClass, useFieldErrors, type FieldErrors } from "@/components/invoices/LineFields";
+import { FieldError, Rupee, focusFirstError, hintClass, inputClass, labelClass, moneyInputClass, textareaClass, type FieldErrors, useFieldErrors } from "@/components/invoices/LineFields";
 import { LineItemsEditor, lineErrors, lineFromStored, toLineInputs, type CatalogEntry, type EditorLine } from "@/components/invoices/LineItemsEditor";
 import { LineBreakupPreview } from "@/components/invoices/LineBreakupPreview";
 
@@ -319,7 +319,7 @@ export function InvoiceEditForm({
                   clear("customerAddress");
                 }}
                 rows={2}
-                className={inputClass}
+                className={textareaClass}
                 {...field("customerAddress")}
               />
               <FieldError id="err-customerAddress" message={shown.customerAddress} />
@@ -391,30 +391,32 @@ export function InvoiceEditForm({
                       setDoId(e.target.value.toUpperCase());
                       clear("doId");
                     }}
-                    className={`${inputClass} font-mono`}
+                    className={`${inputClass} font-mono placeholder:font-sans`}
                     {...field("doId")}
                   />
                   <FieldError id="err-doId" message={shown.doId} />
                 </div>
                 <div>
                   <label className={labelClass} htmlFor="ed-downPayment">
-                    Down payment (₹)
+                    Down payment
                   </label>
-                  <input
-                    id="ed-downPayment"
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    inputMode="decimal"
-                    value={downPayment}
-                    onChange={(e) => {
-                      setDownPayment(e.target.value);
-                      clear("downPayment");
-                    }}
-                    disabled={invoice.bajajDisbursed}
-                    className={`${inputClass} tabular-nums disabled:opacity-60`}
-                    {...field("downPayment")}
-                  />
+                  <Rupee>
+                    <input
+                      id="ed-downPayment"
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      inputMode="decimal"
+                      value={downPayment}
+                      onChange={(e) => {
+                        setDownPayment(e.target.value);
+                        clear("downPayment");
+                      }}
+                      disabled={invoice.bajajDisbursed}
+                      className={`${moneyInputClass} disabled:opacity-60`}
+                      {...field("downPayment")}
+                    />
+                  </Rupee>
                   <FieldError id="err-downPayment" message={shown.downPayment} />
                 </div>
                 <div>
@@ -443,7 +445,7 @@ export function InvoiceEditForm({
               <label className={labelClass} htmlFor="ed-terms">
                 Terms &amp; conditions
               </label>
-              <textarea id="ed-terms" value={terms} onChange={(e) => setTerms(e.target.value)} rows={3} className={inputClass} />
+              <textarea id="ed-terms" value={terms} onChange={(e) => setTerms(e.target.value)} rows={3} className={textareaClass} />
             </div>
           </CardBody>
         </Card>

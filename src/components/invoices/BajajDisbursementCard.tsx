@@ -5,11 +5,10 @@ import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { CheckCircle2, Hourglass, Landmark } from "lucide-react";
 import { Button } from "@/components/ui/Button";
+import { Field, Input } from "@/components/ui/Field";
 import { useToast } from "@/components/ui/Toast";
 import { formatCurrency, formatDate } from "@/lib/format";
 
-const inputClass =
-  "mt-1 w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm shadow-xs outline-none focus:border-brand-500 focus:ring-4 focus:ring-brand-500/15 dark:border-white/10 dark:bg-neutral-950/60";
 
 export type BajajDisbursement = { amount: number; paidOn: string | Date; feeAmount?: number; gatewayRef?: string | null };
 
@@ -125,9 +124,8 @@ export function BajajDisbursementCard({
       {open && (
         <form onSubmit={onSubmit} className="mt-4 grid gap-3 border-t border-brand-100 pt-4 dark:border-brand-500/20">
           <div className="grid gap-3 sm:grid-cols-3">
-            <label className="block text-sm font-medium text-neutral-700 dark:text-neutral-300">
-              Amount credited (₹)
-              <input
+            <Field label="Amount credited">
+              <Input
                 type="number"
                 inputMode="decimal"
                 step="0.01"
@@ -135,21 +133,20 @@ export function BajajDisbursementCard({
                 max={settles}
                 required
                 autoFocus
+                leading="₹"
+                className="tabular-nums"
                 value={credited}
                 onChange={(e) => setCredited(e.target.value)}
                 placeholder={String(settles)}
-                aria-invalid={invalid}
-                className={`${inputClass} tabular-nums ${invalid ? "border-red-300 focus:border-red-500 focus:ring-red-500/15" : ""}`}
+                invalid={Boolean(invalid)}
               />
-            </label>
-            <label className="block text-sm font-medium text-neutral-700 dark:text-neutral-300">
-              Credited on
-              <input type="date" required value={paidOn} onChange={(e) => setPaidOn(e.target.value)} className={inputClass} />
-            </label>
-            <label className="block text-sm font-medium text-neutral-700 dark:text-neutral-300">
-              UTR / reference <span className="font-normal text-neutral-400">(optional)</span>
-              <input value={reference} onChange={(e) => setReference(e.target.value)} placeholder="From the bank statement" className={inputClass} />
-            </label>
+            </Field>
+            <Field label="Credited on">
+              <Input type="date" required value={paidOn} onChange={(e) => setPaidOn(e.target.value)} />
+            </Field>
+            <Field label="UTR / reference" optional>
+              <Input value={reference} onChange={(e) => setReference(e.target.value)} placeholder="From the bank statement" className="font-mono placeholder:font-sans" />
+            </Field>
           </div>
 
           <dl className="grid grid-cols-3 gap-2 rounded-lg bg-white p-3 text-sm dark:bg-neutral-950/50">
@@ -175,10 +172,10 @@ export function BajajDisbursementCard({
           )}
 
           <div className="flex flex-wrap items-center gap-2">
-            <Button type="submit" size="sm" loading={pending} disabled={invalid || amount <= 0}>
+            <Button type="submit" loading={pending} disabled={invalid || amount <= 0}>
               Save disbursement
             </Button>
-            <Button type="button" size="sm" variant="ghost" onClick={() => setOpen(false)}>
+            <Button type="button" variant="secondary" onClick={() => setOpen(false)}>
               Cancel
             </Button>
           </div>

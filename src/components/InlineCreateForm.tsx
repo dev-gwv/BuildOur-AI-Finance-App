@@ -3,6 +3,7 @@
 import { Plus } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
+import { controlClass } from "@/components/ui/Field";
 import { Button } from "@/components/ui/Button";
 import { useToast } from "@/components/ui/Toast";
 
@@ -69,16 +70,20 @@ export function InlineCreateForm({
   return (
     <form onSubmit={onSubmit} className="flex flex-wrap items-center gap-2">
       {fields.map((field) => (
-        <input
-          key={field.name}
-          name={field.name}
-          type={field.type ?? "text"}
-          step={field.step}
-          placeholder={field.placeholder}
-          defaultValue={field.defaultValue}
-          required
-          className="rounded-lg border border-neutral-200 px-3 py-1.5 text-sm outline-none focus:border-brand-500 focus:ring-4 focus:ring-brand-500/15 dark:border-white/10 dark:bg-neutral-950/60"
-        />
+        <div key={field.name} className={field.type === "number" ? "w-28" : "min-w-0 flex-1 sm:w-56 sm:flex-none"}>
+          <input
+            name={field.name}
+            type={field.type ?? "text"}
+            step={field.step}
+            placeholder={field.placeholder}
+            defaultValue={field.defaultValue}
+            required
+            aria-label={field.placeholder}
+            inputMode={field.type === "number" ? "decimal" : undefined}
+            // The shared control look at small-button height.
+            className={controlClass(false, "h-10 sm:h-8")}
+          />
+        </div>
       ))}
       <Button type="submit" size="sm" loading={pending}>
         <Plus className="h-3.5 w-3.5" />

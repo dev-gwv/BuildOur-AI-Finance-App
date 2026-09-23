@@ -25,7 +25,8 @@ import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { Card, CardBody, CardHeader } from "@/components/ui/Card";
 import { Modal } from "@/components/ui/Modal";
-import { useFieldErrors } from "@/components/ui/Field";
+import { Field, Input, Select, useFieldErrors } from "@/components/ui/Field";
+import { Combobox } from "@/components/ui/Combobox";
 import { RefundCard } from "@/components/invoices/RefundCard";
 import { invoiceBalance } from "@/lib/invoiceLines";
 import { BajajDisbursementCard } from "@/components/invoices/BajajDisbursementCard";
@@ -35,9 +36,6 @@ import { formatCurrency, formatDate } from "@/lib/format";
 import { totalsByPlatform } from "@/lib/invoiceCalc";
 import { calculateGatewayFee } from "@/lib/calc";
 
-const fieldClass =
-  "mt-1 w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 shadow-xs text-sm outline-none focus:border-brand-500 focus:ring-4 focus:ring-brand-500/15 dark:border-white/10 dark:bg-neutral-950/60";
-const labelClass = "block text-sm font-medium text-neutral-700 dark:text-neutral-300";
 
 /** Must match BAJAJ_DISBURSEMENT in src/server/services/invoices.ts (kept apart: this is a client file). */
 const BAJAJ_DISBURSEMENT_METHOD = "Bajaj Finance disbursement";
@@ -127,6 +125,7 @@ export function PaymentsPanel({
   /** The payment being edited, or null when recording a new one. */
   const [editing, setEditing] = useState<PaymentRow | null>(null);
   const [amount, setAmount] = useState("");
+  const [method, setMethod] = useState("");
   const [viaRazorpay, setViaRazorpay] = useState(false);
   const [gatewayRef, setGatewayRef] = useState("");
   const [detected, setDetected] = useState<string | null>(null);
@@ -213,6 +212,7 @@ export function PaymentsPanel({
       if (!form) return;
 
       const setField = (name: string, value: string) => {
+        if (name === "method") return setMethod(value);
         const el = form.elements.namedItem(name);
         if (el instanceof HTMLInputElement) el.value = value;
       };
@@ -319,8 +319,7 @@ export function PaymentsPanel({
     const form = formRef.current;
     const paidOnField = form?.elements.namedItem("paidOn");
     if (paidOnField instanceof HTMLInputElement) paidOnField.value = p.paidOn;
-    const methodField = form?.elements.namedItem("method");
-    if (methodField instanceof HTMLInputElement && !methodField.value) methodField.value = "Razorpay";
+    setMethod((m) => m || "Razorpay");
     setFeeInput(String(p.feeAmount));
     setFeeGstInput(String(p.feeGstAmount));
     setOverrideFees(false);
@@ -403,6 +402,7 @@ export function PaymentsPanel({
     setTds("");
     setTdsSection("194J");
     setAmount(String(Math.max(outstanding, 0)));
+    setMethod("");
     setOpen(true);
   }
 
@@ -412,6 +412,7 @@ export function PaymentsPanel({
     clearError();
     setEditing(p);
     setAmount(String(p.amount));
+    setMethod(p.method ?? "");
     setTds(p.tdsAmount ? String(p.tdsAmount) : "");
     setTdsSection(p.tdsSection ?? "194J");
     if (p.gateway) {
@@ -754,14 +755,16 @@ export function PaymentsPanel({
             </div>
 
             <div className="grid gap-3 sm:grid-cols-2">
-              <div>
-                <label className={labelClass}>{tdsValue > 0 ? "Amount settled, incl. TDS (₹)" : "Amount the customer paid (₹)"}</label>
-                <input
+              <Field label={tdsValue > 0 ? "Amount settled, incl. TDS" : "Amount the customer paid"} error={errors.amount}>
+                <Input
                   name="amount"
                   type="number"
                   step="0.01"
                   min="0.01"
                   max={limit}
+                  inputMode="decimal"
+                  leading="₹"
+                  className="tabular-nums"
                   value={amount}
                   onChange={(e) => {
                     setAmount(e.target.value);
@@ -770,50 +773,32 @@ export function PaymentsPanel({
                     setOverpaidBy(n > limit ? n - limit : null);
                   }}
                   required
-                  aria-invalid={errors.amount ? true : undefined}
-                  className={`${fieldClass} ${errors.amount ? "border-red-400 focus:border-red-500 focus:ring-red-500/15" : ""}`}
                 />
-                {errors.amount && <p className="mt-1 text-xs font-medium text-red-600 dark:text-red-400">{errors.amount}</p>}
-              </div>
-              <div>
-                <label className={labelClass}>Received on</label>
-                <input
+              </Field>
+              <Field label="Received on" error={errors.paidOn}>
+                <Input
                   name="paidOn"
                   type="date"
                   defaultValue={editing ? new Date(editing.paidOn).toISOString().slice(0, 10) : todayISO()}
                   required
                   onChange={() => clearError("paidOn")}
-                  aria-invalid={errors.paidOn ? true : undefined}
-                  className={`${fieldClass} ${errors.paidOn ? "border-red-400" : ""}`}
                 />
-                {errors.paidOn && <p className="mt-1 text-xs font-medium text-red-600 dark:text-red-400">{errors.paidOn}</p>}
-              </div>
+              </Field>
             </div>
             <div className="grid gap-3 sm:grid-cols-2">
-              <div>
-                <label className={labelClass}>Platform</label>
-                <input
+              <Field label="Platform" optional>
+                <Combobox
                   name="method"
-                  list="payment-methods"
-                  defaultValue={editing?.method ?? ""}
+                  value={method}
+                  onValueChange={setMethod}
+                  options={PAYMENT_METHODS}
                   placeholder="PhonePe, GPay, bank transfer…"
-                  className={fieldClass}
+                  createLabel={(t) => `Use “${t}”`}
                 />
-                <datalist id="payment-methods">
-                  {PAYMENT_METHODS.map((m) => (
-                    <option key={m} value={m} />
-                  ))}
-                </datalist>
-              </div>
-              <div>
-                <label className={labelClass}>Reference / note</label>
-                <input
-                  name="note"
-                  defaultValue={editing?.note ?? ""}
-                  placeholder="UPI reference"
-                  className={fieldClass}
-                />
-              </div>
+              </Field>
+              <Field label="Reference / note" optional>
+                <Input name="note" defaultValue={editing?.note ?? ""} placeholder="UPI reference" />
+              </Field>
             </div>
 
             <details
@@ -830,39 +815,32 @@ export function PaymentsPanel({
                 <span className="text-xs text-brand-700 group-open:hidden dark:text-brand-300">Add</span>
               </summary>
               <div className="mt-3 grid gap-3 border-t border-neutral-100 pt-3 sm:grid-cols-2 dark:border-white/[0.06]">
-                <div>
-                  <label className={labelClass} htmlFor="pay-tds">TDS amount (₹)</label>
-                  <input
+                <Field label="TDS amount" error={errors.tdsAmount}>
+                  <Input
                     id="pay-tds"
                     type="number"
                     step="0.01"
                     min="0"
+                    inputMode="decimal"
+                    leading="₹"
+                    className="tabular-nums"
                     value={tds}
                     onChange={(e) => {
                       setTds(e.target.value);
                       clearError("tdsAmount");
                     }}
                     placeholder="0.00"
-                    aria-invalid={errors.tdsAmount ? true : undefined}
-                    className={`${fieldClass} ${errors.tdsAmount ? "border-red-400" : ""}`}
                   />
-                  {errors.tdsAmount && <p className="mt-1 text-xs font-medium text-red-600 dark:text-red-400">{errors.tdsAmount}</p>}
-                </div>
-                <div>
-                  <label className={labelClass} htmlFor="pay-tds-section">Section</label>
-                  <select
-                    id="pay-tds-section"
-                    value={tdsSection}
-                    onChange={(e) => setTdsSection(e.target.value)}
-                    className={fieldClass}
-                  >
+                </Field>
+                <Field label="Section">
+                  <Select id="pay-tds-section" value={tdsSection} onChange={(e) => setTdsSection(e.target.value)}>
                     {TDS_SECTIONS.map((sec) => (
                       <option key={sec} value={sec}>
                         {sec === "Other" ? "Other" : `Section ${sec}`}
                       </option>
                     ))}
-                  </select>
-                </div>
+                  </Select>
+                </Field>
                 <p className="text-xs text-neutral-600 sm:col-span-2 dark:text-neutral-400">
                   The customer paid the tax to the government for you, so it still settles the invoice. Enter the amount above as the
                   total settled (cash + TDS){tdsValue > 0 ? ` — ${formatCurrency(cashValue)} reached the bank` : ""}.
@@ -895,13 +873,13 @@ export function PaymentsPanel({
                     setOverrideFees(false);
                     verifiedRef.current = null;
                   }}
-                  className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${
+                  className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500 ${
                     viaRazorpay ? "bg-brand-600" : "bg-neutral-300 dark:bg-neutral-700"
                   }`}
                 >
                   <span
-                    className={`inline-block h-4 w-4 rounded-full bg-white shadow transition-transform ${
-                      viaRazorpay ? "translate-x-[18px]" : "translate-x-0.5"
+                    className={`inline-block h-5 w-5 rounded-full bg-white shadow transition-transform ${
+                      viaRazorpay ? "translate-x-[22px]" : "translate-x-0.5"
                     }`}
                   />
                 </button>
@@ -910,9 +888,9 @@ export function PaymentsPanel({
               {viaRazorpay && (
                 <div className="mt-3 grid gap-3 border-t border-neutral-100 pt-3 dark:border-white/[0.06]">
                   <div className="grid gap-3 sm:grid-cols-3">
-                    <div>
-                      <label className={labelClass}>Razorpay payment ID</label>
-                      <input
+                    <Field label="Razorpay payment ID">
+                      <Input
+                        className="font-mono placeholder:font-sans"
                         value={gatewayRef}
                         onChange={(e) => {
                           setGatewayRef(e.target.value);
@@ -926,33 +904,34 @@ export function PaymentsPanel({
                           }
                         }}
                         placeholder="pay_…"
-                        className={fieldClass}
                       />
-                    </div>
-                    <div>
-                      <label className={labelClass}>Razorpay fee (₹)</label>
-                      <input
+                    </Field>
+                    <Field label="Razorpay fee">
+                      <Input
                         type="number"
                         step="0.01"
                         min="0"
+                        inputMode="decimal"
+                        leading="₹"
                         readOnly={feesExact}
                         value={feeInput ?? String(feeValue)}
                         onChange={(e) => setFeeInput(e.target.value)}
-                        className={`${fieldClass} ${feesExact ? "bg-neutral-50 text-neutral-500 dark:bg-white/[0.03]" : ""}`}
+                        className={`tabular-nums ${feesExact ? "bg-neutral-50 text-neutral-600 dark:bg-white/[0.03]" : ""}`}
                       />
-                    </div>
-                    <div>
-                      <label className={labelClass}>GST on fee (₹)</label>
-                      <input
+                    </Field>
+                    <Field label="GST on fee">
+                      <Input
                         type="number"
                         step="0.01"
                         min="0"
+                        inputMode="decimal"
+                        leading="₹"
                         readOnly={feesExact}
                         value={feeGstInput ?? String(feeGstValue)}
                         onChange={(e) => setFeeGstInput(e.target.value)}
-                        className={`${fieldClass} ${feesExact ? "bg-neutral-50 text-neutral-500 dark:bg-white/[0.03]" : ""}`}
+                        className={`tabular-nums ${feesExact ? "bg-neutral-50 text-neutral-600 dark:bg-white/[0.03]" : ""}`}
                       />
-                    </div>
+                    </Field>
                   </div>
                   {verify.state !== "idle" && (
                     <p
@@ -1041,7 +1020,6 @@ export function PaymentsPanel({
             <div className="flex items-center gap-2">
               <Button
                 type="submit"
-                size="sm"
                 loading={pending}
                 disabled={
                   viaRazorpay &&
@@ -1050,7 +1028,7 @@ export function PaymentsPanel({
               >
                 {editing ? "Save changes" : "Save payment"}
               </Button>
-              <Button type="button" size="sm" variant="secondary" onClick={closeForm}>
+              <Button type="button" variant="secondary" onClick={closeForm}>
                 Cancel
               </Button>
             </div>

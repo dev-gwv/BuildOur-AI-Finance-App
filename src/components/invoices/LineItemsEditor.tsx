@@ -3,7 +3,7 @@
 import { ArrowDown, ArrowUp, Plus, Trash2 } from "lucide-react";
 import { formatCurrency } from "@/lib/format";
 import type { LineInput } from "@/lib/invoiceLines";
-import { FieldError, inputClass, labelClass, type FieldErrors } from "./LineFields";
+import { FieldError, Rupee, inputClass, labelClass, moneyInputClass, type FieldErrors } from "./LineFields";
 
 export type CatalogEntry = { id: string; amount: number; itemDescription: string; hsnSac: string };
 
@@ -136,7 +136,7 @@ export function LineItemsEditor({
                   onClick={() => move(i, -1)}
                   disabled={i === 0}
                   aria-label={`Move item ${i + 1} up`}
-                  className="rounded-md p-2 text-neutral-500 hover:bg-neutral-200/60 disabled:opacity-30 dark:hover:bg-white/10"
+                  className="flex h-9 w-9 items-center justify-center rounded-lg text-neutral-500 hover:bg-neutral-200/60 disabled:opacity-30 dark:hover:bg-white/10"
                 >
                   <ArrowUp className="h-3.5 w-3.5" />
                 </button>
@@ -145,7 +145,7 @@ export function LineItemsEditor({
                   onClick={() => move(i, 1)}
                   disabled={i === lines.length - 1}
                   aria-label={`Move item ${i + 1} down`}
-                  className="rounded-md p-2 text-neutral-500 hover:bg-neutral-200/60 disabled:opacity-30 dark:hover:bg-white/10"
+                  className="flex h-9 w-9 items-center justify-center rounded-lg text-neutral-500 hover:bg-neutral-200/60 disabled:opacity-30 dark:hover:bg-white/10"
                 >
                   <ArrowDown className="h-3.5 w-3.5" />
                 </button>
@@ -154,7 +154,7 @@ export function LineItemsEditor({
                   onClick={() => remove(i)}
                   disabled={lines.length === 1}
                   aria-label={`Remove item ${i + 1}`}
-                  className="rounded-md p-2 text-neutral-500 hover:bg-red-50 hover:text-red-600 disabled:opacity-30 dark:hover:bg-red-500/10"
+                  className="flex h-9 w-9 items-center justify-center rounded-lg text-neutral-500 hover:bg-red-50 hover:text-red-600 disabled:opacity-30 dark:hover:bg-red-500/10"
                 >
                   <Trash2 className="h-3.5 w-3.5" />
                 </button>
@@ -232,19 +232,21 @@ export function LineItemsEditor({
               </div>
               <div className={gstRegistered ? "sm:col-span-4" : "sm:col-span-9"}>
                 <label className={labelClass} htmlFor={`amt-${i}`}>
-                  Amount{gstRegistered ? " incl. GST" : ""} (₹)
+                  Amount{gstRegistered ? " incl. GST" : ""}
                 </label>
-                <input
-                  id={`amt-${i}`}
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  inputMode="decimal"
-                  value={line.grossAmount}
-                  onChange={(e) => update(i, { grossAmount: e.target.value, fromDo: false }, "grossAmount")}
-                  className={`${inputClass} font-semibold tabular-nums`}
-                  {...cell(i, "grossAmount")}
-                />
+                <Rupee>
+                  <input
+                    id={`amt-${i}`}
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    inputMode="decimal"
+                    value={line.grossAmount}
+                    onChange={(e) => update(i, { grossAmount: e.target.value, fromDo: false }, "grossAmount")}
+                    className={`${moneyInputClass} font-semibold`}
+                    {...cell(i, "grossAmount")}
+                  />
+                </Rupee>
                 <FieldError id={`err-lines.${i}.grossAmount`} message={err(i, "grossAmount")} />
               </div>
               {gstRegistered && (

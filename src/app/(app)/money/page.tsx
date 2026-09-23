@@ -99,7 +99,8 @@ export default async function MoneyPage({
               name="q"
               defaultValue={q ?? ""}
               placeholder="Search expense, description or category…"
-              className="h-9 w-full rounded-xl border border-neutral-200/80 bg-white pl-9 pr-3 text-sm shadow-card outline-none focus:border-brand-500 focus:ring-4 focus:ring-brand-500/15 sm:w-72 dark:border-white/10 dark:bg-neutral-900/70"
+              aria-label="Search entries"
+              className="h-10 w-full rounded-xl sm:h-9 border border-neutral-200/80 bg-white pl-9 pr-3 text-sm shadow-card outline-none focus:border-brand-500 focus:ring-4 focus:ring-brand-500/15 sm:w-72 dark:border-white/10 dark:bg-neutral-900/70"
             />
           </div>
           {q && (

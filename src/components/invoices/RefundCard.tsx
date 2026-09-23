@@ -88,10 +88,10 @@ export function RefundCard({ invoiceId, toRefund }: { invoiceId: string; toRefun
             <Input name="note" placeholder="UTR / UPI reference" />
           </Field>
           <div className="flex gap-2 sm:col-span-2">
-            <Button type="submit" size="sm" loading={pending}>
+            <Button type="submit" loading={pending}>
               Save refund
             </Button>
-            <Button type="button" size="sm" variant="secondary" onClick={() => setOpen(false)} disabled={pending}>
+            <Button type="button" variant="secondary" onClick={() => setOpen(false)} disabled={pending}>
               Cancel
             </Button>
           </div>

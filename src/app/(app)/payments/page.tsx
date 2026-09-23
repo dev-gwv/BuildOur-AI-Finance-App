@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { filterButtonClass, filterSearchClass, filterSelectClass, searchIconClass } from "@/components/invoices/filterStyles";
 import { HandCoins, Search } from "lucide-react";
 import { prisma } from "@/lib/prisma";
 import { requirePageUser } from "@/server/session";
@@ -182,12 +183,7 @@ export default async function PaymentsPage({
             {period !== "all" && <input type="hidden" name="period" value={period} />}
             {gateway !== "all" && <input type="hidden" name="gateway" value={gateway} />}
             {type !== "all" && <input type="hidden" name="type" value={type} />}
-            <select
-              id="payments-method"
-              name="method"
-              defaultValue={method}
-              className="h-9 rounded-xl border border-neutral-200/80 bg-white px-3 text-sm shadow-card dark:border-white/10 dark:bg-neutral-900/70"
-            >
+            <select id="payments-method" name="method" defaultValue={method} className={filterSelectClass}>
               <option value="">Any method</option>
               {methods.map((m) => (
                 <option key={m.method} value={m.method ?? ""}>
@@ -196,19 +192,17 @@ export default async function PaymentsPage({
               ))}
             </select>
             <div className="relative min-w-[220px] flex-1 sm:max-w-sm">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
+              <Search className={searchIconClass} aria-hidden />
               <input
                 type="search"
                 name="q"
                 defaultValue={q}
                 placeholder="Customer or invoice no.…"
                 aria-label="Search payments"
-                className="h-9 w-full rounded-xl border border-neutral-200/80 bg-white pl-9 pr-3 text-sm shadow-card outline-none focus:border-brand-500 focus:ring-4 focus:ring-brand-500/15 dark:border-white/10 dark:bg-neutral-900/70"
+                className={filterSearchClass}
               />
             </div>
-            <button className="h-9 rounded-xl bg-neutral-900 px-3 text-sm font-medium text-white dark:bg-white dark:text-neutral-900">
-              Apply
-            </button>
+            <button className={filterButtonClass}>Apply</button>
           </form>
         </div>
 

@@ -57,20 +57,20 @@ export function MembersEditor({
           return (
             <li key={u.id}>
               <label
-                className={`flex cursor-pointer items-center gap-3 rounded-xl border px-3 py-2.5 transition-colors ${
+                className={`flex min-h-11 cursor-pointer items-center gap-3 rounded-xl border px-3 py-2.5 transition-colors has-[:focus-visible]:ring-4 has-[:focus-visible]:ring-brand-500/15 ${
                   on
                     ? "border-brand-300 bg-brand-50/60 dark:border-brand-500/40 dark:bg-brand-500/10"
                     : "border-neutral-200 hover:border-neutral-300 dark:border-white/10"
                 }`}
               >
-                <input type="checkbox" checked={on} onChange={() => toggle(u.id)} className="h-4 w-4 accent-brand-600" />
+                <input type="checkbox" checked={on} onChange={() => toggle(u.id)} />
                 <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-neutral-200 text-[11px] font-semibold text-neutral-700 dark:bg-neutral-700 dark:text-neutral-200">
                   {initials(u.name)}
                 </span>
                 <span className="min-w-0">
                   <span className="block truncate text-sm font-medium text-neutral-900 dark:text-neutral-100">
                     {u.name}
-                    {!u.active && <span className="ml-1.5 text-xs font-normal text-neutral-400">(deactivated)</span>}
+                    {!u.active && <span className="ml-1.5 text-xs font-normal text-neutral-500">(deactivated)</span>}
                   </span>
                   <span className="block truncate text-xs text-neutral-500">{u.email}</span>
                 </span>
