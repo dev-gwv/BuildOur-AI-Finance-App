@@ -16,6 +16,7 @@ import type { Prisma } from "@/generated/prisma/client";
 const GATEWAYS = [
   { key: "all", label: "All" },
   { key: "razorpay", label: "Razorpay" },
+  { key: "bajaj", label: "Bajaj Finance" },
   { key: "direct", label: "Direct" },
 ] as const;
 type GatewayKey = (typeof GATEWAYS)[number]["key"];
@@ -52,7 +53,15 @@ export default async function PaymentsPage({
   const where: Prisma.PaymentWhereInput = {
     invoice: invoiceWhere,
     ...(dates ? { paidOn: dates } : {}),
-    ...(gateway === "razorpay" ? { gateway: "Razorpay" } : gateway === "direct" ? { gateway: null } : {}),
+    // Bajaj payouts recorded before the Bajaj flow have no gateway set, only their method.
+    ...(gateway === "razorpay"
+      ? { gateway: "Razorpay" }
+      : gateway === "bajaj"
+        ? { OR: [{ gateway: "Bajaj Finance" }, { method: "Bajaj Finance disbursement" }] }
+        : gateway === "direct"
+          ? // NOT (method = x) would also drop payments with no method recorded (SQL nulls).
+            { gateway: null, OR: [{ method: null }, { method: { not: "Bajaj Finance disbursement" } }] }
+          : {}),
     ...(method ? { method } : {}),
   };
 

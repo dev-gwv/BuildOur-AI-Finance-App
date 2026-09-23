@@ -1,3 +1,4 @@
+import { todayISO } from "./dates";
 import { calculateInvoiceBreakup } from "./invoiceCalc";
 import { isInterStateSupply } from "./gstState";
 
@@ -19,19 +20,27 @@ export function parseGstPeriod(value: string | undefined): GstPeriodKey {
   return GST_PERIODS.some((p) => p.key === value) ? (value as GstPeriodKey) : "month";
 }
 
-const addMonths = (d: Date, n: number) => new Date(d.getFullYear(), d.getMonth() + n, 1);
+// Built in UTC, like the stored dates (calendar days at midnight UTC), so the
+// boundaries are the same whatever timezone the server runs in.
+const addMonths = (d: Date, n: number) => new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + n, 1));
 
-/** [start, end) of a period, on the Indian financial year (April–March) and its quarters. */
+/**
+ * [start, end) of a period, on the Indian financial year (April–March) and its
+ * quarters. "Now" is read on the Indian calendar: just after midnight IST on
+ * the 1st is already the new month.
+ */
 export function gstPeriodRange(key: GstPeriodKey, now: Date): { start: Date; end: Date } {
-  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-  const fyStart = new Date(now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1, 3, 1);
+  const [y, m] = todayISO(now).split("-").map(Number);
+  const month = m - 1;
+  const monthStart = new Date(Date.UTC(y, month, 1));
+  const fyStart = new Date(Date.UTC(month >= 3 ? y : y - 1, 3, 1));
   switch (key) {
     case "month":
       return { start: monthStart, end: addMonths(monthStart, 1) };
     case "lastmonth":
       return { start: addMonths(monthStart, -1), end: monthStart };
     case "quarter": {
-      const start = addMonths(monthStart, -(((now.getMonth() + 9) % 12) % 3));
+      const start = addMonths(monthStart, -(((month + 9) % 12) % 3));
       return { start, end: addMonths(start, 3) };
     }
     case "fy":
@@ -84,13 +93,13 @@ export interface GstTotals {
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
 export function monthOf(date: Date): string {
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
 }
 
 /** One invoice's tax, split exactly as its printed document splits it. */
 export function gstLine(inv: GstInvoiceInput): GstLine {
   const gstin = inv.customerGstin?.trim() || null;
-  const interState = isInterStateSupply(gstin);
+  const interState = isInterStateSupply(gstin, inv.placeOfSupply);
   const b = calculateInvoiceBreakup({ grossAmount: inv.grossAmount, gstPercent: inv.gstPercent, qty: inv.qty, isInterState: interState });
   const tax = round2(b.cgstAmount + b.sgstAmount + b.igstAmount);
   return {

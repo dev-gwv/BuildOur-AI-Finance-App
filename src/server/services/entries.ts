@@ -2,7 +2,7 @@ import { after } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { calculateBreakup, calculateCostBreakup } from "@/lib/calc";
-import { deleteUpload, saveUpload } from "@/lib/storage";
+import { UnsupportedUpload, deleteUpload, saveUpload } from "@/lib/storage";
 import { syncExpense, unsyncExpense } from "@/lib/sheet";
 import type { Prisma } from "@/generated/prisma/client";
 import { accessibleBusinessIds, accessWhere, assertBusinessAccess, requireEntryAccess } from "../access";
@@ -18,16 +18,29 @@ import { guardWrite, rupees } from "./common";
  * Expense table; "entry" is the word the app uses for both.
  */
 
-export const entrySchema = z.object({
-  businessId: id,
-  direction: z.enum(["IN", "OUT"]).default("IN"),
-  categoryId: id,
-  gatewayId: id.optional(),
-  description: optionalText(500),
-  date: isoDate("Date"),
-  grossAmount: positiveMoney("Amount"),
-  gstPercent: percent("GST %").default(0),
-});
+export const entrySchema = z
+  .object({
+    businessId: id,
+    direction: z.enum(["IN", "OUT"]).default("IN"),
+    /** A category typed by name: reused if the business has it, created if not. */
+    categoryName: z.string().trim().max(60, "Keep the category under 60 characters").optional(),
+    /** Still accepted from older clients; categoryName wins when both are sent. */
+    categoryId: id.optional(),
+    gatewayId: id.optional(),
+    /** For money out this is the expense itself ("Office rent — September"). */
+    description: optionalText(500),
+    date: isoDate("Date"),
+    grossAmount: positiveMoney("Amount"),
+    gstPercent: percent("GST %").default(0),
+  })
+  .superRefine((v, ctx) => {
+    if (v.direction === "OUT" && !v.description) {
+      ctx.addIssue({ code: "custom", path: ["description"], message: "Say what the expense was for" });
+    }
+  });
+
+/** The category every entry falls back to when none is given. */
+const DEFAULT_CATEGORY = "General";
 
 export const entryFilterSchema = z.object({
   businessId: id.optional(),
@@ -41,18 +54,61 @@ const SCREENSHOT_TYPES = ["application/pdf", "image/png", "image/jpeg", "image/w
 
 async function storeScreenshot(file: FormDataEntryValue | null): Promise<string | null> {
   if (!(file instanceof File) || file.size === 0) return null;
-  if (file.type && !SCREENSHOT_TYPES.includes(file.type)) throw badRequest("Proof must be an image or a PDF");
+  // No declared type is no excuse: the file is checked either way (and storage
+  // checks its actual contents too).
+  if (!SCREENSHOT_TYPES.includes(file.type)) throw badRequest("Proof must be an image or a PDF");
   if (file.size > 4 * 1024 * 1024) throw badRequest("Proof must be under 4 MB");
-  return saveUpload(file);
+  try {
+    return await saveUpload(file);
+  } catch (e) {
+    if (e instanceof UnsupportedUpload) throw badRequest(e.message);
+    throw e;
+  }
 }
 
-/** Checks the category/gateway belong to the business and works out the breakup. */
-async function computeEntry(input: z.infer<typeof entrySchema>) {
-  const category = await prisma.category.findUnique({ where: { id: input.categoryId }, select: { businessId: true, name: true } });
-  if (!category || category.businessId !== input.businessId) {
-    throw badRequest("Pick a category from this business", { categoryId: "Not a category of this business" });
-  }
+/**
+ * The category an entry goes under: a typed name (matched case-insensitively,
+ * created for the business if it's new), else a given id, else the entry's
+ * current one when editing, else "General". So a business with no categories
+ * set up can still record money.
+ */
+async function resolveCategory(
+  input: z.infer<typeof entrySchema>,
+  fallbackCategoryId?: string | null
+): Promise<{ id: string; name: string }> {
+  const findOrCreate = async (rawName: string) => {
+    const name = rawName.replace(/\s+/g, " ").trim().slice(0, 60);
+    const existing = await prisma.category.findFirst({
+      where: { businessId: input.businessId, name: { equals: name, mode: "insensitive" } },
+      select: { id: true, name: true },
+    });
+    if (existing) return existing;
+    try {
+      return await prisma.category.create({ data: { businessId: input.businessId, name }, select: { id: true, name: true } });
+    } catch {
+      // Someone created it at the same moment: use theirs.
+      return prisma.category.findFirstOrThrow({
+        where: { businessId: input.businessId, name: { equals: name, mode: "insensitive" } },
+        select: { id: true, name: true },
+      });
+    }
+  };
 
+  if (input.categoryName) return findOrCreate(input.categoryName);
+
+  for (const candidate of [input.categoryId, fallbackCategoryId]) {
+    if (!candidate) continue;
+    const category = await prisma.category.findUnique({ where: { id: candidate }, select: { id: true, name: true, businessId: true } });
+    if (category && category.businessId === input.businessId) return { id: category.id, name: category.name };
+    if (candidate === input.categoryId) {
+      throw badRequest("Pick a category from this business", { categoryName: "Not a category of this business" });
+    }
+  }
+  return findOrCreate(DEFAULT_CATEGORY);
+}
+
+/** Checks the gateway belongs to the business, resolves the category, and works out the breakup. */
+async function computeEntry(input: z.infer<typeof entrySchema>, fallbackCategoryId?: string | null) {
   // Money out is a cost: no gateway takes a cut of it.
   const gatewayId = input.direction === "IN" ? (input.gatewayId ?? null) : null;
   let gatewayChargePercent = 0;
@@ -63,6 +119,8 @@ async function computeEntry(input: z.infer<typeof entrySchema>) {
     }
     gatewayChargePercent = gateway.chargePercent;
   }
+  // After the gateway check, so a rejected entry doesn't leave a new category behind.
+  const category = await resolveCategory(input, fallbackCategoryId);
 
   const breakup =
     input.direction === "OUT"
@@ -72,7 +130,7 @@ async function computeEntry(input: z.infer<typeof entrySchema>) {
   return {
     businessId: input.businessId,
     direction: input.direction,
-    categoryId: input.categoryId,
+    categoryId: category.id,
     gatewayId,
     description: input.description,
     date: input.date,
@@ -155,7 +213,7 @@ const LABELS = {
   direction: "direction",
   categoryId: "category",
   gatewayId: "gateway",
-  description: "description",
+  description: "expense",
   date: "date",
   grossAmount: "amount",
   gstPercent: "GST %",
@@ -167,7 +225,11 @@ export async function updateEntry(user: SessionUser, entryId: string, input: z.i
   // Moving an entry to another business needs access to that one too.
   if (input.businessId !== existing.businessId) await assertBusinessAccess(user, input.businessId);
 
-  const { categoryName, ...data } = await computeEntry(input);
+  // With no category sent and the business unchanged, the entry keeps its own.
+  const { categoryName, ...data } = await computeEntry(
+    input,
+    input.businessId === existing.businessId ? existing.categoryId : null
+  );
   const newScreenshot = await storeScreenshot(form.get("screenshot"));
 
   const entry = await prisma.expense.update({

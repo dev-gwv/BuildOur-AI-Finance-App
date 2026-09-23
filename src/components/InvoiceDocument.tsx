@@ -23,6 +23,10 @@ export interface InvoiceDocumentData {
   notes: string | null;
   terms: string | null;
   doId?: string | null;
+  /** "BAJAJ" when sold on Bajaj Finance EMI: the document says who pays what. */
+  saleType?: string | null;
+  downPayment?: number | null;
+  financedAmount?: number | null;
   /** Set when edited after being emailed; the document then says it's a revision. */
   revisedAt?: string | Date | null;
 }
@@ -51,7 +55,7 @@ export function InvoiceDocument({
 
   // GSTIN first 2 digits decide the tax mode: same state (07 Delhi) -> CGST+SGST,
   // other state -> IGST. No GSTIN (B2C) stays intra-state. Mulberry is unregistered.
-  const isInterState = brand.gstRegistered ? isInterStateSupply(invoice.customerGstin) : false;
+  const isInterState = brand.gstRegistered ? isInterStateSupply(invoice.customerGstin, invoice.placeOfSupply) : false;
 
   const breakup = calculateInvoiceBreakup({
     grossAmount: invoice.grossAmount,
@@ -62,6 +66,10 @@ export function InvoiceDocument({
 
   const paidAmount = payments.reduce((sum, p) => sum + p.amount, 0);
   const balanceDue = Math.round((invoice.grossAmount - paidAmount) * 100) / 100;
+  // A Bajaj EMI sale: the customer pays the down payment, Bajaj Finance the rest.
+  const isBajaj = invoice.saleType === "BAJAJ";
+  const financed = isBajaj ? (invoice.financedAmount ?? invoice.grossAmount - (invoice.downPayment ?? 0)) : 0;
+  const bajajPending = isBajaj && !payments.some((p) => p.method === "Bajaj Finance disbursement");
   const settled = balanceDue <= 0;
 
   return (
@@ -138,7 +146,7 @@ export function InvoiceDocument({
               )}
               {invoice.doId && (
                 <>
-                  <dt className="text-neutral-500">DO reference</dt>
+                  <dt className="text-neutral-500">{invoice.saleType === "BAJAJ" ? "Bajaj Finance DO" : "DO reference"}</dt>
                   <dd className="text-right font-medium text-neutral-900">{invoice.doId}</dd>
                 </>
               )}
@@ -280,6 +288,23 @@ export function InvoiceDocument({
               <span>Total</span>
               <span className="tabular-nums">{formatCurrency(invoice.grossAmount)}</span>
             </div>
+            {isBajaj && (
+              <div className="space-y-1 rounded-lg border border-neutral-200 px-3 py-2 text-neutral-600">
+                <p className="text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                  Financed by Bajaj Finance{invoice.doId ? ` · DO ${invoice.doId}` : ""}
+                </p>
+                {(invoice.downPayment ?? 0) > 0 && (
+                  <div className="flex justify-between">
+                    <span>Down payment by customer</span>
+                    <span className="tabular-nums">{formatCurrency(invoice.downPayment ?? 0)}</span>
+                  </div>
+                )}
+                <div className="flex justify-between">
+                  <span>Financed by Bajaj Finance</span>
+                  <span className="tabular-nums">{formatCurrency(financed)}</span>
+                </div>
+              </div>
+            )}
             {paidAmount > 0 && (
               <div className="flex justify-between text-neutral-600">
                 <span>Payment made</span>
@@ -291,7 +316,7 @@ export function InvoiceDocument({
                 settled ? "bg-emerald-50 text-emerald-700" : "bg-neutral-100 text-neutral-900"
               }`}
             >
-              <span>Balance due</span>
+              <span>{bajajPending && balanceDue > 0.5 ? "Balance due (Bajaj Finance)" : "Balance due"}</span>
               <span className="tabular-nums">{formatCurrency(Math.max(balanceDue, 0))}</span>
             </div>
           </div>

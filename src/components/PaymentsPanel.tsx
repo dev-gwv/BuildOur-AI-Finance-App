@@ -1,5 +1,6 @@
 "use client";
 
+import { todayISO } from "@/lib/dates";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, type ChangeEvent, type DragEvent, type FormEvent } from "react";
 import Link from "next/link";
@@ -21,6 +22,7 @@ import { PAYMENT_METHODS, parsePaymentScreenshotText } from "@/lib/parsePaymentS
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { Card, CardBody, CardHeader } from "@/components/ui/Card";
+import { BajajDisbursementCard } from "@/components/invoices/BajajDisbursementCard";
 import { DeleteButton } from "@/components/DeleteButton";
 import { useToast } from "@/components/ui/Toast";
 import { formatCurrency, formatDate } from "@/lib/format";
@@ -30,6 +32,9 @@ import { calculateGatewayFee } from "@/lib/calc";
 const fieldClass =
   "mt-1 w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 shadow-xs text-sm outline-none focus:border-brand-500 focus:ring-4 focus:ring-brand-500/15 dark:border-white/10 dark:bg-neutral-950/60";
 const labelClass = "block text-sm font-medium text-neutral-700 dark:text-neutral-300";
+
+/** Must match BAJAJ_DISBURSEMENT in src/server/services/invoices.ts (kept apart: this is a client file). */
+const BAJAJ_DISBURSEMENT_METHOD = "Bajaj Finance disbursement";
 
 export type PaymentRow = {
   id: string;
@@ -77,12 +82,15 @@ export function PaymentsPanel({
   total,
   payments,
   razorpayRates = { feePercent: 2, feeGstPercent: 18 },
+  bajaj,
 }: {
   invoiceId: string;
   total: number;
   payments: PaymentRow[];
   /** Razorpay's commission and the GST on it, from Invoice Settings. */
   razorpayRates?: { feePercent: number; feeGstPercent: number };
+  /** Set on a Bajaj Finance sale: what Bajaj finances, and its DO. */
+  bajaj?: { financedAmount: number; doId: string | null } | null;
 }) {
   const router = useRouter();
   const toast = useToast();
@@ -442,6 +450,15 @@ export function PaymentsPanel({
       </CardHeader>
 
       <CardBody className="space-y-5">
+        {bajaj && (
+          <BajajDisbursementCard
+            invoiceId={invoiceId}
+            doId={bajaj.doId}
+            financedAmount={bajaj.financedAmount}
+            outstanding={Math.max(outstanding, 0)}
+            disbursement={payments.find((p) => p.method === BAJAJ_DISBURSEMENT_METHOD) ?? null}
+          />
+        )}
         <div className="space-y-2.5">
           {/* Phones: one row per figure, label left, amount right. */}
           <dl className="grid grid-cols-1 gap-2 text-sm sm:grid-cols-3 sm:gap-3">
@@ -504,7 +521,7 @@ export function PaymentsPanel({
           )}
           {totalFees > 0 && (
             <p className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-amber-50/70 px-3 py-2 text-xs text-amber-800 dark:bg-amber-500/10 dark:text-amber-300">
-              <span>Gateway fees (commission + GST)</span>
+              <span>{bajaj && payments.some((p) => p.method === BAJAJ_DISBURSEMENT_METHOD) ? "Kept by Bajaj Finance & gateways" : "Gateway fees (commission + GST)"}</span>
               <span className="font-semibold tabular-nums">
                 −{formatCurrency(totalFees)} · {formatCurrency(round2(paid - totalFees))} landed in the bank
               </span>
@@ -675,7 +692,7 @@ export function PaymentsPanel({
                 <input
                   name="paidOn"
                   type="date"
-                  defaultValue={(editing ? new Date(editing.paidOn) : new Date()).toISOString().slice(0, 10)}
+                  defaultValue={editing ? new Date(editing.paidOn).toISOString().slice(0, 10) : todayISO()}
                   required
                   className={fieldClass}
                 />

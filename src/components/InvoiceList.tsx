@@ -16,14 +16,26 @@ export type ListedInvoice = {
   invoiceNumber: string;
   customerName: string;
   customerGstin: string | null;
+  placeOfSupply: string;
   invoiceDate: Date;
   dueDate: Date;
   grossAmount: number;
   emailSentAt: Date | null;
   revisedAt: Date | null;
+  saleType: string;
+  doId: string | null;
+  financedAmount: number | null;
   business: { name: string; color: string };
-  payments: { amount: number }[];
+  payments: { amount: number; method: string | null }[];
 };
+
+/** Must match BAJAJ_DISBURSEMENT in src/server/services/invoices.ts. */
+const BAJAJ_DISBURSEMENT = "Bajaj Finance disbursement";
+
+/** A Bajaj sale Bajaj hasn't paid out on yet — waiting on Bajaj, not on the customer. */
+export function awaitingBajaj(inv: Pick<ListedInvoice, "saleType" | "payments">, balance: number): boolean {
+  return inv.saleType === "BAJAJ" && balance > 0.5 && !inv.payments.some((p) => p.method === BAJAJ_DISBURSEMENT);
+}
 
 export const listedInvoiceSelect = {
   id: true,
@@ -31,19 +43,23 @@ export const listedInvoiceSelect = {
   invoiceNumber: true,
   customerName: true,
   customerGstin: true,
+  placeOfSupply: true,
   invoiceDate: true,
   dueDate: true,
   grossAmount: true,
   emailSentAt: true,
   revisedAt: true,
+  saleType: true,
+  doId: true,
+  financedAmount: true,
   business: { select: { name: true, color: true } },
-  payments: { select: { amount: true } },
+  payments: { select: { amount: true, method: true } },
 } as const;
 
-export type StatusFilter = "all" | "open" | "paid";
+export type StatusFilter = "all" | "open" | "paid" | "bajaj";
 
 export function parseStatusFilter(value: string | undefined): StatusFilter {
-  return value === "open" || value === "paid" ? value : "all";
+  return value === "open" || value === "paid" || value === "bajaj" ? value : "all";
 }
 
 /** The list's filters, kept in the URL so a filtered view can be shared or bookmarked. */
@@ -75,7 +91,7 @@ export function InvoiceList({
   const rows = invoices.map((inv) => {
     const paid = inv.payments.reduce((s, p) => s + p.amount, 0);
     const balance = Math.round((inv.grossAmount - paid) * 100) / 100;
-    return { ...inv, paid, balance };
+    return { ...inv, paid, balance, awaiting: awaitingBajaj(inv, balance) };
   });
 
   const totals = rows.reduce(
@@ -83,15 +99,29 @@ export function InvoiceList({
     { billed: 0, paid: 0, due: 0 }
   );
   const openCount = rows.filter((r) => r.balance > 0.5).length;
-  const overdueCount = rows.filter((r) => r.balance > 0.5 && r.dueDate < today).length;
+  // A sale waiting on Bajaj's payout isn't overdue from the customer.
+  const overdueCount = rows.filter((r) => r.balance > 0.5 && !r.awaiting && r.dueDate < today).length;
+  const awaitingCount = rows.filter((r) => r.awaiting).length;
+  // Bajaj owes only the financed part; any unpaid down payment is the customer's.
+  const awaitingTotal = rows
+    .filter((r) => r.awaiting)
+    .reduce((s, r) => s + Math.min(r.financedAmount ?? r.balance, r.balance), 0);
   const visible = rows.filter((r) =>
-    filters.status === "open" ? r.balance > 0.5 : filters.status === "paid" ? r.balance <= 0.5 : true
+    filters.status === "open"
+      ? r.balance > 0.5
+      : filters.status === "paid"
+        ? r.balance <= 0.5
+        : filters.status === "bajaj"
+          ? r.awaiting
+          : true
   );
 
   const status = (inv: (typeof rows)[number]) => {
     const settled = inv.balance <= 0.5;
     const late = !settled && inv.dueDate < today;
     if (settled) return <Badge tone="success" dot>Paid</Badge>;
+    // Waiting on Bajaj's payout isn't the customer being late.
+    if (inv.awaiting) return <Badge tone="brand" dot>Awaiting Bajaj</Badge>;
     if (inv.paid > 0) return <Badge tone={late ? "danger" : "warning"} dot>Part paid</Badge>;
     return <Badge tone={late ? "danger" : "neutral"} dot>{late ? "Overdue" : "Unpaid"}</Badge>;
   };
@@ -147,7 +177,9 @@ export function InvoiceList({
           {
             label: "Outstanding",
             value: totals.due,
-            hint: `${openCount} open${overdueCount ? ` · ${overdueCount} overdue` : ""}`,
+            hint: `${openCount} open${overdueCount ? ` · ${overdueCount} overdue` : ""}${
+              awaitingCount ? ` · ${formatCurrencyWhole(awaitingTotal)} awaiting Bajaj` : ""
+            }`,
             cls: totals.due > 0 ? "text-amber-700 dark:text-amber-400" : "text-neutral-950 dark:text-white",
           },
         ].map((m) => (
@@ -170,6 +202,9 @@ export function InvoiceList({
                   { key: "all", label: `All · ${rows.length}` },
                   { key: "open", label: `Open · ${openCount}` },
                   { key: "paid", label: `Paid · ${rows.length - openCount}` },
+                  ...(awaitingCount > 0 || filters.status === "bajaj"
+                    ? [{ key: "bajaj" as const, label: `Awaiting Bajaj · ${awaitingCount}` }]
+                    : []),
                 ] as const
               ).map((s) => ({ key: s.key, label: s.label, href: href({ status: s.key }), active: filters.status === s.key }))}
             />
@@ -247,7 +282,8 @@ export function InvoiceList({
                       </Link>
                       <div className="mt-1 flex flex-wrap gap-1">
                         {inv.brand === "GRATEFUL" &&
-                          (isInterStateSupply(inv.customerGstin) ? <Badge tone="warning">IGST</Badge> : <Badge>CGST+SGST</Badge>)}
+                          (isInterStateSupply(inv.customerGstin, inv.placeOfSupply) ? <Badge tone="warning">IGST</Badge> : <Badge>CGST+SGST</Badge>)}
+                        {inv.saleType === "BAJAJ" && <Badge>Bajaj</Badge>}
                         {inv.revisedAt && <Badge tone="brand">Revised</Badge>}
                       </div>
                     </TD>

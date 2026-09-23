@@ -98,7 +98,7 @@ export default async function MoneyPage({
               type="text"
               name="q"
               defaultValue={q ?? ""}
-              placeholder="Search description or category…"
+              placeholder="Search expense, description or category…"
               className="h-9 w-full rounded-xl border border-neutral-200/80 bg-white pl-9 pr-3 text-sm shadow-card outline-none focus:border-brand-500 focus:ring-4 focus:ring-brand-500/15 sm:w-72 dark:border-white/10 dark:bg-neutral-900/70"
             />
           </div>
@@ -204,7 +204,7 @@ export default async function MoneyPage({
                   <TH>Date</TH>
                   <TH>Type</TH>
                   {showBusiness && <TH>Business</TH>}
-                  <TH>Category</TH>
+                  <TH>Entry</TH>
                   <TH className="text-right">Gross</TH>
                   <TH>Gateway</TH>
                   <TH className="text-right">GST</TH>
@@ -227,8 +227,9 @@ export default async function MoneyPage({
                       </TD>
                     )}
                     <TD>
-                      <p className="text-neutral-800 dark:text-neutral-200">{e.category.name}</p>
-                      {e.description && <p className="max-w-56 truncate text-xs text-neutral-400">{e.description}</p>}
+                      {/* What it was (the expense or receipt) leads; its category sits underneath. */}
+                      <p className="max-w-72 truncate font-medium text-neutral-900 dark:text-neutral-100">{e.description || e.category.name}</p>
+                      {e.description && <p className="max-w-72 truncate text-xs text-neutral-400">{e.category.name}</p>}
                     </TD>
                     <TD className="text-right tabular-nums">{formatCurrency(e.grossAmount)}</TD>
                     <TD>

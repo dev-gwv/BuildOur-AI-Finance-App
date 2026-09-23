@@ -1,15 +1,18 @@
 import { after } from "next/server";
+import { z } from "zod";
 import { prisma } from "@/lib/prisma";
-import { deleteUpload, saveUpload } from "@/lib/storage";
+import { UnsupportedUpload, deleteUpload, saveUpload } from "@/lib/storage";
 import { syncPayment, unsyncPayment } from "@/lib/sheet";
 import { readPaymentForm, verifyRazorpayPayment } from "@/lib/paymentInput";
 import { requireInvoiceAccess, requirePaymentAccess } from "../access";
 import { audit, diff } from "../audit";
-import { badRequest } from "../errors";
+import { badRequest, conflict } from "../errors";
+import { isoDate, optionalText, positiveMoney } from "../validation";
+import { BAJAJ_DISBURSEMENT } from "./invoices";
 import type { SessionUser } from "../session";
 import { guardWrite, round2, rupees } from "./common";
 
-const PROOF_TYPES = ["application/pdf", "image/png", "image/jpeg", "image/webp", "image/heic", "image/heif"];
+const PROOF_TYPES = ["application/pdf", "image/png", "image/jpeg", "image/webp"];
 const MAX_PROOF = 4 * 1024 * 1024;
 
 const PROOF_NOT_SAVED = "The payment was saved, but its screenshot couldn't be attached.";
@@ -21,11 +24,13 @@ const PROOF_NOT_SAVED = "The payment was saved, but its screenshot couldn't be a
  */
 async function storeProof(proof: FormDataEntryValue | null): Promise<{ path: string | null; warning: string | null }> {
   if (!(proof instanceof File) || proof.size === 0) return { path: null, warning: null };
-  if (proof.type && !PROOF_TYPES.includes(proof.type)) throw badRequest("Proof must be an image or a PDF");
+  if (!PROOF_TYPES.includes(proof.type)) throw badRequest("Proof must be a PDF, PNG, JPG or WebP");
   if (proof.size > MAX_PROOF) throw badRequest("Proof must be under 4 MB");
   try {
     return { path: await saveUpload(proof), warning: null };
   } catch (e) {
+    // Bytes that aren't a real image/PDF are refused, not saved around.
+    if (e instanceof UnsupportedUpload) throw badRequest(e.message);
     console.error("Couldn't store a payment screenshot; saving the payment without it:", e);
     return { path: null, warning: PROOF_NOT_SAVED };
   }
@@ -140,4 +145,74 @@ export async function deletePayment(user: SessionUser, paymentId: string, req: R
 
   // A payment removed here must not stay in the sheet, or its month stops adding up.
   after(() => unsyncPayment(access.invoice.businessId, paymentId));
+}
+
+export const bajajDisbursementSchema = z.object({
+  /** What Bajaj actually credited to the bank account. */
+  credited: positiveMoney("Amount credited"),
+  paidOn: isoDate("Date credited"),
+  /** UTR / bank reference for the credit. */
+  reference: optionalText(60),
+});
+
+/**
+ * Records Bajaj Finance paying out a financed sale. Bajaj pays the financed
+ * amount less its dealer charges (subvention / MDR / processing): the payment
+ * settles the whole financed amount against the invoice, and the difference is
+ * booked as Bajaj's fee — the same way a Razorpay commission is — so "collected"
+ * and "landed in the bank" both come out right.
+ */
+export async function recordBajajDisbursement(
+  user: SessionUser,
+  invoiceId: string,
+  input: z.infer<typeof bajajDisbursementSchema>,
+  req: Request
+) {
+  await guardWrite(user);
+  await requireInvoiceAccess(user, invoiceId);
+
+  const invoice = await prisma.invoice.findUniqueOrThrow({
+    where: { id: invoiceId },
+    include: { payments: { select: { amount: true, method: true } } },
+  });
+  if (invoice.saleType !== "BAJAJ") throw badRequest("This isn't a Bajaj Finance sale");
+  if (invoice.payments.some((p) => p.method === BAJAJ_DISBURSEMENT)) {
+    throw conflict("Bajaj's disbursement is already recorded on this invoice — edit that payment instead");
+  }
+
+  const outstanding = round2(invoice.grossAmount - invoice.payments.reduce((s, p) => s + p.amount, 0));
+  const settles = round2(Math.min(invoice.financedAmount ?? outstanding, outstanding));
+  if (settles <= 0) throw badRequest("Nothing is left for Bajaj to pay on this invoice");
+  if (input.credited > settles + 0.005) {
+    throw badRequest(`Bajaj can't have paid more than the ${rupees(settles)} it financed`, {
+      credited: `At most ${rupees(settles)}`,
+    });
+  }
+
+  const charges = round2(settles - input.credited);
+  const payment = await prisma.payment.create({
+    data: {
+      invoiceId,
+      amount: settles,
+      paidOn: input.paidOn,
+      method: BAJAJ_DISBURSEMENT,
+      gateway: "Bajaj Finance",
+      gatewayRef: input.reference ?? invoice.doId,
+      feeAmount: charges,
+      feeGstAmount: 0,
+    },
+  });
+
+  await audit({
+    user,
+    businessId: invoice.businessId,
+    action: "payment.create",
+    entityType: "payment",
+    entityId: payment.id,
+    summary: `Bajaj disbursed ${rupees(input.credited)} on ${invoice.invoiceNumber} against ${rupees(settles)} financed (charges ${rupees(charges)})`,
+    req,
+  });
+
+  after(() => syncPayment(payment.id));
+  return { payment };
 }

@@ -74,6 +74,11 @@ export default async function EditInvoicePage({ params }: { params: Promise<{ id
           notes: invoice.notes ?? "",
           terms: invoice.terms ?? "",
           emailSentAt: invoice.emailSentAt ? invoice.emailSentAt.toISOString() : null,
+          saleType: invoice.saleType,
+          doId: invoice.doId ?? "",
+          downPayment: invoice.downPayment ?? 0,
+          // A legacy auto-recorded disbursement still follows the amount (see bajajOnly).
+          bajajDisbursed: !bajajOnly && invoice.payments.some((p) => p.method === "Bajaj Finance disbursement"),
         }}
       />
     </div>

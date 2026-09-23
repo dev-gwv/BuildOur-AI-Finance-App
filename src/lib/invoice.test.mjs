@@ -9,7 +9,7 @@ import { parseDeliveryOrderText } from "./parseDeliveryOrder.ts";
 import { looksLikeQuotation, parseQuotationText } from "./parseQuotation.ts";
 import { PAYMENT_METHODS, parsePaymentScreenshotText } from "./parsePaymentScreenshot.ts";
 import { invoiceEmailHtml, invoiceEmailSubject, invoiceEmailText } from "./invoiceEmail.ts";
-import { isInterStateSupply, placeOfSupplyFromGstin, stateCodeFromGstin } from "./gstState.ts";
+import { guessStateCodeFromAddress, isInterStateSupply, placeOfSupplyFromGstin, stateCodeFromGstin, stateCodeFromPlaceOfSupply } from "./gstState.ts";
 import { formatInvoiceNumber, previewInvoiceNumber, seqInSeries, slugify } from "./invoiceNumbering.ts";
 import { calculateCostBreakup, calculateGatewayFee } from "./calc.ts";
 import { detectGateway } from "./parsePaymentScreenshot.ts";
@@ -409,5 +409,63 @@ assert.equal(normalizeRazorpayPayment({ id: "pay_x", status: "captured", amount:
 assert.equal(parseDeliveryOrderText("A Product Price [117,999.00 117,999.00").productPrice, 117999, "OCR bracket before the price");
 assert.equal(parseDeliveryOrderText("Product Price | 1,77,000").productPrice, 177000, "OCR table bar before the price");
 assert.equal(parseDeliveryOrderText("Product Price: Rs. 354000").productPrice, 354000, "label, colon and Rs.");
+
+// --- Bajaj DO: the full amount table, when the DO has one ---
+// Written to the usual Bajaj labels; only "A Product Price" is confirmed on a real DO.
+const fullDo = parseDeliveryOrderText(
+  "Bajaj Finance Limited DELIVERY ORDER DO ID: B429427477 Date: 18/09/2026 The loan application of Mr/Miss/Mrs. Rohan Mehta has been approved " +
+    "Address of the customer for delivery: 12 MG Road, Delhi Mobile Number: 9876543210 A Product Price 117,999.00 117,999.00 " +
+    "B Down Payment 17,999.00 C Loan Amount 1,00,000.00 EMI Amount Rs. 8,333 Tenure 12 Months"
+);
+assert.equal(fullDo.productPrice, 117999);
+assert.equal(fullDo.downPayment, 17999, "down payment");
+assert.equal(fullDo.loanAmount, 100000, "loan amount (Indian commas)");
+assert.equal(fullDo.emi, 8333, "EMI");
+assert.equal(fullDo.tenureMonths, 12, "tenure");
+assert.equal(fullDo.mobile, "9876543210");
+assert.equal(fullDo.customerName, "Rohan Mehta");
+assert.equal(fullDo.doDate, "2026-09-18");
+// A photographed DO read by OCR: table borders, ₹/Rs, a misread "EMl", spaced phone number.
+const ocrDo = parseDeliveryOrderText(
+  "DO ID : B429427477 | A | Product Price | ₹ 1,17,999 | B [ Down Payment ] 0 | C Loan Amount: Rs 1,17,999 | EMl Amount 9,834 | Tenure (months) 12 | Mobile No. +91 98765 43210"
+);
+assert.equal(ocrDo.productPrice, 117999, "OCR price");
+assert.equal(ocrDo.downPayment, 0, "OCR zero down payment");
+assert.equal(ocrDo.loanAmount, 117999, "OCR loan");
+assert.equal(ocrDo.emi, 9834, "OCR EMI with misread I");
+assert.equal(ocrDo.tenureMonths, 12, "OCR tenure");
+assert.equal(ocrDo.mobile, "9876543210", "OCR mobile with spaces");
+// The one-line DO seen so far: everything beyond the price stays unknown, never guessed.
+const minimalDo = parseDeliveryOrderText(doText);
+assert.equal(minimalDo.downPayment, null);
+assert.equal(minimalDo.loanAmount, null);
+assert.equal(minimalDo.emi, null);
+assert.equal(minimalDo.tenureMonths, null);
+assert.equal(minimalDo.mobile, null);
+
+// --- Bajaj disbursement in the sheet: "incl. charges" is the financed amount,
+// "excluding" is what reached the bank with GST taken back out ---
+const bajajRow = paymentReceiptRow(
+  { id: "p9", amount: 100000, paidOn: new Date("2026-09-25T00:00:00Z"), method: "Bajaj Finance disbursement", note: null, gateway: "Bajaj Finance", feeAmount: 8897, feeGstAmount: 0 },
+  { brand: "GRATEFUL", customerName: "Kavya Sharma", invoiceNumber: "IPC-INV-002250", gstPercent: 18 }
+);
+assert.equal(bajajRow.amount, 100000, "financed amount settled");
+assert.equal(bajajRow.amountExGst, Math.round((91103 / 1.18) * 100) / 100, "credited, excluding GST");
+assert.match(bajajRow.remarks, /Bajaj Finance disbursement · via Bajaj Finance · Bajaj Finance fee ₹8,897/);
+
+// --- B2C inter-state: no GSTIN, so the place of supply decides ---
+assert.equal(stateCodeFromPlaceOfSupply("Uttar Pradesh (09)"), "09");
+assert.equal(stateCodeFromPlaceOfSupply("Haryana"), "06", "bare state name");
+assert.equal(stateCodeFromPlaceOfSupply(""), null);
+assert.equal(isInterStateSupply(null, "Uttar Pradesh (09)"), true, "Noida customer without GSTIN pays IGST");
+assert.equal(isInterStateSupply(null, "Delhi (07)"), false, "Delhi B2C stays CGST+SGST");
+assert.equal(isInterStateSupply("07AAJCG9243K1Z5", "Maharashtra (27)"), false, "a GSTIN outranks the place of supply");
+assert.equal(isInterStateSupply(null, null), false, "nothing known: intra-state");
+assert.equal(guessStateCodeFromAddress("Flat 12, Sector 62, Noida 201301"), "09", "Noida is UP");
+assert.equal(guessStateCodeFromAddress("DLF Phase 3, Gurugram"), "06", "Gurugram is Haryana");
+assert.equal(guessStateCodeFromAddress("B-4 Laxmi Nagar, New Delhi 110092"), "07");
+assert.equal(guessStateCodeFromAddress("12 MG Road, Bengaluru, Karnataka 560001"), "29", "state name wins");
+assert.equal(guessStateCodeFromAddress("Salt Lake, West Bengal"), "19");
+assert.equal(guessStateCodeFromAddress("Somewhere unknown"), null);
 
 console.log("All invoice money-path checks passed.");

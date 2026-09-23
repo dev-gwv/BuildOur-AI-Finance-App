@@ -47,6 +47,7 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
           description={
             <span className="flex flex-wrap items-center gap-2">
               {invoice.customerName}
+              {invoice.saleType === "BAJAJ" && <Badge tone="brand">Bajaj Finance sale{invoice.doId ? ` · DO ${invoice.doId}` : ""}</Badge>}
               {invoice.revisedAt && <Badge tone="warning">Revised {formatDate(invoice.revisedAt)}</Badge>}
             </span>
           }
@@ -78,6 +79,11 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
           feePercent: settings?.razorpayFeePercent ?? 2,
           feeGstPercent: settings?.razorpayFeeGstPercent ?? 18,
         }}
+        bajaj={
+          invoice.saleType === "BAJAJ"
+            ? { financedAmount: invoice.financedAmount ?? invoice.grossAmount - (invoice.downPayment ?? 0), doId: invoice.doId }
+            : null
+        }
       />
 
       <InvoiceDocument invoice={invoice} signatureDataUri={settings?.signatureDataUri} payments={invoice.payments} />

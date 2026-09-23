@@ -4,7 +4,13 @@ import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { AlertTriangle, Receipt } from "lucide-react";
 import { calculateInvoiceBreakup } from "@/lib/invoiceCalc";
-import { isInterStateSupply, placeOfSupplyFromGstin, stateCodeFromGstin, stateNameFromCode } from "@/lib/gstState";
+import {
+  isInterStateSupply,
+  placeOfSupplyFromGstin,
+  stateCodeFromGstin,
+  stateCodeFromPlaceOfSupply,
+  stateNameFromCode,
+} from "@/lib/gstState";
 import { amountInWords } from "@/lib/numberToWords";
 import { formatCurrency, formatDate } from "@/lib/format";
 import { BRANDS } from "@/lib/brands";
@@ -37,6 +43,12 @@ export type EditableInvoice = {
   terms: string;
   emailSentAt: string | null;
   businessId: string;
+  /** Bajaj Finance sales: the DO and the customer's down payment (Bajaj finances the rest). */
+  saleType?: string;
+  doId?: string;
+  downPayment?: number;
+  /** Bajaj has already paid out — the financed amount can't move any more. */
+  bajajDisbursed?: boolean;
 };
 
 /** A business an admin can move this invoice to (same legal entity only). */
@@ -76,10 +88,17 @@ export function InvoiceEditForm({
   const [notes, setNotes] = useState(invoice.notes);
   const [terms, setTerms] = useState(invoice.terms);
   const [businessId, setBusinessId] = useState(invoice.businessId);
+  const isBajaj = invoice.saleType === "BAJAJ";
+  const [doId, setDoId] = useState(invoice.doId ?? "");
+  const [downPayment, setDownPayment] = useState(String(invoice.downPayment ?? 0));
+  const down = Math.max(0, Number(downPayment) || 0);
+  const financed = Math.max(0, Math.round(((Number(grossAmount) || 0) - down) * 100) / 100);
+  const downInvalid = isBajaj && down >= (Number(grossAmount) || 0);
 
-  const buyerStateCode = stateCodeFromGstin(customerGstin);
+  // The GSTIN's state when there is one, else the place of supply's.
+  const buyerStateCode = stateCodeFromGstin(customerGstin) ?? stateCodeFromPlaceOfSupply(placeOfSupply);
   const buyerStateName = stateNameFromCode(buyerStateCode);
-  const interState = isInterStateSupply(customerGstin);
+  const interState = isInterStateSupply(customerGstin, placeOfSupply);
   const breakup = calculateInvoiceBreakup({
     grossAmount: Number(grossAmount) || 0,
     gstPercent: gstRegistered ? Number(gstPercent) || 0 : 0,
@@ -120,6 +139,7 @@ export function InvoiceEditForm({
           notes,
           terms,
           ...(businessId !== invoice.businessId ? { businessId } : {}),
+          ...(isBajaj ? { doId, downPayment: down } : {}),
         }),
       });
       if (!res.ok) {
@@ -278,6 +298,40 @@ export function InvoiceEditForm({
                 </div>
               )}
             </div>
+            {isBajaj && (
+              <div className="grid gap-3 rounded-xl border border-brand-100 bg-brand-50/40 p-4 sm:grid-cols-3 dark:border-brand-500/20 dark:bg-brand-500/[0.06]">
+                <div>
+                  <label className={labelClass}>Bajaj DO number</label>
+                  <input
+                    value={doId}
+                    onChange={(e) => setDoId(e.target.value.toUpperCase())}
+                    required
+                    className={`${inputClass} font-mono`}
+                  />
+                </div>
+                <div>
+                  <label className={labelClass}>Down payment (₹)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={downPayment}
+                    onChange={(e) => setDownPayment(e.target.value)}
+                    disabled={invoice.bajajDisbursed}
+                    aria-invalid={downInvalid}
+                    className={`${inputClass} tabular-nums disabled:opacity-60`}
+                  />
+                  {downInvalid && <p className="mt-1 text-xs text-red-600 dark:text-red-400">Must be less than the amount.</p>}
+                </div>
+                <div>
+                  <p className={labelClass}>Bajaj finances</p>
+                  <p className="mt-2 font-semibold tabular-nums text-neutral-900 dark:text-white">{formatCurrency(financed)}</p>
+                  {invoice.bajajDisbursed && (
+                    <p className="mt-0.5 text-xs text-neutral-500 dark:text-neutral-400">Locked — Bajaj has paid out.</p>
+                  )}
+                </div>
+              </div>
+            )}
             {gstRegistered && (
               <div className="sm:w-1/2">
                 <label className={labelClass}>HSN/SAC</label>
@@ -309,7 +363,7 @@ export function InvoiceEditForm({
         </Card>
 
         <div className="flex items-center gap-2">
-          <Button type="submit" loading={pending} disabled={belowPaid}>
+          <Button type="submit" loading={pending} disabled={belowPaid || downInvalid || (isBajaj && !doId.trim())}>
             Save changes
           </Button>
           <Button type="button" variant="secondary" onClick={() => router.push(detailHref)}>

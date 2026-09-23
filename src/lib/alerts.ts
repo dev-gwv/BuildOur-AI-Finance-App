@@ -1,3 +1,4 @@
+import { startOfTodayIST } from "@/lib/dates";
 import { prisma } from "./prisma";
 import { Prisma } from "@/generated/prisma/client";
 
@@ -32,6 +33,9 @@ export async function alertCount(scope: AlertScope = "ALL"): Promise<number> {
         FROM "Invoice" i
         WHERE i."dueDate" < date_trunc('day', NOW())
           AND i."grossAmount" - COALESCE((SELECT SUM(p."amount") FROM "Payment" p WHERE p."invoiceId" = i."id"), 0) > 0.5
+          -- A Bajaj sale still waiting on Bajaj's payout isn't overdue from the customer.
+          AND NOT (i."saleType" = 'BAJAJ' AND NOT EXISTS (
+            SELECT 1 FROM "Payment" p WHERE p."invoiceId" = i."id" AND p."method" = ${BAJAJ_DISBURSEMENT}))
           ${sqlBusinessFilter(scope)}`,
     ]);
     return failures + Number(overdue[0]?.count ?? 0);
@@ -39,6 +43,29 @@ export async function alertCount(scope: AlertScope = "ALL"): Promise<number> {
     console.error("Couldn't count alerts:", error);
     return 0;
   }
+}
+
+/** Must match BAJAJ_DISBURSEMENT in src/server/services/invoices.ts. */
+const BAJAJ_DISBURSEMENT = "Bajaj Finance disbursement";
+
+/**
+ * Bajaj Finance sales raised but not yet paid out by Bajaj: how many, and how
+ * much Bajaj still owes (the financed part of each invoice's balance).
+ */
+export async function awaitingBajaj(scope: AlertScope): Promise<{ count: number; amount: number }> {
+  const invoices = await prisma.invoice.findMany({
+    where: { saleType: "BAJAJ", payments: { none: { method: BAJAJ_DISBURSEMENT } }, ...businessFilter(scope) },
+    select: { grossAmount: true, financedAmount: true, payments: { select: { amount: true } } },
+  });
+  let count = 0;
+  let amount = 0;
+  for (const inv of invoices) {
+    const balance = inv.grossAmount - inv.payments.reduce((s, p) => s + p.amount, 0);
+    if (balance <= 0.5) continue;
+    count += 1;
+    amount += Math.min(inv.financedAmount ?? balance, balance);
+  }
+  return { count, amount: Math.round(amount * 100) / 100 };
 }
 
 export interface OverdueSummary {
@@ -49,9 +76,11 @@ export interface OverdueSummary {
 export async function overdueInvoices(scope: AlertScope): Promise<OverdueSummary> {
   const invoices = await prisma.invoice.findMany({
     where: { dueDate: { lt: startOfToday() }, ...businessFilter(scope) },
-    select: { grossAmount: true, payments: { select: { amount: true } } },
+    select: { grossAmount: true, saleType: true, payments: { select: { amount: true, method: true } } },
   });
   const open = invoices
+    // Waiting on Bajaj's payout is tracked separately (awaitingBajaj), not as overdue.
+    .filter((inv) => !(inv.saleType === "BAJAJ" && !inv.payments.some((p) => p.method === BAJAJ_DISBURSEMENT)))
     .map((inv) => inv.grossAmount - inv.payments.reduce((s, p) => s + p.amount, 0))
     .filter((balance) => balance > 0.5);
   return {
@@ -80,5 +109,6 @@ export async function syncFailures(scope: AlertScope): Promise<{ count: number; 
  * isn't overdue until tomorrow — compare against the start of today, not now.
  */
 export function startOfToday(now = new Date()): Date {
-  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  // Today on the Indian calendar, as the midnight-UTC instant dates are stored at.
+  return startOfTodayIST(now);
 }

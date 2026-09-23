@@ -150,6 +150,14 @@ model Invoice {
   /// The legal entity that issued it, fixed at issue: the printed seller must
   /// not change if the business is later moved to another entity.
   brand           InvoiceBrand @default(GRATEFUL)
+  /// "BAJAJ" = sold on Bajaj Finance EMI, raised from its delivery order: the
+  /// customer may pay a down payment, and Bajaj pays the financed amount later,
+  /// less its dealer charges. "DIRECT" = the customer pays us themselves.
+  saleType        String       @default("DIRECT")
+  /// Bajaj sales: what the customer pays up front, and what Bajaj finances
+  /// (product price - down payment). Null for direct sales.
+  downPayment     Float?
+  financedAmount  Float?
   invoiceNumber   String       @unique
   invoiceDate     DateTime
   dueDate         DateTime

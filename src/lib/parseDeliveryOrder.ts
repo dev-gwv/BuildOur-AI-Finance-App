@@ -7,6 +7,17 @@ export interface ParsedDeliveryOrder {
   customerName: string | null;
   deliveryAddress: string | null;
   productPrice: number | null;
+  /**
+   * The rest of the DO's amount table, when present. Bajaj DOs letter their
+   * rows (A Product Price, B Down Payment, C Loan Amount, ...). Only the
+   * product price has been seen on a real DO so far — these patterns are
+   * written to the usual Bajaj labels and are null whenever they don't match.
+   */
+  downPayment: number | null;
+  loanAmount: number | null;
+  emi: number | null;
+  tenureMonths: number | null;
+  mobile: string | null;
 }
 
 export type ParsedDocument =
@@ -20,6 +31,17 @@ function match(re: RegExp, text: string): string | null {
 function toIsoDate(ddmmyyyy: string | null): string | null {
   const m = ddmmyyyy && /(\d{2})\/(\d{2})\/(\d{4})/.exec(ddmmyyyy);
   return m ? `${m[3]}-${m[2]}-${m[1]}` : null;
+}
+
+/** A rupee figure after a label: tolerates a row letter, ":", "|", "[", ₹/Rs/INR and OCR noise. */
+const AMOUNT_TAIL = /[^\d\n]{0,16}?(?:₹|Rs\.?|INR)?\s*([\d,]+(?:\.\d{1,2})?)/.source;
+
+function amountAfter(label: RegExp, text: string): number | null {
+  const re = new RegExp(`(?:^|[^A-Za-z])(?:${label.source})${AMOUNT_TAIL}`, "i");
+  const m = re.exec(text);
+  if (!m) return null;
+  const n = Number(m[1].replace(/,/g, ""));
+  return Number.isFinite(n) ? n : null;
 }
 
 /**
@@ -42,6 +64,16 @@ export function parseDeliveryOrderText(text: string): ParsedDeliveryOrder {
     customerName: match(/loan application of Mr\/Miss\/Mrs\.\s*([A-Za-z.\s]+?)\s+has been approved/, text),
     deliveryAddress: match(/Address of the customer for delivery:\s*(.+?)\s*Mobile Number:/, text),
     productPrice: priceMatch ? Number(priceMatch[1].replace(/,/g, "")) : null,
+    downPayment: amountAfter(/Down\s*Payment|Advance\s*EMI|Margin\s*Money/, text),
+    loanAmount: amountAfter(/Loan\s*Amount|Finance\s*Amount|Amount\s*Financed|Financed\s*Amount/, text),
+    // OCR reads the capital I in "EMI" as l or 1.
+    emi: amountAfter(/EM[Il1]\s*Amount|Monthly\s*EM[Il1]|EM[Il1](?!\s*(?:Start|Date|Card|Network))/, text),
+    tenureMonths: (() => {
+      const m = /Tenure[^\d\n]{0,16}?(\d{1,3})(?!\d)/i.exec(text);
+      const n = m ? Number(m[1]) : NaN;
+      return Number.isFinite(n) && n > 0 && n <= 120 ? n : null;
+    })(),
+    mobile: match(/Mobile\s*(?:Number|No\.?)?\s*:?\s*(?:\+?91[\s-]?)?([6-9](?:[\s-]?\d){9})(?!\d)/i, text)?.replace(/\D/g, "") ?? null,
   };
 }
 

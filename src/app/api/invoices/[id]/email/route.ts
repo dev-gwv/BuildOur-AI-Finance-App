@@ -58,7 +58,7 @@ export const POST = withApiErrors(async (req: NextRequest, { params }: Params) =
   if (!isMailConfigured()) {
     throw new ApiError(
       400,
-      "Email isn't set up yet. Add the SMTP settings in Invoice Settings before sending."
+      "Email isn't set up yet. Ask whoever manages the app to add the SMTP_HOST, SMTP_USER, SMTP_PASS and SMTP_FROM settings in Vercel, then redeploy."
     );
   }
 

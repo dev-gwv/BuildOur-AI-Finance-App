@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { readUpload } from "@/lib/storage";
+import { SERVE_TYPES, readUpload } from "@/lib/storage";
 import { ApiError, badRequest, notFound, withApiErrors } from "@/server/errors";
 import { requireUser } from "@/server/session";
 import { assertBusinessAccess } from "@/server/access";
@@ -34,11 +34,20 @@ export const GET = withApiErrors(async (_req: NextRequest, { params }: Params) =
   });
   if (!result?.stream) throw new ApiError(404, "That file is no longer available");
 
+  // The type comes from our own allow-list by extension — never from what was
+  // stored — and anything that isn't a document or image is forced to
+  // download. The sandbox CSP means that even a file that somehow slipped
+  // through can't run script with this site's cookies.
+  const ext = filename.slice(filename.lastIndexOf(".")).toLowerCase();
+  const safeType = SERVE_TYPES[ext];
   return new NextResponse(result.stream, {
     headers: {
-      "Content-Type": result.blob.contentType ?? "application/octet-stream",
+      "Content-Type": safeType ?? "application/octet-stream",
+      "Content-Disposition": safeType ? "inline" : "attachment",
+      // Chrome won't show a PDF under a sandbox policy; PDFs are verified by
+      // their signature when stored, and render in the browser's own viewer.
+      ...(safeType === "application/pdf" ? {} : { "Content-Security-Policy": "sandbox; default-src 'none'; img-src 'self' data:" }),
       "Cache-Control": "private, max-age=31536000, immutable",
-      // Uploads are limited to PDFs and images; never let a browser guess otherwise.
       "X-Content-Type-Options": "nosniff",
     },
   });

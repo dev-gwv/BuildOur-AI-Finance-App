@@ -1,5 +1,6 @@
 "use client";
 
+import { todayISO } from "@/lib/dates";
 import { useState, type ChangeEvent, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { AlertCircle, CheckCircle2, FileCheck2, SlidersHorizontal, UploadCloud } from "lucide-react";
@@ -28,7 +29,7 @@ export function MulberryInvoiceForm({
 }) {
   const router = useRouter();
   const toast = useToast();
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayISO();
 
   const [file, setFile] = useState<File | null>(null);
   const [parsing, setParsing] = useState(false);

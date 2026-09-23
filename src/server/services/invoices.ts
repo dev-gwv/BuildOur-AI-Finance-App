@@ -1,7 +1,7 @@
 import { after } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
-import { deleteUpload, saveUpload } from "@/lib/storage";
+import { UnsupportedUpload, deleteUpload, saveUpload } from "@/lib/storage";
 import { syncInvoicePayments, syncPayment, unsyncPayment } from "@/lib/sheet";
 import { accessibleBusinessIds, accessWhere, assertBusinessAccess, requireInvoiceAccess } from "../access";
 import { audit, diff } from "../audit";
@@ -21,8 +21,13 @@ import {
 } from "../validation";
 import { guardWrite, round2, rupees } from "./common";
 
-/** Method recorded on the payment a Bajaj DO invoice gets when it's raised. */
+/** Method on the payment that records Bajaj Finance paying out a financed sale. */
 export const BAJAJ_DISBURSEMENT = "Bajaj Finance disbursement";
+/** Method on the down payment a Bajaj customer pays the dealer directly. */
+export const DOWN_PAYMENT = "Down payment";
+
+/** Checkbox values from a form ("on"), JSON (true) or a string flag ("true"). */
+const flag = z.preprocess((v) => v === true || v === "on" || v === "true" || v === "1", z.boolean()).default(false);
 
 /** Files the server accepts directly; larger quotation decks go straight to Blob. */
 const MAX_DIRECT_UPLOAD = 4 * 1024 * 1024;
@@ -66,6 +71,12 @@ export const createInvoiceSchema = z.object({
   /** A file already sent straight to storage from the browser. */
   doFilePath: z.string().regex(STORED_NAME, "Invalid file reference").optional(),
   source: z.enum(["DO", "GST", "QUOTATION"]).optional(),
+  /** BAJAJ = financed by Bajaj Finance (raised from its DO); DIRECT = the customer pays us. */
+  saleType: z.enum(["BAJAJ", "DIRECT"]).optional(),
+  /** Bajaj sales: what the customer pays the dealer up front. */
+  downPayment: money("Down payment").default(0),
+  /** Bajaj sales: the down payment has already been received. */
+  downPaymentReceived: flag,
   advancePaid: money("Advance").default(0),
 });
 
@@ -74,7 +85,20 @@ export const updateInvoiceSchema = z.object({
   ...invoiceFields,
   /** Move to another business of the same legal entity (admins only). */
   businessId: id.optional(),
+  /** Bajaj sales only: the DO number and the down payment (financed amount follows). */
+  doId: blankAsMissing(optionalText(40)),
+  downPayment: blankAsMissing(money("Down payment").optional()),
 });
+
+/** Bajaj sales: the down payment must leave something for Bajaj to finance. */
+function checkDownPayment(downPayment: number, price: number) {
+  if (downPayment < 0) throw badRequest("The down payment can't be negative", { downPayment: "Can't be negative" });
+  if (downPayment >= price) {
+    throw badRequest("The down payment must be less than the product price — Bajaj finances the rest", {
+      downPayment: `Less than ${rupees(price)}`,
+    });
+  }
+}
 
 /** A GST tax invoice must name the buyer's address; Mulberry's plain invoice needn't. */
 function requireAddressForTaxInvoice(isMulberry: boolean, address: string) {
@@ -87,7 +111,13 @@ async function storeUpload(file: FormDataEntryValue | null): Promise<string | nu
   if (!(file instanceof File) || file.size === 0) return null;
   if (!UPLOAD_TYPES.includes(file.type)) throw badRequest("Upload a PDF or an image (PNG, JPG, WebP)");
   if (file.size > MAX_DIRECT_UPLOAD) throw badRequest("That file is over 4 MB — upload it again and it'll go straight to storage");
-  return saveUpload(file);
+  try {
+    return await saveUpload(file);
+  } catch (e) {
+    // The file's bytes aren't what it claims to be: the user's to fix, not a storage outage.
+    if (e instanceof UnsupportedUpload) throw badRequest(e.message);
+    throw e;
+  }
 }
 
 export async function listInvoices(user: SessionUser, businessId?: string | null) {
@@ -150,11 +180,28 @@ export async function createInvoice(user: SessionUser, input: z.infer<typeof cre
     }
   }
 
-  // A Bajaj-financed sale (raised from its DO) is disbursed in full, so it's
-  // settled the moment it's raised. A GST-certificate sale is a direct B2B sale
-  // paid like any other; a Mulberry booking records only the advance received.
-  const bajajFinanced = !isMulberry && (input.source === "DO" || Boolean(input.doId));
-  const initialPayment = bajajFinanced ? input.grossAmount : input.advancePaid > 0 ? Math.min(input.advancePaid, input.grossAmount) : 0;
+  // A Bajaj sale is financed: the customer may pay a down payment, and Bajaj
+  // pays the financed amount later, less its dealer charges — recorded when it
+  // actually reaches the bank (see recordBajajDisbursement). Nothing is marked
+  // paid on its behalf here. A direct sale is paid like any other; a Mulberry
+  // booking records only the advance received.
+  const saleType = isMulberry ? "DIRECT" : (input.saleType ?? (input.source === "DO" || input.doId ? "BAJAJ" : "DIRECT"));
+  const isBajaj = saleType === "BAJAJ";
+  if (isBajaj && !input.doId) {
+    throw badRequest("Enter the DO number from Bajaj's delivery order", { doId: "The DO number is required for a Bajaj sale" });
+  }
+  const downPayment = isBajaj ? round2(input.downPayment) : null;
+  if (isBajaj) checkDownPayment(downPayment!, input.grossAmount);
+  const financedAmount = isBajaj ? round2(input.grossAmount - downPayment!) : null;
+
+  const initialPayment = isBajaj
+    ? input.downPaymentReceived && downPayment! > 0
+      ? downPayment!
+      : 0
+    : isMulberry && input.advancePaid > 0
+      ? Math.min(input.advancePaid, input.grossAmount)
+      : 0;
+  const initialMethod = isBajaj ? DOWN_PAYMENT : "Advance";
 
   let invoice;
   try {
@@ -193,6 +240,9 @@ export async function createInvoice(user: SessionUser, input: z.infer<typeof cre
           doId: input.doId,
           doDate: input.doDate ?? null,
           doFilePath,
+          saleType,
+          downPayment,
+          financedAmount,
           createdById: user.id,
           ...(initialPayment > 0
             ? {
@@ -200,7 +250,7 @@ export async function createInvoice(user: SessionUser, input: z.infer<typeof cre
                   create: {
                     amount: initialPayment,
                     paidOn: input.invoiceDate,
-                    method: bajajFinanced ? BAJAJ_DISBURSEMENT : "Advance",
+                    method: initialMethod,
                   },
                 },
               }
@@ -222,8 +272,8 @@ export async function createInvoice(user: SessionUser, input: z.infer<typeof cre
     entityType: "invoice",
     entityId: invoice.id,
     summary: `Raised ${invoice.invoiceNumber} for ${invoice.customerName} · ${rupees(invoice.grossAmount)}${
-      initialPayment > 0 ? ` (${bajajFinanced ? "paid by Bajaj" : `advance ${rupees(initialPayment)}`})` : ""
-    }`,
+      isBajaj ? ` · Bajaj DO ${invoice.doId}, financing ${rupees(financedAmount!)}` : ""
+    }${initialPayment > 0 ? ` (${initialMethod.toLowerCase()} ${rupees(initialPayment)} received)` : ""}`,
     req,
   });
 
@@ -249,6 +299,9 @@ const EDIT_LABELS = {
   notes: "notes",
   terms: "terms",
   businessId: "business",
+  doId: "DO number",
+  downPayment: "down payment",
+  financedAmount: "financed amount",
 } as const;
 
 export async function updateInvoice(user: SessionUser, invoiceId: string, input: z.infer<typeof updateInvoiceSchema>, req: Request) {
@@ -287,6 +340,25 @@ export async function updateInvoice(user: SessionUser, invoiceId: string, input:
       ? only
       : null;
   const paid = round2(existing.payments.reduce((s, p) => s + p.amount, 0));
+
+  // Bajaj sales: the DO number stays required, and the financed amount follows
+  // the price and down payment — until Bajaj has actually paid out against it.
+  const isBajaj = existing.saleType === "BAJAJ";
+  let bajajFields: { doId: string | null; downPayment: number | null; financedAmount: number | null } | null = null;
+  if (isBajaj) {
+    const doId = input.doId ?? existing.doId;
+    if (!doId) throw badRequest("A Bajaj sale needs its DO number", { doId: "The DO number is required for a Bajaj sale" });
+    const downPayment = round2(input.downPayment ?? existing.downPayment ?? 0);
+    checkDownPayment(downPayment, input.grossAmount);
+    const financedAmount = round2(input.grossAmount - downPayment);
+    const disbursed = existing.payments.some((p) => p.method === BAJAJ_DISBURSEMENT);
+    if (disbursed && !bajajPayment && Math.abs(financedAmount - (existing.financedAmount ?? financedAmount)) > 0.005) {
+      throw badRequest("Bajaj has already paid out on this sale — the price and down payment can't change the financed amount now", {
+        downPayment: "Locked after the disbursement",
+      });
+    }
+    bajajFields = { doId, downPayment, financedAmount };
+  }
   if (!bajajPayment && input.grossAmount < paid - 0.005) {
     throw badRequest(`${rupees(paid)} has already been received against this invoice — the amount can't go below that`, {
       grossAmount: `At least ${rupees(paid)}`,
@@ -311,6 +383,7 @@ export async function updateInvoice(user: SessionUser, invoiceId: string, input:
     notes: input.notes,
     terms: input.terms,
     businessId: targetBusinessId,
+    ...(bajajFields ?? {}),
   };
   const changed = diff(existing, data, EDIT_LABELS);
   if (Object.keys(changed.changes).length === 0) return existing;

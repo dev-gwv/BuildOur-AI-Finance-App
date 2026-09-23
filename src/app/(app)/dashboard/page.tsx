@@ -1,3 +1,4 @@
+import { startOfTodayIST, todayISO } from "@/lib/dates";
 import Link from "next/link";
 import {
   ArrowRight,
@@ -45,11 +46,14 @@ type PeriodKey = (typeof PERIODS)[number]["key"] | "custom";
 type Range = { start: Date; end: Date } | null;
 
 function addMonths(d: Date, n: number) {
-  return new Date(d.getFullYear(), d.getMonth() + n, 1);
+  // UTC, like the stored dates, so boundaries don't depend on the server's timezone.
+  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + n, 1));
 }
 
 function resolvePeriod(period: PeriodKey, from: string | undefined, to: string | undefined, now: Date) {
-  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+  // "Now" on the Indian calendar: just after midnight IST on the 1st is the new month.
+  const [nowY, nowM] = todayISO(now).split("-").map(Number);
+  const monthStart = new Date(Date.UTC(nowY, nowM - 1, 1));
   let current: Range = null;
   switch (period) {
     case "month":
@@ -59,12 +63,12 @@ function resolvePeriod(period: PeriodKey, from: string | undefined, to: string |
       current = { start: addMonths(monthStart, -1), end: monthStart };
       break;
     case "quarter": {
-      const start = addMonths(monthStart, -(((now.getMonth() + 9) % 12) % 3));
+      const start = addMonths(monthStart, -(((nowM - 1 + 9) % 12) % 3));
       current = { start, end: addMonths(start, 3) };
       break;
     }
     case "fy": {
-      const start = new Date(now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1, 3, 1);
+      const start = new Date(Date.UTC(nowM - 1 >= 3 ? nowY : nowY - 1, 3, 1));
       current = { start, end: addMonths(start, 12) };
       break;
     }
@@ -95,11 +99,11 @@ function change(current: number, previous: number | null): number | null {
 }
 
 function monthKey(date: Date) {
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
 }
 function monthLabel(key: string) {
   const [y, m] = key.split("-").map(Number);
-  return new Date(y, m - 1, 1).toLocaleDateString("en-IN", { month: "short", year: "2-digit" });
+  return new Date(Date.UTC(y, m - 1, 1)).toLocaleDateString("en-IN", { month: "short", year: "2-digit", timeZone: "UTC" });
 }
 
 // ---------------------------------------------------------------------------
@@ -135,7 +139,7 @@ export default async function DashboardPage({
   const showBusinesses = !scope.current && scope.businesses.length > 1;
 
   // The chart always shows at least six months so a single-month period still has context.
-  const chartEnd = current?.end ?? addMonths(new Date(now.getFullYear(), now.getMonth(), 1), 1);
+  const chartEnd = current?.end ?? addMonths(startOfTodayIST(now), 1);
   const chartStart = current && current.start < addMonths(chartEnd, -6) ? current.start : addMonths(chartEnd, -6);
   const chartFrom = period === "all" ? undefined : chartStart;
 
@@ -264,7 +268,9 @@ export default async function DashboardPage({
         invoiceDate: true,
         dueDate: true,
         grossAmount: true,
-        payments: { select: { amount: true } },
+        saleType: true,
+        financedAmount: true,
+        payments: { select: { amount: true, method: true } },
       },
     }),
     prisma.payment.findMany({
@@ -358,13 +364,19 @@ export default async function DashboardPage({
   const open = openInvoices
     .map((inv) => {
       const paid = inv.payments.reduce((s, p) => s + p.amount, 0);
-      return { ...inv, balance: Math.round((inv.grossAmount - paid) * 100) / 100 };
+      const balance = Math.round((inv.grossAmount - paid) * 100) / 100;
+      // A Bajaj sale Bajaj hasn't paid out on is waiting on Bajaj, not on the customer.
+      const awaiting = inv.saleType === "BAJAJ" && !inv.payments.some((p) => p.method === "Bajaj Finance disbursement");
+      return { ...inv, balance, awaiting };
     })
     .filter((inv) => inv.balance > 0.5)
     .sort((a, b) => b.balance - a.balance);
   const outstandingTotal = open.reduce((s, i) => s + i.balance, 0);
   const today = startOfToday(now);
-  const overdue = open.filter((i) => i.dueDate < today);
+  const overdue = open.filter((i) => !i.awaiting && i.dueDate < today);
+  const awaitingBajaj = open.filter((i) => i.awaiting);
+  // Bajaj owes only the financed part; any unpaid down payment is the customer's.
+  const awaitingBajajTotal = awaitingBajaj.reduce((s, i) => s + Math.min(i.financedAmount ?? i.balance, i.balance), 0);
 
   // --- Collections by month, stacked per business; and money in vs out ---
   const seriesKeys: string[] = scope.current ? [scope.current.id] : scope.businesses.map((b) => b.id);
@@ -518,7 +530,7 @@ export default async function DashboardPage({
       <AlertsBanner scope={alertScope} isAdmin={user.role === "ADMIN"} />
 
       <PageHeader
-        eyebrow={`${greeting(now)}, ${user.name.split(" ")[0]} · ${now.toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long" })}`}
+        eyebrow={`${greeting(now)}, ${user.name.split(" ")[0]} · ${now.toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long", timeZone: "Asia/Kolkata" })}`}
         title={
           <span className="flex items-center gap-2.5">
             {scope.current && <span className="h-2.5 w-2.5 rounded-full" style={{ background: scope.current.color }} />}
@@ -613,7 +625,13 @@ export default async function DashboardPage({
           value={formatCurrencyWhole(outstandingTotal)}
           icon={Hourglass}
           tone={overdue.length ? "danger" : "warning"}
-          hint={open.length ? `${open.length} open · ${overdue.length} past due` : "Nothing owed right now"}
+          hint={
+            open.length
+              ? `${open.length} open · ${overdue.length} past due${
+                  awaitingBajaj.length ? ` · ${formatCompactINR(awaitingBajajTotal)} awaiting Bajaj (${awaitingBajaj.length})` : ""
+                }`
+              : "Nothing owed right now"
+          }
         />
         <StatCard
           label="Money out"
@@ -813,7 +831,7 @@ export default async function DashboardPage({
                 <TBody>
                   {open.slice(0, 7).map((inv) => {
                     const days = Math.max(0, Math.floor((now.getTime() - inv.invoiceDate.getTime()) / 86_400_000));
-                    const late = inv.dueDate < today;
+                    const late = !inv.awaiting && inv.dueDate < today;
                     return (
                       <TR key={inv.id}>
                         <TD>
@@ -830,9 +848,13 @@ export default async function DashboardPage({
                           </Link>
                         </TD>
                         <TD>
-                          <Badge tone={late ? (days > 60 ? "danger" : "warning") : "neutral"}>
-                            {days}d{late ? " · past due" : ""}
-                          </Badge>
+                          {inv.awaiting ? (
+                            <Badge tone="brand">{days}d · awaiting Bajaj</Badge>
+                          ) : (
+                            <Badge tone={late ? (days > 60 ? "danger" : "warning") : "neutral"}>
+                              {days}d{late ? " · past due" : ""}
+                            </Badge>
+                          )}
                         </TD>
                         <TD className="text-right tabular-nums">{formatCurrencyWhole(inv.grossAmount)}</TD>
                         <TD className="text-right font-semibold tabular-nums text-neutral-900 dark:text-white">
