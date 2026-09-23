@@ -6,22 +6,21 @@ import { useEffect, useRef, useState } from "react";
 import {
   Bell,
   Building2,
-  Camera,
   ChevronDown,
   ChevronRight,
   FileBarChart,
   FileText,
-  Landmark,
+  HandCoins,
+  History,
   LayoutDashboard,
   LogOut,
   Menu,
   Percent,
   Plug,
   Plus,
-  Receipt,
   RefreshCw,
   Settings2,
-  Sparkles,
+  UserRound,
   Users,
   Wallet,
   X,
@@ -29,64 +28,65 @@ import {
 } from "lucide-react";
 import { signOut } from "next-auth/react";
 import { initials } from "@/lib/format";
+import { BusinessSwitcher, type ShellBusiness } from "@/components/shell/BusinessSwitcher";
 
-type NavItem = { href: string; label: string; icon: LucideIcon; dot?: string };
-type NavGroup = { label: string; items: NavItem[] };
+type NavItem = { href: string; label: string; icon: LucideIcon };
+type NavGroup = { label: string; items: NavItem[]; adminOnly?: boolean };
 
 const NAV_GROUPS: NavGroup[] = [
-  { label: "Overview", items: [{ href: "/dashboard", label: "Dashboard", icon: LayoutDashboard }] },
+  { label: "Overview", items: [{ href: "/dashboard", label: "Overview", icon: LayoutDashboard }] },
   {
-    label: "Invoicing",
+    label: "Sales",
     items: [
-      { href: "/ipc", label: "IPC Finance", icon: Landmark, dot: "bg-brand-400" },
-      { href: "/iwc", label: "IWC Finance", icon: Sparkles, dot: "bg-sky-400" },
-      { href: "/mulberry", label: "Mulberry Weddings", icon: Camera, dot: "bg-rose-400" },
-      { href: "/invoices", label: "Grateful (all)", icon: FileText },
+      { href: "/invoices", label: "Invoices", icon: FileText },
+      { href: "/payments", label: "Payments", icon: HandCoins },
     ],
   },
   {
     label: "Money",
     items: [
-      { href: "/expenses", label: "Expenses", icon: Receipt },
+      { href: "/money", label: "Money in & out", icon: Wallet },
       { href: "/reports", label: "Reports", icon: FileBarChart },
       { href: "/reports/gst", label: "GST report", icon: Percent },
     ],
   },
-  { label: "Setup", items: [{ href: "/companies", label: "Companies", icon: Building2 }] },
-];
-
-const ADMIN_ITEMS: NavItem[] = [
-  { href: "/settings/invoicing", label: "Invoice settings", icon: Settings2 },
-  { href: "/settings/users", label: "Users", icon: Users },
-  { href: "/settings/sync", label: "Sheet sync", icon: RefreshCw },
-  { href: "/settings/integrations", label: "Integrations", icon: Plug },
+  {
+    label: "Settings",
+    adminOnly: true,
+    items: [
+      { href: "/settings/businesses", label: "Businesses", icon: Building2 },
+      { href: "/settings/team", label: "Team", icon: Users },
+      { href: "/settings/invoicing", label: "Invoice defaults", icon: Settings2 },
+      { href: "/settings/integrations", label: "Integrations", icon: Plug },
+      { href: "/settings/sync", label: "Sheet sync", icon: RefreshCw },
+      { href: "/settings/audit", label: "Audit log", icon: History },
+    ],
+  },
 ];
 
 const QUICK_CREATE = [
-  { href: "/ipc/new", label: "IPC invoice", hint: "Bajaj DO or GST certificate" },
-  { href: "/iwc/new", label: "IWC invoice", hint: "Bajaj DO or GST certificate" },
-  { href: "/mulberry/new", label: "Mulberry invoice", hint: "From a package quotation" },
-  { href: "/expenses/new", label: "Money in / out", hint: "A receipt or a cost, with GST breakup" },
+  { href: "/invoices/new", label: "New invoice", hint: "From a Bajaj DO, GST certificate or quotation" },
+  { href: "/money/new", label: "Money in / out", hint: "A receipt or a cost, with GST breakup" },
 ];
 
 /** Readable names for URL segments in the breadcrumb. */
 const SEGMENT_LABELS: Record<string, string> = {
-  dashboard: "Dashboard",
-  ipc: "IPC Finance",
-  iwc: "IWC Finance",
-  mulberry: "Mulberry Weddings",
-  invoices: "Grateful",
-  expenses: "Expenses",
+  dashboard: "Overview",
+  invoices: "Invoices",
+  payments: "Payments",
+  money: "Money in & out",
   reports: "Reports",
-  companies: "Companies",
+  gst: "GST report",
   settings: "Settings",
-  invoicing: "Invoicing",
-  users: "Users",
+  businesses: "Businesses",
+  team: "Team",
+  invoicing: "Invoice defaults",
+  integrations: "Integrations",
+  sync: "Sheet sync",
+  audit: "Audit log",
+  account: "Account",
   new: "New",
   edit: "Edit",
-  gst: "GST report",
-  sync: "Sheet sync",
-  integrations: "Integrations",
 };
 
 /**
@@ -106,6 +106,8 @@ export function AppShell({
   role,
   isAdmin,
   alertCount = 0,
+  businesses,
+  current,
   children,
 }: {
   name: string;
@@ -113,31 +115,32 @@ export function AppShell({
   isAdmin: boolean;
   /** Overdue invoices + sheet writes that failed, for the badge in the top bar. */
   alertCount?: number;
+  /** Businesses this user can switch between, and the one being worked in (null = all). */
+  businesses: ShellBusiness[];
+  current: ShellBusiness | null;
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
 
-  const groups = isAdmin
-    ? NAV_GROUPS.map((g) => (g.label === "Setup" ? { ...g, items: [...g.items, ...ADMIN_ITEMS] } : g))
-    : NAV_GROUPS;
-  const current = activeHref(
+  const groups = NAV_GROUPS.filter((g) => isAdmin || !g.adminOnly);
+  const active = activeHref(
     pathname,
     groups.flatMap((g) => g.items.map((i) => i.href))
   );
 
   const sidebar = (onNavigate?: () => void) => (
     <div className="flex h-full flex-col bg-[#0c0c0f] text-neutral-300">
-      <div className="flex h-16 items-center gap-2.5 px-5">
-        <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-brand-400 to-brand-700 text-white shadow-lg shadow-brand-900/40 ring-1 ring-white/20">
-          <Wallet className="h-4 w-4" />
+      <div className="flex h-14 items-center gap-2.5 px-5">
+        <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-br from-brand-400 to-brand-700 text-white shadow-lg shadow-brand-900/40 ring-1 ring-white/20">
+          <Wallet className="h-3.5 w-3.5" />
         </span>
-        <div className="leading-tight">
-          <p className="text-sm font-semibold text-white">Grateful Finance</p>
-          <p className="text-[11px] text-neutral-500">IPC · IWC · Mulberry</p>
-        </div>
+        <p className="text-sm font-semibold text-white">Grateful Finance</p>
       </div>
-      <nav className="flex-1 space-y-6 overflow-y-auto px-3 py-4">
+      <div className="px-3 pb-2">
+        <BusinessSwitcher businesses={businesses} current={current} isAdmin={isAdmin} pathname={pathname} />
+      </div>
+      <nav className="flex-1 space-y-5 overflow-y-auto px-3 py-3">
         {groups.map((group) => (
           <div key={group.label}>
             <p className="mb-1.5 px-3 text-[10px] font-semibold uppercase tracking-[0.12em] text-neutral-600">
@@ -145,19 +148,14 @@ export function AppShell({
             </p>
             <div className="space-y-0.5">
               {group.items.map((item) => (
-                <NavLink
-                  key={item.href}
-                  {...item}
-                  active={item.href === current}
-                  onClick={onNavigate}
-                />
+                <NavLink key={item.href} {...item} active={item.href === active} onClick={onNavigate} />
               ))}
             </div>
           </div>
         ))}
       </nav>
       <div className="border-t border-white/[0.06] p-3">
-        <UserMenu name={name} role={role} />
+        <UserMenu name={name} role={role} onNavigate={onNavigate} />
       </div>
     </div>
   );
@@ -172,7 +170,7 @@ export function AppShell({
           <div className="absolute inset-y-0 left-0 w-72 animate-fade-up shadow-2xl">
             <button
               onClick={() => setMobileOpen(false)}
-              className="absolute right-3 top-4 z-10 rounded-md p-1.5 text-neutral-400 hover:bg-white/10 hover:text-white"
+              className="absolute right-3 top-3.5 z-10 rounded-md p-1.5 text-neutral-400 hover:bg-white/10 hover:text-white"
               aria-label="Close menu"
             >
               <X className="h-5 w-5" />
@@ -191,6 +189,7 @@ export function AppShell({
           >
             <Menu className="h-5 w-5" />
           </button>
+          <ScopePill current={current} />
           <Breadcrumbs pathname={pathname} />
           <div className="ml-auto flex items-center gap-2">
             <Link
@@ -214,6 +213,22 @@ export function AppShell({
         </main>
       </div>
     </div>
+  );
+}
+
+/** Always-visible reminder of which business the page is showing. */
+function ScopePill({ current }: { current: ShellBusiness | null }) {
+  return (
+    <span
+      className="hidden shrink-0 items-center gap-1.5 rounded-md border border-neutral-200/80 bg-white px-2 py-0.5 text-xs font-medium text-neutral-700 sm:inline-flex dark:border-white/10 dark:bg-white/[0.04] dark:text-neutral-300"
+      title="The business every page is showing — change it in the sidebar"
+    >
+      <span
+        className="h-2 w-2 rounded-full"
+        style={{ background: current?.color ?? "conic-gradient(#6a6cf0, #0ea5e9, #e11d48, #6a6cf0)" }}
+      />
+      {current?.name ?? "All businesses"}
+    </span>
   );
 }
 
@@ -243,10 +258,8 @@ function Breadcrumbs({ pathname }: { pathname: string }) {
   );
 }
 
-function QuickCreate() {
-  const [open, setOpen] = useState(false);
+function useDismiss(open: boolean, setOpen: (v: boolean) => void) {
   const ref = useRef<HTMLDivElement>(null);
-
   useEffect(() => {
     if (!open) return;
     const close = (e: MouseEvent) => {
@@ -259,12 +272,18 @@ function QuickCreate() {
       document.removeEventListener("mousedown", close);
       document.removeEventListener("keydown", esc);
     };
-  }, [open]);
+  }, [open, setOpen]);
+  return ref;
+}
+
+function QuickCreate() {
+  const [open, setOpen] = useState(false);
+  const ref = useDismiss(open, setOpen);
 
   return (
     <div ref={ref} className="relative">
       <button
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => setOpen(!open)}
         className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-neutral-900 px-3 text-xs font-medium text-white shadow-sm ring-1 ring-inset ring-white/10 hover:bg-neutral-800 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
         aria-expanded={open}
       >
@@ -273,7 +292,7 @@ function QuickCreate() {
         <ChevronDown className="h-3 w-3 opacity-60" />
       </button>
       {open && (
-        <div className="absolute right-0 top-full mt-2 w-64 animate-fade-up overflow-hidden rounded-xl border border-neutral-200/80 bg-white p-1 shadow-pop dark:border-white/10 dark:bg-neutral-900">
+        <div className="absolute right-0 top-full mt-2 w-72 animate-fade-up overflow-hidden rounded-xl border border-neutral-200/80 bg-white p-1 shadow-pop dark:border-white/10 dark:bg-neutral-900">
           {QUICK_CREATE.map((item) => (
             <Link
               key={item.href}
@@ -295,7 +314,6 @@ function NavLink({
   href,
   label,
   icon: Icon,
-  dot,
   active,
   onClick,
 }: NavItem & { active: boolean; onClick?: () => void }) {
@@ -310,27 +328,50 @@ function NavLink({
       {active && <span className="absolute inset-y-1.5 left-0 w-0.5 rounded-full bg-brand-400" />}
       <Icon className={`h-4 w-4 ${active ? "text-white" : "text-neutral-500 group-hover:text-neutral-300"}`} />
       <span className="flex-1 truncate">{label}</span>
-      {dot && <span className={`h-1.5 w-1.5 rounded-full ${dot}`} />}
     </Link>
   );
 }
 
-function UserMenu({ name, role }: { name: string; role: string }) {
+function UserMenu({ name, role, onNavigate }: { name: string; role: string; onNavigate?: () => void }) {
+  const [open, setOpen] = useState(false);
+  const ref = useDismiss(open, setOpen);
   return (
-    <div className="flex items-center gap-2.5 rounded-lg px-2 py-1.5">
-      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-neutral-600 to-neutral-800 text-xs font-semibold text-white ring-1 ring-white/10">
-        {initials(name)}
-      </span>
-      <div className="min-w-0 flex-1">
-        <p className="truncate text-sm font-medium text-white">{name}</p>
-        <p className="text-[11px] capitalize text-neutral-500">{role.toLowerCase()}</p>
-      </div>
+    <div ref={ref} className="relative">
+      {open && (
+        <div className="absolute inset-x-0 bottom-full mb-2 animate-fade-up overflow-hidden rounded-xl border border-white/10 bg-neutral-900 p-1 shadow-pop">
+          <Link
+            href="/account"
+            onClick={() => {
+              setOpen(false);
+              onNavigate?.();
+            }}
+            className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-neutral-200 hover:bg-white/[0.06]"
+          >
+            <UserRound className="h-4 w-4 text-neutral-400" />
+            Account &amp; password
+          </Link>
+          <button
+            onClick={() => signOut({ redirectTo: "/login" })}
+            className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-neutral-200 hover:bg-white/[0.06]"
+          >
+            <LogOut className="h-4 w-4 text-neutral-400" />
+            Sign out
+          </button>
+        </div>
+      )}
       <button
-        onClick={() => signOut({ redirectTo: "/login" })}
-        title="Sign out"
-        className="rounded-md p-1.5 text-neutral-500 hover:bg-white/10 hover:text-white"
+        onClick={() => setOpen(!open)}
+        aria-expanded={open}
+        className="flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left hover:bg-white/[0.04]"
       >
-        <LogOut className="h-4 w-4" />
+        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-neutral-600 to-neutral-800 text-xs font-semibold text-white ring-1 ring-white/10">
+          {initials(name)}
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-sm font-medium text-white">{name}</span>
+          <span className="block text-[11px] capitalize text-neutral-500">{role.toLowerCase()}</span>
+        </span>
+        <ChevronDown className={`h-4 w-4 text-neutral-500 transition-transform ${open ? "rotate-180" : ""}`} />
       </button>
     </div>
   );

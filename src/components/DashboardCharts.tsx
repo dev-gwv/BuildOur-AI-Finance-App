@@ -199,7 +199,8 @@ export function DonutBreakdown({ data, centerLabel }: { data: { name: string; va
   const slices = rest > 0 ? [...top, { name: "Other", value: rest }] : top;
 
   return (
-    <div className="flex flex-col items-center gap-6 sm:flex-row">
+    <div className="@container">
+    <div className="flex flex-col items-center gap-6 @md:flex-row">
       <div className="relative h-44 w-44 shrink-0">
         <ResponsiveContainer width="100%" height="100%">
           <PieChart>
@@ -238,6 +239,7 @@ export function DonutBreakdown({ data, centerLabel }: { data: { name: string; va
           </li>
         ))}
       </ul>
+    </div>
     </div>
   );
 }

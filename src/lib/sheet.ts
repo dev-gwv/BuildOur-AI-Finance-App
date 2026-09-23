@@ -1,14 +1,14 @@
 import { prisma } from "./prisma";
-import { LEDGERS, ledgerForInvoice, parseLedger, type LedgerKey } from "./ventures";
+import { sheetTarget } from "@/server/businesses";
 import { expenseSheetBody, paymentReceiptRow, type SheetBody } from "./sheetRows";
 
 export type { SheetBody };
 
 /**
- * Mirrors the app's money into the Google Sheets each business keeps, through
+ * Mirrors the app's money into the Google Sheet each business keeps, through
  * the Apps Script web app behind every workbook (google-apps-script/PaymentSync.gs).
- * Each workbook has its own copy of the script, so its own URL and secret — see
- * LEDGERS in src/lib/ventures.ts for the variable names.
+ * Each business has its own sheet URL and secret, set in Settings -> Businesses
+ * (see sheetTarget in src/server/businesses.ts).
  *
  * Writes are upserts keyed on the record's id (kept in a column off to the
  * side), so an edit rewrites the same row, a date change moves it to the right
@@ -20,10 +20,10 @@ export type { SheetBody };
  */
 
 /** Sends one write. Returns whether the sheet accepted it (false when not configured, too). */
-export async function postToSheet(ledger: LedgerKey, body: SheetBody): Promise<boolean> {
-  const url = process.env[LEDGERS[ledger].sheetEnvUrl];
-  const secret = process.env[LEDGERS[ledger].sheetEnvSecret];
-  if (!url || !secret) return false;
+export async function postToSheet(businessId: string, body: SheetBody): Promise<boolean> {
+  const target = await sheetTarget(businessId).catch(() => null);
+  if (!target) return false;
+  const { url, secret } = target;
 
   let error: string | null = null;
   try {
@@ -41,9 +41,9 @@ export async function postToSheet(ledger: LedgerKey, body: SheetBody): Promise<b
 
   try {
     if (error) {
-      console.error(`${ledger} sheet sync failed for ${body.action} ${body.id}: ${error}`);
+      console.error(`Sheet sync (business ${businessId}) failed for ${body.action} ${body.id}: ${error}`);
       const open = await prisma.sheetSyncFailure.findFirst({
-        where: { ledger, recordId: body.id, resolvedAt: null },
+        where: { businessId, recordId: body.id, resolvedAt: null },
       });
       if (open) {
         await prisma.sheetSyncFailure.update({
@@ -52,13 +52,13 @@ export async function postToSheet(ledger: LedgerKey, body: SheetBody): Promise<b
         });
       } else {
         await prisma.sheetSyncFailure.create({
-          data: { ledger, action: body.action, recordId: body.id, payload: body, error },
+          data: { businessId, action: body.action, recordId: body.id, payload: body, error },
         });
       }
     } else {
       // The latest write for this record landed, so anything still pending for it is moot.
       await prisma.sheetSyncFailure.updateMany({
-        where: { ledger, recordId: body.id, resolvedAt: null },
+        where: { businessId, recordId: body.id, resolvedAt: null },
         data: { resolvedAt: new Date() },
       });
     }
@@ -81,7 +81,7 @@ const paymentSelect = {
   gateway: true,
   feeAmount: true,
   feeGstAmount: true,
-  invoice: { select: { brand: true, venture: true, customerName: true, invoiceNumber: true, gstPercent: true } },
+  invoice: { select: { businessId: true, brand: true, customerName: true, invoiceNumber: true, gstPercent: true } },
 } as const;
 
 /** Writes (or rewrites) a payment's row in its invoice's workbook. */
@@ -89,8 +89,7 @@ export async function syncPayment(paymentId: string): Promise<void> {
   try {
     const payment = await prisma.payment.findUnique({ where: { id: paymentId }, select: paymentSelect });
     if (!payment) return;
-    const ledger = ledgerForInvoice(payment.invoice);
-    if (ledger) await postToSheet(ledger, { action: "upsert", ...paymentReceiptRow(payment, payment.invoice) });
+    await postToSheet(payment.invoice.businessId, { action: "upsert", ...paymentReceiptRow(payment, payment.invoice) });
   } catch (e) {
     console.error(`Sheet sync for payment ${paymentId} failed before sending:`, e);
   }
@@ -101,25 +100,24 @@ export async function syncInvoicePayments(invoiceId: string): Promise<void> {
   try {
     const payments = await prisma.payment.findMany({ where: { invoiceId }, select: paymentSelect });
     for (const p of payments) {
-      const ledger = ledgerForInvoice(p.invoice);
-      if (ledger) await postToSheet(ledger, { action: "upsert", ...paymentReceiptRow(p, p.invoice) });
+      await postToSheet(p.invoice.businessId, { action: "upsert", ...paymentReceiptRow(p, p.invoice) });
     }
   } catch (e) {
     console.error(`Sheet sync for invoice ${invoiceId} failed before sending:`, e);
   }
 }
 
-export async function unsyncPayment(ledger: LedgerKey | null, paymentId: string): Promise<void> {
-  if (ledger) await postToSheet(ledger, { action: "remove", id: paymentId });
+export async function unsyncPayment(businessId: string, paymentId: string): Promise<void> {
+  await postToSheet(businessId, { action: "remove", id: paymentId });
 }
 
 /**
- * Writes an expense's row. `previous` is where it was before an edit: if the
- * venture or direction changed, the old row is cleared first so it isn't left behind.
+ * Writes an entry's row. `previous` is where it was before an edit: if the
+ * business or direction changed, the old row is cleared first so it isn't left behind.
  */
 export async function syncExpense(
   expenseId: string,
-  previous?: { venture: string | null; direction: string }
+  previous?: { businessId: string; direction: string }
 ): Promise<void> {
   try {
     const expense = await prisma.expense.findUnique({
@@ -127,27 +125,22 @@ export async function syncExpense(
       include: { category: { select: { name: true } }, gateway: { select: { name: true } } },
     });
     if (!expense) return;
-    const ledger = parseLedger(expense.venture);
-    const oldLedger = previous ? parseLedger(previous.venture) : null;
-    if (previous && oldLedger && (oldLedger !== ledger || previous.direction !== expense.direction)) {
-      await unsyncExpense(oldLedger, previous.direction, expenseId);
+    if (previous && (previous.businessId !== expense.businessId || previous.direction !== expense.direction)) {
+      await unsyncExpense(previous.businessId, previous.direction, expenseId);
     }
-    if (ledger) await postToSheet(ledger, expenseSheetBody(expense));
+    await postToSheet(expense.businessId, expenseSheetBody(expense));
   } catch (e) {
     console.error(`Sheet sync for expense ${expenseId} failed before sending:`, e);
   }
 }
 
-export async function unsyncExpense(ledger: LedgerKey | null, direction: string, expenseId: string): Promise<void> {
-  if (!ledger) return;
-  await postToSheet(ledger, direction === "OUT" ? { action: "removeExpense", id: expenseId } : { action: "remove", id: expenseId });
+export async function unsyncExpense(businessId: string, direction: string, expenseId: string): Promise<void> {
+  await postToSheet(businessId, direction === "OUT" ? { action: "removeExpense", id: expenseId } : { action: "remove", id: expenseId });
 }
 
 /** Re-sends a stored failed write. Upserts are idempotent, so this is always safe. */
 export async function retrySheetFailure(failureId: string): Promise<boolean> {
   const failure = await prisma.sheetSyncFailure.findUnique({ where: { id: failureId } });
   if (!failure || failure.resolvedAt) return true;
-  const ledger = parseLedger(failure.ledger);
-  if (!ledger) return false;
-  return postToSheet(ledger, failure.payload as SheetBody);
+  return postToSheet(failure.businessId, failure.payload as SheetBody);
 }

@@ -1,10 +1,9 @@
-import { redirect } from "next/navigation";
 import { ListChecks, Mail, Settings2 } from "lucide-react";
 import { BRANDS, type BrandKey } from "@/lib/brands";
 import { DEFAULT_TEMPLATES } from "@/lib/emailTemplate";
 import { EmailTemplateForm } from "@/components/EmailTemplateForm";
 import { prisma } from "@/lib/prisma";
-import { requireSessionUser } from "@/lib/session";
+import { requirePageAdmin } from "@/server/session";
 import { InvoiceSettingsForm } from "@/components/InvoiceSettingsForm";
 import { InlineCreateForm } from "@/components/InlineCreateForm";
 import { DeleteButton } from "@/components/DeleteButton";
@@ -14,8 +13,7 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { formatCurrency } from "@/lib/format";
 
 export default async function InvoicingSettingsPage() {
-  const user = await requireSessionUser();
-  if (user.role !== "ADMIN") redirect("/dashboard");
+  await requirePageAdmin();
 
   const [settings, catalog, templates] = await Promise.all([
     prisma.invoiceSettings.findUnique({ where: { id: "default" } }),
@@ -26,8 +24,9 @@ export default async function InvoicingSettingsPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Invoice settings"
-        description="Defaults applied to every generated invoice — set once, no retyping"
+        eyebrow="Settings"
+        title="Invoice defaults"
+        description="Terms, notes, signature, email wording and the item catalog — shared by every business's invoices."
       />
 
       <Card>

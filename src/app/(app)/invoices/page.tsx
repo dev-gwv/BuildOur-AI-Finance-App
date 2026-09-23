@@ -1,45 +1,81 @@
 import Link from "next/link";
 import { Plus } from "lucide-react";
 import { prisma } from "@/lib/prisma";
-import { requireSessionUser } from "@/lib/session";
+import { isAdmin, requirePageUser } from "@/server/session";
+import { getScope, scopeWhere } from "@/server/scope";
 import { InvoiceList, listedInvoiceSelect, parseStatusFilter } from "@/components/InvoiceList";
+import { LIST_PERIODS, parseListPeriod, periodFilter } from "@/components/invoices/listPeriods";
 import { PageHeader } from "@/components/ui/PageHeader";
+import type { Prisma } from "@/generated/prisma/client";
 
-export default async function InvoicesPage({ searchParams }: { searchParams: Promise<{ status?: string }> }) {
-  await requireSessionUser();
-  const status = parseStatusFilter((await searchParams).status);
+export default async function InvoicesPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ status?: string; q?: string; period?: string }>;
+}) {
+  const user = await requirePageUser();
+  const params = await searchParams;
+  const status = parseStatusFilter(params.status);
+  const period = parseListPeriod(params.period);
+  const q = (params.q ?? "").trim().slice(0, 100);
+
+  const scope = await getScope(user);
+  const dates = periodFilter(period);
+  const where: Prisma.InvoiceWhereInput = {
+    ...scopeWhere(scope),
+    ...(dates ? { invoiceDate: dates } : {}),
+    ...(q
+      ? {
+          OR: [
+            { customerName: { contains: q, mode: "insensitive" } },
+            { invoiceNumber: { contains: q, mode: "insensitive" } },
+            { customerGstin: { contains: q, mode: "insensitive" } },
+          ],
+        }
+      : {}),
+  };
 
   const invoices = await prisma.invoice.findMany({
-    where: { brand: "GRATEFUL" },
-    orderBy: { createdAt: "desc" },
+    where,
+    orderBy: [{ invoiceDate: "desc" }, { createdAt: "desc" }],
     select: listedInvoiceSelect,
+    take: 500,
   });
+
+  const title = scope.current?.name ?? "All businesses";
 
   return (
     <div className="space-y-6">
       <PageHeader
-        eyebrow="Invoicing"
-        title="Grateful World Ventures"
-        description="Every tax invoice under Grateful's GSTIN — IPC, IWC and older ones raised before the ventures were split out"
+        eyebrow="Invoices"
+        title={
+          <span className="flex items-center gap-2.5">
+            {scope.current && <span className="h-2.5 w-2.5 rounded-full" style={{ background: scope.current.color }} />}
+            {title}
+          </span>
+        }
+        description={
+          scope.current
+            ? `Invoices raised by ${scope.current.name}, numbered ${scope.current.invoicePrefix}…`
+            : "Invoices across every business you have access to. Pick a business in the sidebar to focus on one."
+        }
         actions={
           <Link
             href="/invoices/new"
-            className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-neutral-200 bg-white px-4 text-sm font-medium text-neutral-800 shadow-sm hover:bg-neutral-50 dark:border-white/10 dark:bg-white/[0.04] dark:text-neutral-200"
+            className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-neutral-900 px-4 text-sm font-medium text-white shadow-sm ring-1 ring-inset ring-white/10 hover:bg-neutral-800 dark:bg-white dark:text-neutral-900"
           >
             <Plus className="h-4 w-4" />
-            Invoice without a venture
+            New invoice
           </Link>
         }
       />
       <InvoiceList
         invoices={invoices}
-        basePath="/invoices"
-        status={status}
-        showGst
-        showVenture
-        newHref="/ipc/new"
-        emptyTitle="No invoices yet"
-        emptyDescription="Upload a Bajaj delivery order or a GST certificate to raise the first tax invoice."
+        filters={{ status, q, period }}
+        periods={LIST_PERIODS}
+        showBusiness={!scope.current}
+        canDelete={isAdmin(user)}
+        newHref="/invoices/new"
       />
     </div>
   );

@@ -51,7 +51,8 @@ export interface GstInvoiceInput {
   grossAmount: number;
   gstPercent: number;
   qty: number;
-  venture: string | null;
+  /** Name of the business that raised it, for the detail tables. */
+  business: string;
 }
 
 export interface GstLine extends GstInvoiceInput {

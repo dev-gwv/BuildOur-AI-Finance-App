@@ -1,8 +1,9 @@
 import Link from "next/link";
 import { Download, FileText, Info, Landmark, Percent, Receipt, Scale } from "lucide-react";
-import { requireSessionUser } from "@/lib/session";
+import { requirePageUser } from "@/server/session";
+import { getScope } from "@/server/scope";
 import { GST_PERIODS, monthLabel, parseGstPeriod, type GstLine, type GstTotals } from "@/lib/gstReport";
-import { loadGstReport, parseGstScope, type GstScope } from "@/lib/gstReportData";
+import { gstBusinesses, loadGstReport, resolveGstBusinessIds } from "@/lib/gstReportData";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Card, CardBody, CardHeader, CardTitle } from "@/components/ui/Card";
 import { StatCard } from "@/components/ui/StatCard";
@@ -11,13 +12,6 @@ import { Badge } from "@/components/ui/Badge";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/Table";
 import { formatCurrency, formatCurrencyWhole, formatDate } from "@/lib/format";
-
-const SCOPES: { key: string; label: string; value: GstScope }[] = [
-  { key: "all", label: "All of Grateful", value: null },
-  { key: "IPC", label: "IPC Finance", value: "IPC" },
-  { key: "IWC", label: "IWC Finance", value: "IWC" },
-  { key: "legacy", label: "No venture", value: "legacy" },
-];
 
 function TotalsRow({ label, t, strong, sub }: { label: string; t: GstTotals; strong?: boolean; sub?: boolean }) {
   const cls = strong ? "font-semibold text-neutral-900 dark:text-white" : sub ? "text-xs" : "";
@@ -35,7 +29,17 @@ function TotalsRow({ label, t, strong, sub }: { label: string; t: GstTotals; str
   );
 }
 
-function InvoiceTable({ lines, title, subtitle }: { lines: GstLine[]; title: string; subtitle: string }) {
+function InvoiceTable({
+  lines,
+  title,
+  subtitle,
+  showBusiness,
+}: {
+  lines: GstLine[];
+  title: string;
+  subtitle: string;
+  showBusiness: boolean;
+}) {
   return (
     <Card className="overflow-hidden">
       <CardHeader>
@@ -73,6 +77,7 @@ function InvoiceTable({ lines, title, subtitle }: { lines: GstLine[]; title: str
                         <Badge tone="warning">IGST</Badge>
                       </span>
                     )}
+                    {showBusiness && <span className="block text-xs text-neutral-400">{l.business}</span>}
                   </TD>
                   <TD className="whitespace-nowrap">{formatDate(l.invoiceDate)}</TD>
                   <TD className="max-w-48 truncate">{l.customerName}</TD>
@@ -99,23 +104,47 @@ function InvoiceTable({ lines, title, subtitle }: { lines: GstLine[]; title: str
 export default async function GstReportPage({
   searchParams,
 }: {
-  searchParams: Promise<{ period?: string; venture?: string }>;
+  searchParams: Promise<{ period?: string; business?: string }>;
 }) {
   const params = await searchParams;
   const period = parseGstPeriod(params.period);
-  const scope = parseGstScope(params.venture);
-  const user = await requireSessionUser();
-  const report = await loadGstReport(user, period, scope);
+  const user = await requirePageUser();
+  const scope = await getScope(user);
+  // Only businesses billing under a GST-registered entity have a GST report.
+  const candidates = gstBusinesses(scope);
+  const businessIds = resolveGstBusinessIds(scope, params.business);
+  const selected = businessIds.length === 1 && candidates.length > 1 ? businessIds[0] : null;
+  const report = await loadGstReport({ businessIds, period });
 
-  const query = (o: { period?: string; venture?: string | null }) => {
+  const query = (o: { period?: string; business?: string | null }) => {
     const p = o.period ?? period;
-    const v = o.venture === undefined ? scope : o.venture;
-    return { ...(p !== "month" ? { period: p } : {}), ...(v ? { venture: v } : {}) };
+    const b = o.business === undefined ? selected : o.business;
+    return { ...(p !== "month" ? { period: p } : {}), ...(b ? { business: b } : {}) };
   };
-  const exportHref = `/api/export/gst?${new URLSearchParams(query({})).toString()}`;
+  const exportHref = `/api/export/gst?${new URLSearchParams({
+    ...(period !== "month" ? { period } : {}),
+    ...(businessIds.length === 1 ? { businessId: businessIds[0] } : {}),
+  }).toString()}`;
   const lastDay = new Date(report.range.end.getTime() - 86_400_000);
   const rangeLabel = `${formatDate(report.range.start)} – ${formatDate(lastDay)}`;
-  const scopeLabel = SCOPES.find((s) => s.value === scope)!.label;
+  const scopeLabel =
+    businessIds.length === 1
+      ? (candidates.find((c) => c.id === businessIds[0])?.name ?? "")
+      : `${candidates.length} businesses`;
+  const showBusiness = businessIds.length > 1;
+
+  if (candidates.length === 0) {
+    return (
+      <div className="space-y-6">
+        <PageHeader eyebrow="Reports" title="GST report" />
+        <EmptyState
+          icon={Landmark}
+          title={scope.current ? `${scope.current.name} doesn't charge GST` : "No GST-registered business"}
+          description="The GST report covers businesses that bill under a GST-registered entity (Grateful World Ventures). Switch business in the sidebar to see one."
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -135,14 +164,26 @@ export default async function GstReportPage({
       />
 
       <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-        <Segmented
-          items={SCOPES.map((s) => ({
-            key: s.key,
-            label: s.label,
-            href: { pathname: "/reports/gst", query: query({ venture: s.value }) },
-            active: scope === s.value,
-          }))}
-        />
+        {candidates.length > 1 ? (
+          <Segmented
+            items={[
+              { key: "all", label: "All of Grateful", href: { pathname: "/reports/gst", query: query({ business: null }) }, active: !selected },
+              ...candidates.map((c) => ({
+                key: c.id,
+                label: (
+                  <span className="flex items-center gap-1.5">
+                    <span className="h-1.5 w-1.5 rounded-full" style={{ background: c.color }} />
+                    {c.name}
+                  </span>
+                ),
+                href: { pathname: "/reports/gst", query: query({ business: c.id }) },
+                active: selected === c.id,
+              })),
+            ]}
+          />
+        ) : (
+          <span />
+        )}
         <Segmented
           items={GST_PERIODS.map((p) => ({
             key: p.key,
@@ -196,7 +237,7 @@ export default async function GstReportPage({
         <EmptyState
           icon={Landmark}
           title="No tax invoices in this period"
-          description="Invoices raised under Grateful World Ventures (IPC, IWC or no venture) show up here by invoice date."
+          description="Invoices raised under Grateful World Ventures show up here by invoice date."
         />
       ) : (
         <>
@@ -234,11 +275,13 @@ export default async function GstReportPage({
             lines={report.lines.filter((l) => l.b2b)}
             title={`B2B invoices · ${report.b2b.count}`}
             subtitle={`Reported invoice by invoice (GSTR-1 table 4) · tax ${formatCurrency(report.b2b.tax)}`}
+            showBusiness={showBusiness}
           />
           <InvoiceTable
             lines={report.lines.filter((l) => !l.b2b)}
             title={`B2C invoices · ${report.b2c.count}`}
             subtitle={`Customers without a GSTIN, reported in aggregate (table 7) · tax ${formatCurrency(report.b2c.tax)}`}
+            showBusiness={showBusiness}
           />
         </>
       )}
@@ -249,7 +292,7 @@ export default async function GstReportPage({
             title="Input GST (estimate)"
             subtitle={`Costs ${formatCurrency(report.input.costs)} · gateway fees ${formatCurrency(report.input.gatewayFees)}`}
             action={
-              <Link href="/expenses" className="text-xs font-medium text-brand-600 hover:text-brand-500 dark:text-brand-400">
+              <Link href="/money" className="text-xs font-medium text-brand-600 hover:text-brand-500 dark:text-brand-400">
                 Expenses →
               </Link>
             }
@@ -283,7 +326,7 @@ export default async function GstReportPage({
                     </TD>
                     <TD>
                       {c.description || c.category.name}
-                      {c.venture && <span className="ml-1.5 text-xs text-neutral-400">{c.venture}</span>}
+                      {showBusiness && <span className="ml-1.5 text-xs text-neutral-400">{c.business.name}</span>}
                     </TD>
                     <TD className="text-right tabular-nums">{formatCurrency(c.grossAmount)}</TD>
                     <TD className="text-right tabular-nums text-emerald-600 dark:text-emerald-400">{formatCurrency(c.gstAmount)}</TD>

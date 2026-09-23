@@ -1,7 +1,9 @@
-import { ApiError } from "@/lib/api-auth";
+import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { calculateGatewayFee } from "@/lib/calc";
 import { fetchRazorpayPayment, isRazorpayConnected } from "@/lib/integrations/razorpay";
+import { badRequest } from "@/server/errors";
+import { formToObject, isoDate, money, optionalText, positiveMoney } from "@/server/validation";
 
 export interface PaymentInput {
   /** What the customer paid — this is what counts against the invoice balance. */
@@ -15,12 +17,16 @@ export interface PaymentInput {
   feeGstAmount: number;
 }
 
-function optionalNumber(value: FormDataEntryValue | null): number | null {
-  if (value === null || String(value).trim() === "") return null;
-  const n = Number(value);
-  if (!Number.isFinite(n)) throw new ApiError(400, "Gateway fees must be numbers");
-  return n;
-}
+const paymentSchema = z.object({
+  amount: positiveMoney("Payment amount"),
+  paidOn: isoDate("Payment date"),
+  method: optionalText(60),
+  note: optionalText(500),
+  gateway: optionalText(40),
+  gatewayRef: optionalText(60),
+  feeAmount: money("Gateway fee").optional(),
+  feeGstAmount: money("GST on the gateway fee").optional(),
+});
 
 /**
  * Reads a payment from the record/edit form, shared by POST and PATCH so both
@@ -29,47 +35,37 @@ function optionalNumber(value: FormDataEntryValue | null): number | null {
  * the commission.
  */
 export async function readPaymentForm(form: FormData): Promise<PaymentInput> {
-  const amount = Number(form.get("amount") ?? 0);
-  const paidOnRaw = String(form.get("paidOn") ?? "");
-  const method = form.get("method") ? String(form.get("method")).trim() || null : null;
-  const note = form.get("note") ? String(form.get("note")).trim() || null : null;
-  const gateway = form.get("gateway") ? String(form.get("gateway")).trim().slice(0, 40) || null : null;
-  const gatewayRef = gateway && form.get("gatewayRef") ? String(form.get("gatewayRef")).trim().slice(0, 60) || null : null;
-
-  if (!(amount > 0)) throw new ApiError(400, "Enter a payment amount greater than zero");
-  if (!paidOnRaw || Number.isNaN(new Date(paidOnRaw).getTime())) {
-    throw new ApiError(400, "Enter the date the payment was received");
-  }
+  const input = paymentSchema.parse(formToObject(form));
+  const gateway = input.gateway;
+  const gatewayRef = gateway ? input.gatewayRef : null;
 
   let feeAmount = 0;
   let feeGstAmount = 0;
   if (gateway) {
-    const fee = optionalNumber(form.get("feeAmount"));
-    const feeGst = optionalNumber(form.get("feeGstAmount"));
-    if (fee === null && gateway === "Razorpay") {
+    if (input.feeAmount === undefined && gateway === "Razorpay") {
       const settings = await prisma.invoiceSettings.findUnique({ where: { id: "default" } });
       const computed = calculateGatewayFee(
-        amount,
+        input.amount,
         settings?.razorpayFeePercent ?? 2,
         settings?.razorpayFeeGstPercent ?? 18
       );
       feeAmount = computed.feeAmount;
-      feeGstAmount = feeGst ?? computed.feeGstAmount;
+      feeGstAmount = input.feeGstAmount ?? computed.feeGstAmount;
     } else {
-      feeAmount = fee ?? 0;
-      feeGstAmount = feeGst ?? 0;
+      feeAmount = input.feeAmount ?? 0;
+      feeGstAmount = input.feeGstAmount ?? 0;
     }
-    if (feeAmount < 0 || feeGstAmount < 0) throw new ApiError(400, "Gateway fees can't be negative");
-    if (feeAmount + feeGstAmount >= amount) {
-      throw new ApiError(400, "The gateway fee must be less than the amount paid");
+    if (feeAmount < 0 || feeGstAmount < 0) throw badRequest("Gateway fees can't be negative");
+    if (feeAmount + feeGstAmount >= input.amount) {
+      throw badRequest("The gateway fee must be less than the amount paid", { feeAmount: "Less than the amount paid" });
     }
   }
 
   return {
-    amount,
-    paidOn: new Date(paidOnRaw),
-    method,
-    note,
+    amount: input.amount,
+    paidOn: input.paidOn,
+    method: input.method,
+    note: input.note,
     gateway,
     gatewayRef,
     feeAmount: Math.round(feeAmount * 100) / 100,
@@ -94,7 +90,7 @@ export async function verifyRazorpayPayment(input: PaymentInput, excludePaymentI
     select: { invoice: { select: { invoiceNumber: true } } },
   });
   if (duplicate) {
-    throw new ApiError(400, `Razorpay payment ${input.gatewayRef} is already recorded on ${duplicate.invoice.invoiceNumber}`);
+    throw badRequest(`Razorpay payment ${input.gatewayRef} is already recorded on ${duplicate.invoice.invoiceNumber}`);
   }
 
   if (!(await isRazorpayConnected())) return input;
@@ -107,7 +103,7 @@ export async function verifyRazorpayPayment(input: PaymentInput, excludePaymentI
     return input;
   }
   if (payment.status !== "captured") {
-    throw new ApiError(400, `Razorpay says ${input.gatewayRef} is "${payment.status}", not captured — it hasn't settled`);
+    throw badRequest(`Razorpay says ${input.gatewayRef} is "${payment.status}", not captured — it hasn't settled`);
   }
   // The amount is left as entered: a customer can settle part of a Razorpay
   // payment against one invoice, so a mismatch isn't an error.

@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import { prisma } from "@/lib/prisma";
-import { ApiError, requireAdmin, requireUser, withApiErrors } from "@/lib/api-auth";
+import { conflict, withApiErrors } from "@/server/errors";
+import { requireAdmin, requireUser } from "@/server/session";
+import { audit } from "@/server/audit";
+import { parseJson, positiveMoney, requiredText } from "@/server/validation";
+import { guardWrite } from "@/server/services/common";
 
 export const GET = withApiErrors(async () => {
   await requireUser();
@@ -8,22 +13,31 @@ export const GET = withApiErrors(async () => {
   return NextResponse.json({ entries });
 });
 
+/** Maps a DO's exact loan amount to the product it pays for (Bajaj DOs never name it). */
 export const POST = withApiErrors(async (req: NextRequest) => {
-  await requireAdmin();
-  const body = await req.json();
+  const admin = await requireAdmin();
+  await guardWrite(admin);
+  const input = await parseJson(
+    req,
+    z.object({
+      amount: positiveMoney("Amount"),
+      itemDescription: requiredText("Item description", 300),
+      hsnSac: requiredText("HSN/SAC", 20),
+    })
+  );
 
-  const amount = Number(body.amount ?? 0);
-  const itemDescription = String(body.itemDescription ?? "").trim();
-  const hsnSac = String(body.hsnSac ?? "").trim();
-
-  if (!amount || !itemDescription || !hsnSac) {
-    return NextResponse.json({ error: "Amount, item description, and HSN/SAC are required" }, { status: 400 });
+  if (await prisma.itemCatalogEntry.findUnique({ where: { amount: input.amount } })) {
+    throw conflict(`An item is already mapped to ₹${input.amount.toLocaleString("en-IN")}`);
   }
 
-  if (await prisma.itemCatalogEntry.findUnique({ where: { amount } })) {
-    throw new ApiError(400, `An item is already mapped to ₹${amount}`);
-  }
-
-  const entry = await prisma.itemCatalogEntry.create({ data: { amount, itemDescription, hsnSac } });
+  const entry = await prisma.itemCatalogEntry.create({ data: input });
+  await audit({
+    user: admin,
+    action: "catalog.create",
+    entityType: "catalog",
+    entityId: entry.id,
+    summary: `Catalog: ₹${entry.amount.toLocaleString("en-IN")} → ${entry.itemDescription}`,
+    req,
+  });
   return NextResponse.json({ entry }, { status: 201 });
 });

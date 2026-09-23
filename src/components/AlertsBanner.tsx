@@ -1,9 +1,8 @@
 import Link from "next/link";
-import { AlertTriangle, ArrowRight, CloudOff, Mail } from "lucide-react";
+import { AlertTriangle, ArrowRight, CloudOff, Mail, Sparkles } from "lucide-react";
 import { prisma } from "@/lib/prisma";
-import { overdueInvoices } from "@/lib/alerts";
+import { overdueInvoices, syncFailures, type AlertScope } from "@/lib/alerts";
 import { formatCurrencyWhole } from "@/lib/format";
-import { LEDGERS, VENTURES, parseLedger } from "@/lib/ventures";
 
 type Alert = {
   key: string;
@@ -29,29 +28,44 @@ const ICON_TONES: Record<Alert["tone"], string> = {
 };
 
 /**
- * What needs doing, above the dashboard: money that didn't reach a sheet,
- * invoices past due, and invoices changed since they were emailed. Nothing
- * renders when all is clear.
+ * What needs doing, above the dashboard: businesses set up automatically that
+ * an admin should confirm, money that didn't reach a sheet, invoices past due,
+ * and invoices changed since they were emailed — all limited to the businesses
+ * in view. Nothing renders when all is clear.
  */
-export async function AlertsBanner() {
-  const [failures, overdue, revised] = await Promise.all([
-    prisma.sheetSyncFailure.findMany({ where: { resolvedAt: null }, select: { ledger: true } }),
-    overdueInvoices(),
+export async function AlertsBanner({ scope, isAdmin }: { scope: AlertScope; isAdmin: boolean }) {
+  const businessWhere = scope === "ALL" ? {} : { businessId: { in: scope } };
+  const [failures, overdue, revised, toReview] = await Promise.all([
+    syncFailures(scope),
+    overdueInvoices(scope),
     prisma.invoice.findMany({
-      where: { revisedAt: { not: null }, emailSentAt: { not: null } },
+      where: { revisedAt: { not: null }, emailSentAt: { not: null }, ...businessWhere },
       select: { revisedAt: true, emailSentAt: true },
     }),
+    // Setup is an admin's job, so only admins are nudged about it.
+    isAdmin ? prisma.business.count({ where: { needsReview: true, archivedAt: null } }) : Promise.resolve(0),
   ]);
 
   const alerts: Alert[] = [];
 
-  if (failures.length > 0) {
-    const names = [...new Set(failures.map((f) => parseLedger(f.ledger)).filter(Boolean))].map((l) => LEDGERS[l!].label);
+  if (toReview > 0) {
+    alerts.push({
+      key: "review",
+      tone: "info",
+      icon: Sparkles,
+      text: `${toReview} business${toReview === 1 ? " was" : "es were"} set up automatically — check the legal entity, invoice series and sheet for each.`,
+      href: "/settings/businesses",
+      cta: "Review them",
+    });
+  }
+
+  if (failures.count > 0) {
+    const names = failures.businesses;
     alerts.push({
       key: "sync",
       tone: "danger",
       icon: CloudOff,
-      text: `${failures.length} change${failures.length === 1 ? "" : "s"} didn't reach the ${
+      text: `${failures.count} change${failures.count === 1 ? "" : "s"} didn't reach the ${
         names.length ? names.join(", ") : "Google"
       } sheet${names.length > 1 ? "s" : ""}.`,
       href: "/settings/sync",
@@ -60,21 +74,12 @@ export async function AlertsBanner() {
   }
 
   if (overdue.count > 0) {
-    const l = overdue.onlyLedger;
-    const href =
-      l === "MULBERRY"
-        ? "/mulberry?status=open"
-        : l === "IPC" || l === "IWC"
-          ? `${VENTURES[l].path}?status=open`
-          : l === "LEGACY"
-            ? "/invoices?status=open"
-            : "/dashboard?period=all";
     alerts.push({
       key: "overdue",
       tone: "warning",
       icon: AlertTriangle,
       text: `${overdue.count} invoice${overdue.count === 1 ? " is" : "s are"} past due · ${formatCurrencyWhole(overdue.amount)} outstanding.`,
-      href,
+      href: "/invoices?status=open",
       cta: "See who owes",
     });
   }

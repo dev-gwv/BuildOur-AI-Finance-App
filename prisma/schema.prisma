@@ -17,155 +17,194 @@ enum Role {
   MEMBER
 }
 
-/// Which business the invoice is billed under. Grateful is GST-registered;
-/// Mulberry is not, so its invoices carry no tax breakup.
+/// The legal entity that issues an invoice: the seller printed on it (name,
+/// GSTIN, bank; see src/lib/brands.ts). Grateful is GST-registered; Mulberry is
+/// not, so its invoices carry no tax breakup. Several businesses can share one
+/// entity: IPC and IWC both bill as Grateful.
 enum InvoiceBrand {
   GRATEFUL
   MULBERRY
 }
 
 model User {
-  id           String          @id @default(cuid())
-  name         String
-  email        String          @unique
-  passwordHash String
-  role         Role            @default(MEMBER)
-  createdAt    DateTime        @default(now())
-  companies    CompanyMember[]
-  expenses     Expense[]
-  invoices     Invoice[]
+  id             String           @id @default(cuid())
+  name           String
+  email          String           @unique
+  passwordHash   String
+  role           Role             @default(MEMBER)
+  /// A deactivated user can't sign in, and their open sessions stop working.
+  active         Boolean          @default(true)
+  /// Bumped on password change, deactivation or role change: sessions issued
+  /// before it are rejected at their next check (see src/lib/auth.ts).
+  sessionVersion Int              @default(0)
+  lastLoginAt    DateTime?
+  createdAt      DateTime         @default(now())
+  businesses     BusinessMember[]
+  expenses       Expense[]
+  invoices       Invoice[]
+  auditLogs      AuditLog[]
 }
 
-model Company {
-  id               String          @id @default(cuid())
-  name             String
-  defaultGstPercent Float          @default(18)
-  createdAt        DateTime        @default(now())
-  members          CompanyMember[]
-  gateways         Gateway[]
-  categories       Category[]
-  expenses         Expense[]
+/// A business the group runs: IPC Finance, IWC Finance, The Mulberry Weddings.
+/// The one unit everything is organised by: invoices, payments, money in/out,
+/// categories, gateways, team access and its Google Sheet.
+/// (Stored in the table that used to be called Company.)
+model Business {
+  id                String           @id @default(cuid())
+  name              String
+  /// URL- and cookie-safe key, e.g. "ipc", "iwc", "mulberry".
+  slug              String           @unique
+  /// Which legal entity bills for it (the seller on its invoices).
+  entity            InvoiceBrand     @default(GRATEFUL)
+  /// Accent colour used across the UI to tell businesses apart.
+  color             String           @default("#6a6cf0")
+  /// Its own invoice series: prefix + a counter bumped atomically on issue.
+  invoicePrefix     String           @default("INV-")
+  invoiceNextNumber Int              @default(1)
+  defaultGstPercent Float            @default(18)
+  /// Its Google Sheet (Apps Script web app). The secret is stored encrypted.
+  sheetUrl          String?
+  sheetSecretEnc    String?
+  /// Set on businesses a migration created or matched automatically, until an
+  /// admin has confirmed their settings.
+  needsReview       Boolean          @default(false)
+  archivedAt        DateTime?
+  createdAt         DateTime         @default(now())
+  members           BusinessMember[]
+  gateways          Gateway[]
+  categories        Category[]
+  expenses          Expense[]
+  invoices          Invoice[]
+
+  @@map("Company")
 }
 
-model CompanyMember {
-  id        String  @id @default(cuid())
-  userId    String
-  companyId String
-  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
-  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+model BusinessMember {
+  id         String   @id @default(cuid())
+  userId     String
+  businessId String   @map("companyId")
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
 
-  @@unique([userId, companyId])
+  @@unique([userId, businessId])
+  @@map("CompanyMember")
 }
 
 model Gateway {
   id            String    @id @default(cuid())
-  companyId     String
+  businessId    String    @map("companyId")
   name          String
   chargePercent Float
   createdAt     DateTime  @default(now())
-  company       Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  business      Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
   expenses      Expense[]
 }
 
 model Category {
-  id        String    @id @default(cuid())
-  companyId String
-  name      String
-  createdAt DateTime  @default(now())
-  company   Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  expenses  Expense[]
+  id         String    @id @default(cuid())
+  businessId String    @map("companyId")
+  name       String
+  createdAt  DateTime  @default(now())
+  business   Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  expenses   Expense[]
 
-  @@unique([companyId, name])
+  @@unique([businessId, name])
 }
 
+/// Money in (a receipt through a gateway) or money out (a cost) for a business.
 model Expense {
-  id                  String   @id @default(cuid())
-  companyId           String
-  categoryId          String
-  gatewayId           String?
-  description         String?
-  date                DateTime
-  grossAmount         Float
-  gatewayChargePercent Float   @default(0)
-  gatewayChargeAmount Float    @default(0)
-  gstPercent          Float    @default(0)
-  gstAmount           Float    @default(0)
-  netAmount           Float
-  screenshotPath      String?
-  /// Which workbook the expense is mirrored into: "IPC", "IWC" or "MULBERRY"
-  /// (see src/lib/ventures.ts). Null for expenses recorded before ventures.
-  venture             String?
+  id                   String   @id @default(cuid())
+  businessId           String   @map("companyId")
+  categoryId           String
+  gatewayId            String?
+  description          String?
+  date                 DateTime
+  grossAmount          Float
+  gatewayChargePercent Float    @default(0)
+  gatewayChargeAmount  Float    @default(0)
+  gstPercent           Float    @default(0)
+  gstAmount            Float    @default(0)
+  netAmount            Float
+  screenshotPath       String?
   /// "IN" = money received (gross -> gateway charge -> GST -> net, written to
   /// the sheet's receipts), "OUT" = a cost (GST-inclusive, written to the
   /// sheet's expenses). Everything logged before the split was money in.
-  direction           String   @default("IN")
-  createdById         String
-  createdAt           DateTime @default(now())
+  direction            String   @default("IN")
+  createdById          String
+  createdAt            DateTime @default(now())
 
-  company    Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  category   Category  @relation(fields: [categoryId], references: [id])
-  gateway    Gateway?  @relation(fields: [gatewayId], references: [id])
-  createdBy  User      @relation(fields: [createdById], references: [id])
+  business  Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  category  Category @relation(fields: [categoryId], references: [id])
+  gateway   Gateway? @relation(fields: [gatewayId], references: [id])
+  createdBy User     @relation(fields: [createdById], references: [id])
 
-  @@index([companyId, date])
-  @@index([companyId, venture, date])
+  @@index([businessId, date])
+  @@index([businessId, direction, date])
 }
 
-// Invoices raised under either brand, from an uploaded
-// Bajaj DO, a GST certificate, or a Mulberry quotation. Seller details are
-// fixed (see src/lib/brands.ts) since each brand has one issuing entity.
+// An invoice raised by a business, from an uploaded Bajaj DO, a GST
+// certificate, or a Mulberry quotation.
 model Invoice {
   id              String       @id @default(cuid())
+  businessId      String
+  /// The legal entity that issued it, fixed at issue: the printed seller must
+  /// not change if the business is later moved to another entity.
   brand           InvoiceBrand @default(GRATEFUL)
-  /// "IPC" or "IWC" for Grateful invoices raised under a venture, each with its
-  /// own series and sheet. Null for Mulberry and for legacy Grateful invoices.
-  venture         String?
   invoiceNumber   String       @unique
   invoiceDate     DateTime
   dueDate         DateTime
   customerName    String
   customerAddress String
-  /** Where the invoice gets emailed; captured on the upload screen. */
+  /**
+   * Where the invoice gets emailed; captured on the upload screen.
+   */
   customerEmail   String?
-  /** When the invoice was last emailed out, so the UI can show it's been sent. */
+  /**
+   * When the invoice was last emailed out, so the UI can show it's been sent.
+   */
   emailSentAt     DateTime?
-  /** Set when the invoice is edited after it was emailed, so it reads as revised. */
+  /**
+   * Set when the invoice is edited after it was emailed, so it reads as revised.
+   */
   revisedAt       DateTime?
-  /** Present when the invoice was raised from a customer's GST certificate (B2B). */
+  /**
+   * Present when the invoice was raised from a customer's GST certificate (B2B).
+   */
   customerGstin   String?
   placeOfSupply   String
   itemDescription String
   hsnSac          String
-  qty             Float     @default(1)
+  qty             Float        @default(1)
   grossAmount     Float
-  gstPercent      Float     @default(18)
+  gstPercent      Float        @default(18)
   notes           String?
   terms           String?
   doId            String?
   doDate          DateTime?
   doFilePath      String?
   createdById     String
-  createdAt       DateTime  @default(now())
+  createdAt       DateTime     @default(now())
 
+  business  Business  @relation(fields: [businessId], references: [id])
   createdBy User      @relation(fields: [createdById], references: [id])
   payments  Payment[]
 
   @@index([createdAt])
-  @@index([brand, createdAt])
-  @@index([brand, venture, createdAt])
+  @@index([businessId, invoiceDate])
+  @@index([businessId, dueDate])
 }
 
 /// Money actually received against an invoice. Wedding work is paid in
 /// instalments, so the balance due is whatever the payments don't yet cover.
 model Payment {
-  id        String   @id @default(cuid())
-  invoiceId String
-  amount    Float
-  paidOn    DateTime
-  method    String?
-  note      String?
+  id           String   @id @default(cuid())
+  invoiceId    String
+  amount       Float
+  paidOn       DateTime
+  method       String?
+  note         String?
   /// Screenshot or receipt for the transfer, stored like expense proofs.
-  proofPath String?
+  proofPath    String?
   /// Payment gateway the money came through (e.g. "Razorpay"), which keeps a
   /// commission. `amount` stays what the customer paid, since that is what
   /// settles the invoice; the business receives amount - fee - feeGst.
@@ -174,11 +213,13 @@ model Payment {
   gatewayRef   String?
   feeAmount    Float    @default(0)
   feeGstAmount Float    @default(0)
-  createdAt DateTime @default(now())
+  createdAt    DateTime @default(now())
 
   invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
 
   @@index([invoiceId])
+  @@index([paidOn])
+  @@index([gatewayRef])
 }
 
 // Maps a DO's exact loan amount to the item that was actually sold, since
@@ -206,20 +247,21 @@ model EmailTemplate {
 // The signature is stored inline as a data URI (a few KB) so it renders in
 // print/PDF without a second authenticated request for the image.
 model InvoiceSettings {
-  id               String  @id
-  terms            String?
-  notes            String?
-  signatureDataUri String?
+  id                    String  @id
+  terms                 String?
+  notes                 String?
+  signatureDataUri      String?
   /// Razorpay's commission on a payment, and the GST it charges on that commission.
-  razorpayFeePercent    Float @default(2)
-  razorpayFeeGstPercent Float @default(18)
+  razorpayFeePercent    Float   @default(2)
+  razorpayFeeGstPercent Float   @default(18)
 }
 
 /// A sheet write that failed, kept so it can be seen and retried. Rows are
 /// resolved when a later write for the same record succeeds.
 model SheetSyncFailure {
   id         String    @id @default(cuid())
-  ledger     String
+  /// The business whose sheet rejected the write.
+  businessId String
   action     String
   recordId   String
   payload    Json
@@ -245,4 +287,36 @@ model Integration {
   connectedAt DateTime?
   lastError   String?
   updatedAt   DateTime  @updatedAt
+}
+
+/// Who changed what. Money records can be edited, so every create, edit and
+/// delete of an invoice, payment, entry or setting is recorded here.
+model AuditLog {
+  id         String   @id @default(cuid())
+  userId     String?
+  businessId String?
+  /// e.g. "invoice.update", "payment.delete", "user.deactivate"
+  action     String
+  entityType String
+  entityId   String
+  /// One line a person can read: "Changed amount 117999 -> 120000".
+  summary    String
+  /// Field-level before/after for edits.
+  changes    Json?
+  ip         String?
+  createdAt  DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([entityType, entityId])
+  @@index([businessId, createdAt])
+  @@index([createdAt])
+}
+
+/// Fixed-window counters for rate limiting, kept in Postgres so every
+/// serverless instance shares them (see src/server/rateLimit.ts).
+model RateLimit {
+  key         String   @id
+  count       Int
+  windowStart DateTime
 }

@@ -40,7 +40,7 @@ type PaymentForSheet = {
   feeAmount: number;
   feeGstAmount: number;
 };
-type InvoiceForSheet = { brand: string; venture: string | null; customerName: string; invoiceNumber: string; gstPercent: number };
+type InvoiceForSheet = { brand: string; customerName: string; invoiceNumber: string; gstPercent: number };
 
 export function paymentReceiptRow(payment: PaymentForSheet, invoice: InvoiceForSheet): ReceiptRow {
   const fees = payment.feeAmount + payment.feeGstAmount;

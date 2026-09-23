@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { ApiError, requireUser, withApiErrors } from "@/lib/api-auth";
+import { ApiError, withApiErrors } from "@/server/errors";
+import { requireUser } from "@/server/session";
+import { enforce } from "@/server/rateLimit";
 import { RazorpayError, fetchRazorpayPayment, listRecentRazorpayPayments } from "@/lib/integrations/razorpay";
 
 /**
@@ -10,7 +12,9 @@ import { RazorpayError, fetchRazorpayPayment, listRecentRazorpayPayments } from 
  * so the same money can't be entered twice.
  */
 export const GET = withApiErrors(async (req: NextRequest) => {
-  await requireUser();
+  const user = await requireUser();
+  // Each call spends the business's Razorpay API quota.
+  await enforce("razorpayPerUser", user.id);
   const { searchParams } = new URL(req.url);
   const id = searchParams.get("id")?.trim();
 

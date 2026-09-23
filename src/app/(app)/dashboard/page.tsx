@@ -12,8 +12,8 @@ import {
   Wallet,
 } from "lucide-react";
 import { prisma } from "@/lib/prisma";
-import { getAccessibleCompanyIds } from "@/lib/access";
-import { requireSessionUser } from "@/lib/session";
+import { requirePageUser } from "@/server/session";
+import { getScope, scopeWhere } from "@/server/scope";
 import { DonutBreakdown, MoneyFlowChart, StackedMonthlyChart, type SeriesDef } from "@/components/DashboardCharts";
 import { AlertsBanner } from "@/components/AlertsBanner";
 import { StatCard } from "@/components/ui/StatCard";
@@ -25,7 +25,6 @@ import { Segmented } from "@/components/ui/Segmented";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/Table";
 import { formatCompactINR, formatCurrencyWhole, formatDate } from "@/lib/format";
 import { totalsByPlatform } from "@/lib/invoiceCalc";
-import { LEDGERS, LEDGER_KEYS, invoiceHref, ledgerForInvoice, parseLedger, type LedgerKey } from "@/lib/ventures";
 import type { Prisma } from "@/generated/prisma/client";
 
 // ---------------------------------------------------------------------------
@@ -104,20 +103,6 @@ function monthLabel(key: string) {
 
 // ---------------------------------------------------------------------------
 
-/** The invoices whose money lands in a given workbook. */
-function invoiceScope(ledger: LedgerKey | null): Prisma.InvoiceWhereInput {
-  if (!ledger) return {};
-  if (ledger === "MULBERRY") return { brand: "MULBERRY" };
-  return { brand: "GRATEFUL", venture: ledger };
-}
-
-const LEDGER_COLORS: Record<LedgerKey | "LEGACY", string> = {
-  IPC: "#6a6cf0",
-  IWC: "#0ea5e9",
-  MULBERRY: "#f43f5e",
-  LEGACY: "#a3a3a3",
-};
-
 function greeting(now: Date) {
   // Server time is UTC; the business runs on IST.
   const hour = (now.getUTCHours() + 5.5) % 24;
@@ -127,26 +112,26 @@ function greeting(now: Date) {
 export default async function DashboardPage({
   searchParams,
 }: {
-  searchParams: Promise<{ companyId?: string; from?: string; to?: string; venture?: string; period?: string }>;
+  searchParams: Promise<{ from?: string; to?: string; period?: string }>;
 }) {
   const params = await searchParams;
-  const { companyId, from, to } = params;
-  const venture = parseLedger(params.venture);
+  const { from, to } = params;
   const period: PeriodKey =
     from || to ? "custom" : (PERIODS.find((p) => p.key === params.period)?.key ?? "fy");
 
-  const user = await requireSessionUser();
-  const accessible = await getAccessibleCompanyIds(user);
+  const user = await requirePageUser();
+  const scope = await getScope(user);
   const now = new Date();
   const { current, previous } = resolvePeriod(period, from, to, now);
 
-  const companyFilter = companyId
-    ? { companyId }
-    : accessible === "ALL"
-      ? {}
-      : { companyId: { in: accessible } };
-  const expenseScope: Prisma.ExpenseWhereInput = { ...companyFilter, ...(venture ? { venture } : {}) };
-  const scope = invoiceScope(venture);
+  // Everything below is limited to the business picked in the switcher, or to
+  // every business the user can access when "All businesses" is selected.
+  const inScope = scopeWhere(scope);
+  const invoiceWhere: Prisma.InvoiceWhereInput = inScope;
+  const entryWhere: Prisma.ExpenseWhereInput = inScope;
+  const businessById = new Map(scope.businesses.map((b) => [b.id, b]));
+  const colorOf = (businessId: string) => businessById.get(businessId)?.color ?? "#a3a3a3";
+  const showBusinesses = !scope.current && scope.businesses.length > 1;
 
   // The chart always shows at least six months so a single-month period still has context.
   const chartEnd = current?.end ?? addMonths(new Date(now.getFullYear(), now.getMonth(), 1), 1);
@@ -157,8 +142,8 @@ export default async function DashboardPage({
   const paymentSums = { amount: true, feeAmount: true, feeGstAmount: true } as const;
 
   const [
-    companies,
     invoicedNow,
+    invoicedByBusiness,
     paymentsNow,
     paymentsPrev,
     openInvoices,
@@ -166,31 +151,36 @@ export default async function DashboardPage({
     chartLedger,
     expenses,
     ledgerPrev,
+    ledgerByBusiness,
     recentInvoices,
     recentPayments,
   ] = await Promise.all([
-    prisma.company.findMany({
-      where: accessible === "ALL" ? {} : { id: { in: accessible } },
-      orderBy: { name: "asc" },
-      select: { id: true, name: true },
-    }),
     prisma.invoice.aggregate({
-      where: { ...scope, invoiceDate: within(current) },
+      where: { ...invoiceWhere, invoiceDate: within(current) },
       _sum: { grossAmount: true },
       _count: true,
     }),
+    showBusinesses
+      ? prisma.invoice.groupBy({
+          by: ["businessId"],
+          where: { ...invoiceWhere, invoiceDate: within(current) },
+          _sum: { grossAmount: true },
+          _count: true,
+        })
+      : null,
     prisma.payment.findMany({
-      where: { invoice: scope, paidOn: within(current) },
-      select: { amount: true, method: true, feeAmount: true, feeGstAmount: true },
+      where: { invoice: invoiceWhere, paidOn: within(current) },
+      select: { amount: true, method: true, feeAmount: true, feeGstAmount: true, invoice: { select: { businessId: true } } },
     }),
-    previous ? prisma.payment.aggregate({ where: { invoice: scope, paidOn: within(previous) }, _sum: paymentSums }) : null,
+    previous
+      ? prisma.payment.aggregate({ where: { invoice: invoiceWhere, paidOn: within(previous) }, _sum: paymentSums })
+      : null,
     // Dues are a balance, not a flow: every invoice ever raised that isn't settled.
     prisma.invoice.findMany({
-      where: scope,
+      where: invoiceWhere,
       select: {
         id: true,
-        brand: true,
-        venture: true,
+        businessId: true,
         invoiceNumber: true,
         customerName: true,
         invoiceDate: true,
@@ -200,21 +190,21 @@ export default async function DashboardPage({
       },
     }),
     prisma.payment.findMany({
-      where: { invoice: scope, ...(chartFrom ? { paidOn: { gte: chartFrom, lt: chartEnd } } : {}) },
+      where: { invoice: invoiceWhere, ...(chartFrom ? { paidOn: { gte: chartFrom, lt: chartEnd } } : {}) },
       select: {
         amount: true,
         feeAmount: true,
         feeGstAmount: true,
         paidOn: true,
-        invoice: { select: { brand: true, venture: true } },
+        invoice: { select: { businessId: true } },
       },
     }),
     prisma.expense.findMany({
-      where: { ...expenseScope, ...(chartFrom ? { date: { gte: chartFrom, lt: chartEnd } } : {}) },
+      where: { ...entryWhere, ...(chartFrom ? { date: { gte: chartFrom, lt: chartEnd } } : {}) },
       select: { date: true, direction: true, grossAmount: true, gatewayChargeAmount: true },
     }),
     prisma.expense.findMany({
-      where: { ...expenseScope, date: within(current) },
+      where: { ...entryWhere, date: within(current) },
       select: {
         direction: true,
         grossAmount: true,
@@ -227,18 +217,25 @@ export default async function DashboardPage({
     previous
       ? prisma.expense.groupBy({
           by: ["direction"],
-          where: { ...expenseScope, date: within(previous) },
+          where: { ...entryWhere, date: within(previous) },
+          _sum: expenseSums,
+        })
+      : null,
+    showBusinesses
+      ? prisma.expense.groupBy({
+          by: ["businessId", "direction"],
+          where: { ...entryWhere, date: within(current) },
           _sum: expenseSums,
         })
       : null,
     prisma.invoice.findMany({
-      where: scope,
+      where: invoiceWhere,
       orderBy: { createdAt: "desc" },
       take: 6,
-      select: { id: true, brand: true, venture: true, invoiceNumber: true, customerName: true, grossAmount: true, createdAt: true },
+      select: { id: true, businessId: true, invoiceNumber: true, customerName: true, grossAmount: true, createdAt: true },
     }),
     prisma.payment.findMany({
-      where: { invoice: scope },
+      where: { invoice: invoiceWhere },
       orderBy: { createdAt: "desc" },
       take: 6,
       select: {
@@ -247,7 +244,7 @@ export default async function DashboardPage({
         method: true,
         paidOn: true,
         createdAt: true,
-        invoice: { select: { id: true, brand: true, venture: true, customerName: true, invoiceNumber: true } },
+        invoice: { select: { id: true, businessId: true, customerName: true, invoiceNumber: true } },
       },
     }),
   ]);
@@ -290,16 +287,15 @@ export default async function DashboardPage({
   const outstandingTotal = open.reduce((s, i) => s + i.balance, 0);
   const overdue = open.filter((i) => i.dueDate < now);
 
-  // --- Collections by month, stacked per workbook; and money in vs out ---
-  const seriesKeys: Array<LedgerKey | "LEGACY"> = venture ? [venture] : [...LEDGER_KEYS, "LEGACY"];
+  // --- Collections by month, stacked per business; and money in vs out ---
+  const seriesKeys: string[] = scope.current ? [scope.current.id] : scope.businesses.map((b) => b.id);
   const buckets = new Map<string, Record<string, number>>();
   const flows = new Map<string, { in: number; out: number; fees: number }>();
   for (let d = new Date(chartStart); d < chartEnd; d = addMonths(d, 1)) buckets.set(monthKey(d), {});
   for (const p of chartPayments) {
     const key = monthKey(p.paidOn);
     const bucket = buckets.get(key) ?? {};
-    const series = ledgerForInvoice(p.invoice) ?? "LEGACY";
-    bucket[series] = (bucket[series] ?? 0) + p.amount;
+    bucket[p.invoice.businessId] = (bucket[p.invoice.businessId] ?? 0) + p.amount;
     buckets.set(key, bucket);
     const f = flows.get(key) ?? { in: 0, out: 0, fees: 0 };
     f.in += p.amount;
@@ -334,51 +330,35 @@ export default async function DashboardPage({
     const f = flows.get(key) ?? { in: 0, out: 0, fees: 0 };
     return { label: monthLabel(key), in: f.in - f.fees, out: f.out, profit: f.in - f.fees - f.out };
   });
-  const usedSeries = seriesKeys.filter((s) => chartData.some((row) => (row as Record<string, number | string>)[s] as number > 0));
+  const usedSeries = seriesKeys.filter((s) => chartData.some((row) => ((row as Record<string, number | string>)[s] as number) > 0));
   const series: SeriesDef[] = (usedSeries.length ? usedSeries : seriesKeys).map((key) => ({
     key,
-    label: key === "LEGACY" ? "Grateful (no venture)" : LEDGERS[key].label,
-    color: LEDGER_COLORS[key],
+    label: businessById.get(key)?.name ?? "Business",
+    color: colorOf(key),
   }));
   const receivedTrend = chartData.map((row) => seriesKeys.reduce((s, k) => s + Number((row as Record<string, number | string>)[k] ?? 0), 0));
   const profitTrend = flowData.map((f) => f.profit);
 
-  // --- Per-workbook breakdown (the "All" view) ---
-  const perLedger = venture
-    ? []
-    : await Promise.all(
-        LEDGER_KEYS.map(async (key) => {
-          const s = invoiceScope(key);
-          const [inv, pay, ledger] = await Promise.all([
-            prisma.invoice.aggregate({ where: { ...s, invoiceDate: within(current) }, _sum: { grossAmount: true }, _count: true }),
-            prisma.payment.aggregate({ where: { invoice: s, paidOn: within(current) }, _sum: paymentSums }),
-            prisma.expense.groupBy({
-              by: ["direction"],
-              where: { ...companyFilter, venture: key, date: within(current) },
-              _sum: expenseSums,
-            }),
-          ]);
-          const dues = open.filter((o) => ledgerForInvoice(o) === key).reduce((sum, o) => sum + o.balance, 0);
-          const lIn = ledger.find((g) => g.direction !== "OUT")?._sum;
-          const lOut = ledger.find((g) => g.direction === "OUT")?._sum.grossAmount ?? 0;
-          const received = pay._sum.amount ?? 0;
-          return {
-            key,
-            invoices: inv._count,
-            invoiced: inv._sum.grossAmount ?? 0,
-            received,
-            outstanding: dues,
-            moneyOut: lOut,
-            profit:
-              received -
-              (pay._sum.feeAmount ?? 0) -
-              (pay._sum.feeGstAmount ?? 0) +
-              (lIn?.grossAmount ?? 0) -
-              (lIn?.gatewayChargeAmount ?? 0) -
-              lOut,
-          };
-        })
-      );
+  // --- Per-business breakdown (the "All businesses" view) ---
+  const perBusiness = showBusinesses
+    ? scope.businesses.map((b) => {
+        const inv = invoicedByBusiness?.find((g) => g.businessId === b.id);
+        const pays = paymentsNow.filter((p) => p.invoice.businessId === b.id);
+        const received = pays.reduce((s, p) => s + p.amount, 0);
+        const fees = pays.reduce((s, p) => s + p.feeAmount + p.feeGstAmount, 0);
+        const lIn = ledgerByBusiness?.find((g) => g.businessId === b.id && g.direction !== "OUT")?._sum;
+        const lOut = ledgerByBusiness?.find((g) => g.businessId === b.id && g.direction === "OUT")?._sum.grossAmount ?? 0;
+        return {
+          business: b,
+          invoices: inv?._count ?? 0,
+          invoiced: inv?._sum.grossAmount ?? 0,
+          received,
+          outstanding: open.filter((o) => o.businessId === b.id).reduce((sum, o) => sum + o.balance, 0),
+          moneyOut: lOut,
+          profit: received - fees + (lIn?.grossAmount ?? 0) - (lIn?.gatewayChargeAmount ?? 0) - lOut,
+        };
+      })
+    : [];
 
   // --- Where money came in, and what the ledger holds ---
   const platforms = totalsByPlatform(paymentsNow).map(([name, value]) => ({ name, value }));
@@ -407,8 +387,8 @@ export default async function DashboardPage({
       title: `${i.invoiceNumber} raised`,
       subtitle: i.customerName,
       amount: i.grossAmount,
-      href: invoiceHref(i),
-      ledger: ledgerForInvoice(i),
+      href: `/invoices/${i.id}`,
+      businessId: i.businessId,
     })),
     ...recentPayments.map((p) => ({
       id: `p-${p.id}`,
@@ -417,19 +397,17 @@ export default async function DashboardPage({
       title: `Received${p.method ? ` via ${p.method}` : ""}`,
       subtitle: `${p.invoice.customerName} · ${p.invoice.invoiceNumber}`,
       amount: p.amount,
-      href: invoiceHref(p.invoice),
-      ledger: ledgerForInvoice(p.invoice),
+      href: `/invoices/${p.invoice.id}`,
+      businessId: p.invoice.businessId,
     })),
   ]
     .sort((a, b) => b.at.getTime() - a.at.getTime())
     .slice(0, 8);
 
-  // --- URL helpers: every control keeps the others' state ---
+  // --- URL helpers: the period controls keep each other's state ---
   const query = (overrides: Record<string, string | undefined>) => {
     const merged: Record<string, string | undefined> = {
-      venture: venture ?? undefined,
       period: period === "custom" ? undefined : period,
-      companyId,
       from,
       to,
       ...overrides,
@@ -440,45 +418,37 @@ export default async function DashboardPage({
     period === "custom"
       ? `${from ? formatDate(from) : "start"} – ${to ? formatDate(to) : "today"}`
       : PERIODS.find((p) => p.key === period)!.label.toLowerCase();
-  const scopeLabel = venture ? LEDGERS[venture].label : "all businesses";
+  const scopeName = scope.current?.name ?? "All businesses";
+  const alertScope = scope.current ? [scope.current.id] : scope.access === "ALL" ? "ALL" : scope.businesses.map((b) => b.id);
 
   return (
     <div className="space-y-6">
-      <AlertsBanner />
+      <AlertsBanner scope={alertScope} isAdmin={user.role === "ADMIN"} />
 
       <PageHeader
-        eyebrow={now.toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long" })}
-        title={`${greeting(now)}, ${user.name?.split(" ")[0] ?? "there"}`}
-        description={`Collections, dues, costs and profit for ${scopeLabel}, ${periodLabel}.`}
+        eyebrow={`${greeting(now)}, ${user.name.split(" ")[0]} · ${now.toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long" })}`}
+        title={
+          <span className="flex items-center gap-2.5">
+            {scope.current && <span className="h-2.5 w-2.5 rounded-full" style={{ background: scope.current.color }} />}
+            Overview · {scopeName}
+          </span>
+        }
+        description={`Collections, dues, costs and profit, ${periodLabel}.${
+          scope.current ? "" : " Switch business in the sidebar to focus on one."
+        }`}
         actions={
           <Link
-            href={venture === "MULBERRY" ? "/mulberry/new" : venture ? `/${venture.toLowerCase()}/new` : "/ipc/new"}
+            href="/invoices/new"
             className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-neutral-900 px-4 text-sm font-medium text-white shadow-sm ring-1 ring-inset ring-white/10 hover:bg-neutral-800 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
           >
             <Plus className="h-4 w-4" />
-            New {venture ? LEDGERS[venture].label.replace(" Finance", "").replace(" Weddings", "") : "IPC"} invoice
+            New invoice
           </Link>
         }
       />
 
       {/* Filters */}
-      <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-        <Segmented
-          items={[
-            { key: "all", label: "All", href: { pathname: "/dashboard", query: query({ venture: undefined }) }, active: !venture },
-            ...LEDGER_KEYS.map((key) => ({
-              key,
-              label: (
-                <span className="flex items-center gap-1.5">
-                  <span className="h-1.5 w-1.5 rounded-full" style={{ background: LEDGER_COLORS[key] }} />
-                  {LEDGERS[key].label}
-                </span>
-              ),
-              href: { pathname: "/dashboard", query: query({ venture: key }) },
-              active: venture === key,
-            })),
-          ]}
-        />
+      <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-end">
         <div className="flex flex-wrap items-center gap-2">
           <Segmented
             items={PERIODS.map((p) => ({
@@ -491,33 +461,17 @@ export default async function DashboardPage({
           <details className="group relative">
             <summary
               className={`flex h-9 cursor-pointer list-none items-center rounded-xl border px-3 text-[13px] font-medium shadow-card ${
-                period === "custom" || companyId
+                period === "custom"
                   ? "border-brand-300 bg-brand-50 text-brand-700 dark:border-brand-500/30 dark:bg-brand-500/10 dark:text-brand-300"
                   : "border-neutral-200/80 bg-white text-neutral-600 dark:border-white/[0.07] dark:bg-neutral-900/70 dark:text-neutral-300"
               }`}
             >
-              More filters
+              Custom dates
             </summary>
             <form
               method="get"
               className="absolute right-0 z-10 mt-2 grid w-72 gap-3 rounded-xl border border-neutral-200/80 bg-white p-4 text-sm shadow-pop dark:border-white/10 dark:bg-neutral-900"
             >
-              {venture && <input type="hidden" name="venture" value={venture} />}
-              <label className="grid gap-1 text-xs font-medium text-neutral-500">
-                Company (expenses)
-                <select
-                  name="companyId"
-                  defaultValue={companyId ?? ""}
-                  className="rounded-lg border border-neutral-200 bg-white px-2.5 py-1.5 text-sm text-neutral-900 dark:border-white/10 dark:bg-neutral-950 dark:text-neutral-100"
-                >
-                  <option value="">All companies</option>
-                  {companies.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
               <div className="grid grid-cols-2 gap-2">
                 <label className="grid gap-1 text-xs font-medium text-neutral-500">
                   From
@@ -539,7 +493,7 @@ export default async function DashboardPage({
                 </label>
               </div>
               <div className="flex justify-between gap-2">
-                <Link href={{ pathname: "/dashboard", query: venture ? { venture } : {} }} className="text-xs text-neutral-500 hover:text-neutral-900 dark:hover:text-white">
+                <Link href="/dashboard" className="text-xs text-neutral-500 hover:text-neutral-900 dark:hover:text-white">
                   Reset
                 </Link>
                 <button className="rounded-lg bg-neutral-900 px-3 py-1.5 text-xs font-medium text-white dark:bg-white dark:text-neutral-900">
@@ -594,7 +548,7 @@ export default async function DashboardPage({
           <CardHeader>
             <CardTitle
               title="Collections by month"
-              subtitle={venture ? `Money received into ${LEDGERS[venture].label}` : "Money received, split by the sheet it's mirrored to"}
+              subtitle={scope.current ? `Money received into ${scope.current.name}` : "Money received, split by business"}
               action={
                 <span className="text-lg font-semibold tabular-nums text-neutral-900 dark:text-white">
                   {formatCompactINR(receivedTrend.reduce((s, v) => s + v, 0))}
@@ -656,7 +610,7 @@ export default async function DashboardPage({
       </Card>
 
       {/* Per-business breakdown */}
-      {!venture && (
+      {showBusinesses && (
         <Card className="overflow-hidden">
           <CardHeader>
             <CardTitle title="By business" subtitle={`Each row matches its Google Sheet · ${periodLabel}`} />
@@ -676,14 +630,14 @@ export default async function DashboardPage({
                 </tr>
               </THead>
               <TBody>
-                {perLedger.map((row) => {
+                {perBusiness.map((row) => {
                   const rate = row.invoiced > 0 ? Math.min(100, (row.received / row.invoiced) * 100) : null;
                   return (
-                    <TR key={row.key}>
+                    <TR key={row.business.id}>
                       <TD>
                         <span className="flex items-center gap-2 font-medium text-neutral-900 dark:text-neutral-100">
-                          <span className="h-2 w-2 rounded-full" style={{ background: LEDGER_COLORS[row.key] }} />
-                          {LEDGERS[row.key].label}
+                          <span className="h-2 w-2 rounded-full" style={{ background: row.business.color }} />
+                          {row.business.name}
                           <span className="text-xs font-normal text-neutral-400">{row.invoices} inv.</span>
                         </span>
                       </TD>
@@ -706,7 +660,7 @@ export default async function DashboardPage({
                         ) : (
                           <div className="flex items-center gap-2">
                             <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-neutral-100 dark:bg-white/[0.06]">
-                              <div className="h-full rounded-full" style={{ width: `${rate}%`, background: LEDGER_COLORS[row.key] }} />
+                              <div className="h-full rounded-full" style={{ width: `${rate}%`, background: row.business.color }} />
                             </div>
                             <span className="w-9 text-right text-xs tabular-nums">{Math.round(rate)}%</span>
                           </div>
@@ -714,7 +668,7 @@ export default async function DashboardPage({
                       </TD>
                       <TD className="text-right">
                         <Link
-                          href={{ pathname: "/dashboard", query: query({ venture: row.key }) }}
+                          href={`/scope?b=${row.business.slug}&next=${encodeURIComponent("/dashboard")}`}
                           className="inline-flex items-center gap-0.5 text-xs font-medium text-brand-600 hover:text-brand-500 dark:text-brand-400"
                         >
                           Open <ArrowUpRight className="h-3 w-3" />
@@ -758,16 +712,17 @@ export default async function DashboardPage({
                   {open.slice(0, 7).map((inv) => {
                     const days = Math.max(0, Math.floor((now.getTime() - inv.invoiceDate.getTime()) / 86_400_000));
                     const late = inv.dueDate < now;
-                    const ledger = ledgerForInvoice(inv);
                     return (
                       <TR key={inv.id}>
                         <TD>
-                          <Link href={invoiceHref(inv)} className="group block">
+                          <Link href={`/invoices/${inv.id}`} className="group block">
                             <span className="font-medium text-neutral-900 group-hover:text-brand-600 dark:text-neutral-100 dark:group-hover:text-brand-400">
                               {inv.customerName}
                             </span>
                             <span className="mt-0.5 flex items-center gap-1.5 text-xs text-neutral-400">
-                              {ledger && <span className="h-1.5 w-1.5 rounded-full" style={{ background: LEDGER_COLORS[ledger] }} />}
+                              {showBusinesses && (
+                                <span className="h-1.5 w-1.5 rounded-full" style={{ background: colorOf(inv.businessId) }} />
+                              )}
                               {inv.invoiceNumber}
                             </span>
                           </Link>
@@ -852,7 +807,7 @@ export default async function DashboardPage({
             subtitle={`Receipts through gateways and the business's costs · ${periodLabel}`}
             action={
               <Link
-                href={{ pathname: "/expenses", query: venture ? { venture } : {} }}
+                href="/money"
                 className="inline-flex items-center gap-1 text-xs font-medium text-brand-600 hover:text-brand-500 dark:text-brand-400"
               >
                 View all <ArrowRight className="h-3 w-3" />
@@ -865,7 +820,7 @@ export default async function DashboardPage({
             <EmptyState
               icon={Receipt}
               title="Nothing logged in this period"
-              description="Log money in or money out, tag it with a venture, and it shows up here and in that venture's sheet."
+              description="Log money in or money out and it shows up here and in its business's Google Sheet."
             />
           ) : (
             <div className="grid gap-8 lg:grid-cols-2">

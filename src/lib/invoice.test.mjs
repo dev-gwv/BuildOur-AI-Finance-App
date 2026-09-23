@@ -10,7 +10,7 @@ import { looksLikeQuotation, parseQuotationText } from "./parseQuotation.ts";
 import { PAYMENT_METHODS, parsePaymentScreenshotText } from "./parsePaymentScreenshot.ts";
 import { invoiceEmailHtml, invoiceEmailSubject, invoiceEmailText } from "./invoiceEmail.ts";
 import { isInterStateSupply, placeOfSupplyFromGstin, stateCodeFromGstin } from "./gstState.ts";
-import { VENTURES, ledgerForInvoice, nextVentureInvoiceNumber, parseVenture } from "./ventures.ts";
+import { formatInvoiceNumber, previewInvoiceNumber, seqInSeries, slugify } from "./invoiceNumbering.ts";
 import { calculateCostBreakup, calculateGatewayFee } from "./calc.ts";
 import { detectGateway } from "./parsePaymentScreenshot.ts";
 import { expenseSheetBody, paymentReceiptRow } from "./sheetRows.ts";
@@ -74,22 +74,16 @@ assert.equal(isInterStateSupply(null), false, "B2C is intra-state");
 assert.equal(placeOfSupplyFromGstin("27AABCU9603R1ZM"), "Maharashtra (27)");
 assert.equal(placeOfSupplyFromGstin("99XXXX"), null, "unknown state code");
 
-// --- Venture series: own prefix, own counter, never Grateful's INV- ---
-assert.equal(nextVentureInvoiceNumber(VENTURES.IPC, null), "IPC-INV-002242", "IPC starts at 2242");
-assert.equal(nextVentureInvoiceNumber(VENTURES.IWC, null), "IWC-INV-001001", "IWC starts at 1001");
-assert.equal(nextVentureInvoiceNumber(VENTURES.IPC, "IPC-INV-002250"), "IPC-INV-002251");
-assert.equal(nextVentureInvoiceNumber(VENTURES.IWC, "IWC-INV-001009"), "IWC-INV-001010");
-assert.equal(
-  nextVentureInvoiceNumber(VENTURES.IWC, "INV-002300"),
-  "IWC-INV-001001",
-  "a hand-typed number from another series doesn't advance this one"
-);
-assert.equal(parseVenture("IPC"), "IPC");
-assert.equal(parseVenture("MULBERRY"), null, "Mulberry is a brand, not a venture");
-assert.equal(parseVenture(null), null);
-assert.equal(ledgerForInvoice({ brand: "MULBERRY", venture: null }), "MULBERRY");
-assert.equal(ledgerForInvoice({ brand: "GRATEFUL", venture: "IWC" }), "IWC");
-assert.equal(ledgerForInvoice({ brand: "GRATEFUL", venture: null }), null, "legacy Grateful has no sheet");
+// --- Business invoice series: prefix + 6-digit counter ---
+assert.equal(formatInvoiceNumber("IPC-INV-", 2242), "IPC-INV-002242", "IPC continues from 2242");
+assert.equal(previewInvoiceNumber({ invoicePrefix: "IWC-INV-", invoiceNextNumber: 1001 }), "IWC-INV-001001");
+assert.equal(seqInSeries("IPC-INV-002250", "IPC-INV-"), 2250);
+assert.equal(seqInSeries("ipc-inv-002250", "IPC-INV-"), 2250, "case-insensitive prefix");
+assert.equal(seqInSeries("INV-002300", "IWC-INV-"), null, "another series doesn't count");
+assert.equal(seqInSeries("INV-001121", "INV-"), 1121, "Mulberry keeps the plain INV- series");
+assert.equal(slugify("The Mulberry Weddings"), "the-mulberry-weddings");
+assert.equal(slugify("  IPC Finance!! "), "ipc-finance");
+assert.equal(slugify("!!!"), "business", "never empty");
 
 // --- Indian-format number words ---
 assert.equal(numberToIndianWords(117999), "One Lakh Seventeen Thousand Nine Hundred Ninety-Nine");
@@ -360,7 +354,7 @@ assert.equal(expenseSheetBody({ ...expenseBase, direction: "OUT" }).action, "ups
 assert.equal(expenseSheetBody({ ...expenseBase, direction: "IN" }).action, "upsert", "money in goes to receipts");
 
 // --- GST report: output tax per invoice, reconciled per month and B2B/B2C ---
-const gstBase = { qty: 1, gstPercent: 18, placeOfSupply: "", venture: "IPC", customerName: "x" };
+const gstBase = { qty: 1, gstPercent: 18, placeOfSupply: "", business: "IPC Finance", customerName: "x" };
 const lines = [
   gstLine({ ...gstBase, id: "a", invoiceNumber: "A", invoiceDate: new Date(2026, 8, 5), customerGstin: "07AAJCG9243K1Z5", grossAmount: 117999 }),
   gstLine({ ...gstBase, id: "b", invoiceNumber: "B", invoiceDate: new Date(2026, 8, 20), customerGstin: "27AABCU9603R1ZM", grossAmount: 117999 }),

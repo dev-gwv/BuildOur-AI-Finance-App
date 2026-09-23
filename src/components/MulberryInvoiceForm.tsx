@@ -18,7 +18,10 @@ export function MulberryInvoiceForm({
   suggestedNumber,
   defaultTerms,
   defaultNotes,
+  businessId,
 }: {
+  /** The business the invoice is raised for; its series and sheet apply. */
+  businessId: string;
   suggestedNumber: string;
   defaultTerms: string;
   defaultNotes: string;
@@ -32,7 +35,8 @@ export function MulberryInvoiceForm({
   const [pending, setPending] = useState(false);
   const [readIt, setReadIt] = useState(false);
 
-  const [invoiceNumber, setInvoiceNumber] = useState(suggestedNumber);
+  // Blank means "take the next number in the series" — reserved by the server on save.
+  const [invoiceNumber, setInvoiceNumber] = useState("");
   const [invoiceDate, setInvoiceDate] = useState(today);
   const [dueDate, setDueDate] = useState(today);
   const [customerName, setCustomerName] = useState("");
@@ -83,8 +87,9 @@ export function MulberryInvoiceForm({
     setPending(true);
     try {
       const body = new FormData();
-      body.append("brand", "MULBERRY");
-      body.append("invoiceNumber", invoiceNumber);
+      body.append("businessId", businessId);
+      body.append("source", "QUOTATION");
+      if (invoiceNumber.trim()) body.append("invoiceNumber", invoiceNumber.trim());
       body.append("invoiceDate", invoiceDate);
       body.append("dueDate", dueDate);
       body.append("customerName", customerName);
@@ -118,7 +123,7 @@ export function MulberryInvoiceForm({
       }
       const { invoice } = await res.json();
       toast.success("Invoice generated");
-      router.push(`/mulberry/${invoice.id}`);
+      router.push(`/invoices/${invoice.id}`);
     } catch {
       toast.error("Network error — please try again");
     } finally {
@@ -260,9 +265,12 @@ export function MulberryInvoiceForm({
                 <input
                   value={invoiceNumber}
                   onChange={(e) => setInvoiceNumber(e.target.value)}
-                  required
+                  placeholder={`Auto · ${suggestedNumber}`}
                   className={inputClass}
                 />
+                <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
+                  Leave blank to take the next number in the series.
+                </p>
               </div>
               <div>
                 <label className={labelClass}>Quantity</label>
@@ -323,7 +331,7 @@ export function MulberryInvoiceForm({
           <Button type="submit" loading={pending} disabled={!ready}>
             Generate invoice
           </Button>
-          <Button type="button" variant="secondary" onClick={() => router.push("/mulberry")}>
+          <Button type="button" variant="secondary" onClick={() => router.push("/invoices")}>
             Cancel
           </Button>
           {!ready && (

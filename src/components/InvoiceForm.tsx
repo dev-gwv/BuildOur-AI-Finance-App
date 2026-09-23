@@ -8,7 +8,6 @@ import { isInterStateSupply, placeOfSupplyFromGstin, stateCodeFromGstin, stateNa
 import { amountInWords } from "@/lib/numberToWords";
 import { formatCurrency } from "@/lib/format";
 import { BRANDS } from "@/lib/brands";
-import type { VentureKey } from "@/lib/ventures";
 import { readImageText } from "@/lib/clientUpload";
 import { Button } from "@/components/ui/Button";
 import { Card, CardBody, CardHeader } from "@/components/ui/Card";
@@ -25,18 +24,14 @@ export function InvoiceForm({
   catalog,
   defaultTerms,
   defaultNotes,
-  venture,
-  successRedirectBase = "/invoices",
-  cancelHref = "/invoices",
+  businessId,
 }: {
   suggestedNumber: string;
   catalog: CatalogEntry[];
   defaultTerms: string;
   defaultNotes: string;
-  /** IPC / IWC venture under GRATEFUL. Same seller header, separate series + sheet. */
-  venture?: VentureKey | null;
-  successRedirectBase?: string;
-  cancelHref?: string;
+  /** The business the invoice is raised for; its series and sheet apply. */
+  businessId: string;
 }) {
   const router = useRouter();
   const toast = useToast();
@@ -54,7 +49,8 @@ export function InvoiceForm({
   /** Set when the product's catalog price was used because the source had no amount. */
   const [amountFromCatalog, setAmountFromCatalog] = useState(false);
 
-  const [invoiceNumber, setInvoiceNumber] = useState(suggestedNumber);
+  // Blank means "take the next number in the series" — reserved by the server on save.
+  const [invoiceNumber, setInvoiceNumber] = useState("");
   const [invoiceDate, setInvoiceDate] = useState(today);
   const [dueDate, setDueDate] = useState(today);
   const [customerName, setCustomerName] = useState("");
@@ -177,7 +173,8 @@ export function InvoiceForm({
     setPending(true);
     try {
       const body = new FormData();
-      body.append("invoiceNumber", invoiceNumber);
+      body.append("businessId", businessId);
+      if (invoiceNumber.trim()) body.append("invoiceNumber", invoiceNumber.trim());
       body.append("invoiceDate", invoiceDate);
       body.append("dueDate", dueDate);
       body.append("customerName", customerName);
@@ -197,7 +194,6 @@ export function InvoiceForm({
       if (docType) body.append("source", docType);
       body.append("doDate", doDate);
       if (doFile) body.append("doFile", doFile);
-      if (venture) body.append("venture", venture);
 
       const res = await fetch("/api/invoices", { method: "POST", body });
       if (!res.ok) {
@@ -207,7 +203,7 @@ export function InvoiceForm({
       }
       const { invoice } = await res.json();
       toast.success("Invoice generated");
-      router.push(`${successRedirectBase}/${invoice.id}`);
+      router.push(`/invoices/${invoice.id}`);
     } catch {
       toast.error("Network error — please try again");
     } finally {
@@ -391,9 +387,12 @@ export function InvoiceForm({
                 <input
                   value={invoiceNumber}
                   onChange={(e) => setInvoiceNumber(e.target.value)}
-                  required
+                  placeholder={`Auto · ${suggestedNumber}`}
                   className={inputClass}
                 />
+                <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
+                  Leave blank to take the next number in the series.
+                </p>
               </div>
               <div>
                 <label className={labelClass}>Place of supply</label>
@@ -525,7 +524,7 @@ export function InvoiceForm({
           <Button type="submit" loading={pending} disabled={!ready}>
             Generate invoice
           </Button>
-          <Button type="button" variant="secondary" onClick={() => router.push(cancelHref)}>
+          <Button type="button" variant="secondary" onClick={() => router.push("/invoices")}>
             Cancel
           </Button>
           {!ready && (

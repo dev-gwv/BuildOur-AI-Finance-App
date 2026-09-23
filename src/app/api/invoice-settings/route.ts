@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { ApiError, requireAdmin, requireUser, withApiErrors } from "@/lib/api-auth";
+import { ApiError, withApiErrors } from "@/server/errors";
+import { requireAdmin, requireUser } from "@/server/session";
+import { audit } from "@/server/audit";
+import { guardWrite } from "@/server/services/common";
 
 const SETTINGS_ID = "default";
 
@@ -24,13 +27,14 @@ export const GET = withApiErrors(async () => {
 });
 
 export const PATCH = withApiErrors(async (req: NextRequest) => {
-  await requireAdmin();
+  const admin = await requireAdmin();
+  await guardWrite(admin);
 
   const form = await req.formData().catch(() => null);
   if (!form) throw new ApiError(400, "Expected a form submission");
 
-  const terms = form.get("terms") ? String(form.get("terms")) : null;
-  const notes = form.get("notes") ? String(form.get("notes")) : null;
+  const terms = form.get("terms") ? String(form.get("terms")).slice(0, 5000) : null;
+  const notes = form.get("notes") ? String(form.get("notes")).slice(0, 2000) : null;
   const signature = form.get("signature");
   const removeSignature = form.get("removeSignature") === "true";
 
@@ -70,6 +74,22 @@ export const PATCH = withApiErrors(async (req: NextRequest) => {
     where: { id: SETTINGS_ID },
     create: { id: SETTINGS_ID, terms, notes, signatureDataUri: signatureDataUri ?? null, ...rates },
     update: { terms, notes, ...rates, ...(signatureDataUri !== undefined ? { signatureDataUri } : {}) },
+  });
+
+  await audit({
+    user: admin,
+    action: "settings.invoicing",
+    entityType: "settings",
+    entityId: SETTINGS_ID,
+    summary: [
+      "Updated invoice defaults",
+      signatureDataUri === null ? "signature removed" : signatureDataUri ? "new signature" : null,
+      razorpayFeePercent !== undefined ? `Razorpay ${razorpayFeePercent}%` : null,
+      razorpayFeeGstPercent !== undefined ? `GST on fee ${razorpayFeeGstPercent}%` : null,
+    ]
+      .filter(Boolean)
+      .join(" · "),
+    req,
   });
 
   return NextResponse.json({ settings });

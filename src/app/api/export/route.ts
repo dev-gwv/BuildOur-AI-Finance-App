@@ -1,17 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import ExcelJS from "exceljs";
 import { prisma } from "@/lib/prisma";
-import { ApiError, requireUser, withApiErrors } from "@/lib/api-auth";
-import { canAccessCompany, getAccessibleCompanyIds } from "@/lib/access";
-import { LEDGERS, ledgerForInvoice, parseLedger, type LedgerKey } from "@/lib/ventures";
-import type { Prisma } from "@/generated/prisma/client";
-
-/** The invoices whose money lands in a given workbook. */
-function invoiceScope(ledger: LedgerKey | null): Prisma.InvoiceWhereInput {
-  if (!ledger) return {};
-  if (ledger === "MULBERRY") return { brand: "MULBERRY" };
-  return { brand: "GRATEFUL", venture: ledger };
-}
+import { z } from "zod";
+import { withApiErrors } from "@/server/errors";
+import { requireUser } from "@/server/session";
+import { accessibleBusinessIds, accessWhere, assertBusinessAccess } from "@/server/access";
+import { id, isoDate, parseInput } from "@/server/validation";
 
 const DIRECTION_LABEL: Record<string, string> = { IN: "Money in", OUT: "Money out" };
 const MONEY_FORMAT = "#,##0.00";
@@ -29,59 +23,53 @@ function moneyColumns(sheet: ExcelJS.Worksheet, keys: string[]) {
 
 export const GET = withApiErrors(async (req: NextRequest) => {
   const user = await requireUser();
-  const accessible = await getAccessibleCompanyIds(user);
+  const sp = new URL(req.url).searchParams;
+  const { businessId, from, to, direction } = parseInput(
+    z.object({
+      businessId: id.optional(),
+      from: isoDate("From").optional(),
+      to: isoDate("To").optional(),
+      direction: z.enum(["IN", "OUT"]).optional(),
+    }),
+    Object.fromEntries([...sp.entries()].filter(([, v]) => v !== ""))
+  );
 
-  const { searchParams } = new URL(req.url);
-  const companyId = searchParams.get("companyId");
-  const from = searchParams.get("from");
-  const to = searchParams.get("to");
-  const venture = parseLedger(searchParams.get("venture"));
-  const directionParam = searchParams.get("direction");
-  const direction = directionParam === "IN" || directionParam === "OUT" ? directionParam : null;
+  if (businessId) await assertBusinessAccess(user, businessId);
+  const scope = businessId ? { businessId } : accessWhere(await accessibleBusinessIds(user));
 
-  if (companyId && !(await canAccessCompany(user, companyId))) {
-    throw new ApiError(403, "No access to this company");
-  }
-
-  const companyFilter = companyId
-    ? { companyId }
-    : accessible === "ALL"
-      ? {}
-      : { companyId: { in: accessible } };
-
+  // `to` is inclusive: the whole of that day.
   const range =
-    from || to ? { ...(from ? { gte: new Date(from) } : {}), ...(to ? { lte: new Date(to) } : {}) } : undefined;
+    from || to ? { ...(from ? { gte: from } : {}), ...(to ? { lt: new Date(to.getTime() + 86_400_000) } : {}) } : undefined;
 
   const [expenses, invoices, payments] = await Promise.all([
     prisma.expense.findMany({
       where: {
-        ...companyFilter,
+        ...scope,
         ...(range ? { date: range } : {}),
-        ...(venture ? { venture } : {}),
         ...(direction ? { direction } : {}),
       },
       orderBy: { date: "asc" },
-      include: { company: true, category: true, gateway: true },
+      include: { business: true, category: true, gateway: true },
     }),
     prisma.invoice.findMany({
-      where: { ...invoiceScope(venture), ...(range ? { invoiceDate: range } : {}) },
+      where: { ...scope, ...(range ? { invoiceDate: range } : {}) },
       orderBy: { invoiceDate: "asc" },
-      include: { payments: { select: { amount: true } } },
+      include: { payments: { select: { amount: true } }, business: { select: { name: true } } },
     }),
     prisma.payment.findMany({
-      where: { invoice: invoiceScope(venture), ...(range ? { paidOn: range } : {}) },
+      where: { invoice: scope, ...(range ? { paidOn: range } : {}) },
       orderBy: { paidOn: "asc" },
-      include: { invoice: { select: { brand: true, venture: true, invoiceNumber: true, customerName: true } } },
+      include: { invoice: { select: { invoiceNumber: true, customerName: true, business: { select: { name: true } } } } },
     }),
   ]);
 
   const workbook = new ExcelJS.Workbook();
 
-  // --- Summary: money in and money out kept apart, per company and category ---
+  // --- Summary: money in and money out kept apart, per business and category ---
   const summarySheet = workbook.addWorksheet("P&L Summary");
   summarySheet.columns = [
     { header: "Direction", key: "direction", width: 12 },
-    { header: "Company", key: "company", width: 24 },
+    { header: "Business", key: "company", width: 24 },
     { header: "Category", key: "category", width: 24 },
     { header: "Gross (incl. GST)", key: "gross", width: 16 },
     { header: "Gateway charges", key: "gatewayCharge", width: 16 },
@@ -94,10 +82,10 @@ export const GET = withApiErrors(async (req: NextRequest) => {
   type SummaryRow = { direction: string; company: string; category: string; gross: number; gatewayCharge: number; gst: number; net: number };
   const summaryMap = new Map<string, SummaryRow>();
   for (const e of expenses) {
-    const key = `${e.direction}||${e.company.name}||${e.category.name}`;
+    const key = `${e.direction}||${e.business.name}||${e.category.name}`;
     const row = summaryMap.get(key) ?? {
       direction: DIRECTION_LABEL[e.direction] ?? e.direction,
-      company: e.company.name,
+      company: e.business.name,
       category: e.category.name,
       gross: 0,
       gatewayCharge: 0,
@@ -134,8 +122,7 @@ export const GET = withApiErrors(async (req: NextRequest) => {
   transactionsSheet.columns = [
     { header: "Date", key: "date", width: 12 },
     { header: "Direction", key: "direction", width: 12 },
-    { header: "Venture", key: "venture", width: 18 },
-    { header: "Company", key: "company", width: 20 },
+    { header: "Business", key: "company", width: 22 },
     { header: "Category", key: "category", width: 20 },
     { header: "Description", key: "description", width: 26 },
     { header: "Gross (incl. GST)", key: "gross", width: 16 },
@@ -148,12 +135,10 @@ export const GET = withApiErrors(async (req: NextRequest) => {
   styleHeader(transactionsSheet);
   moneyColumns(transactionsSheet, ["gross", "gatewayCharge", "gstAmount", "net"]);
   for (const e of expenses) {
-    const ledger = parseLedger(e.venture);
     transactionsSheet.addRow({
       date: e.date.toISOString().slice(0, 10),
       direction: DIRECTION_LABEL[e.direction] ?? e.direction,
-      venture: ledger ? LEDGERS[ledger].label : "",
-      company: e.company.name,
+      company: e.business.name,
       category: e.category.name,
       description: e.description ?? "",
       gross: e.grossAmount,
@@ -181,13 +166,12 @@ export const GET = withApiErrors(async (req: NextRequest) => {
   moneyColumns(invoicesSheet, ["amount", "collected", "balance"]);
   for (const inv of invoices) {
     const collected = inv.payments.reduce((s, p) => s + p.amount, 0);
-    const ledger = ledgerForInvoice(inv);
     invoicesSheet.addRow({
       number: inv.invoiceNumber,
       date: inv.invoiceDate.toISOString().slice(0, 10),
       customer: inv.customerName,
       gstin: inv.customerGstin ?? "",
-      business: ledger ? LEDGERS[ledger].label : "Grateful (no venture)",
+      business: inv.business.name,
       amount: inv.grossAmount,
       collected,
       balance: Math.round((inv.grossAmount - collected) * 100) / 100,
@@ -211,12 +195,11 @@ export const GET = withApiErrors(async (req: NextRequest) => {
   moneyColumns(paymentsSheet, ["amount", "fees", "net"]);
   for (const p of payments) {
     const fees = p.feeAmount + p.feeGstAmount;
-    const ledger = ledgerForInvoice(p.invoice);
     paymentsSheet.addRow({
       date: p.paidOn.toISOString().slice(0, 10),
       invoice: p.invoice.invoiceNumber,
       customer: p.invoice.customerName,
-      business: ledger ? LEDGERS[ledger].label : "Grateful (no venture)",
+      business: p.invoice.business.name,
       method: p.method ?? "",
       gateway: p.gateway ?? "",
       amount: p.amount,
@@ -226,12 +209,13 @@ export const GET = withApiErrors(async (req: NextRequest) => {
   }
 
   const buffer = await workbook.xlsx.writeBuffer();
-  const scope = venture ? `-${venture.toLowerCase()}` : "";
+  const slug = businessId ? (await prisma.business.findUnique({ where: { id: businessId }, select: { slug: true } }))?.slug : null;
+  const suffix = slug ? `-${slug}` : "";
 
   return new NextResponse(buffer as ArrayBuffer, {
     headers: {
       "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      "Content-Disposition": `attachment; filename="pnl-export${scope}-${new Date().toISOString().slice(0, 10)}.xlsx"`,
+      "Content-Disposition": `attachment; filename="pnl-export${suffix}-${new Date().toISOString().slice(0, 10)}.xlsx"`,
     },
   });
 });

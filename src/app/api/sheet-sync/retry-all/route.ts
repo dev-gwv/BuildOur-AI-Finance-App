@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireUser, withApiErrors } from "@/lib/api-auth";
+import { withApiErrors } from "@/server/errors";
+import { requireAdmin } from "@/server/session";
 import { retrySheetFailure } from "@/lib/sheet";
 
 /**
@@ -8,7 +9,7 @@ import { retrySheetFailure } from "@/lib/sheet";
  * in the order they happened. Capped so one request can't run away.
  */
 export const POST = withApiErrors(async () => {
-  await requireUser();
+  await requireAdmin();
   const pending = await prisma.sheetSyncFailure.findMany({
     where: { resolvedAt: null },
     orderBy: { createdAt: "asc" },

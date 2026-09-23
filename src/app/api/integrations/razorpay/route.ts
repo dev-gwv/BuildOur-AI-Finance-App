@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
+import { parseJson } from "@/server/validation";
 import { prisma } from "@/lib/prisma";
-import { ApiError, requireAdmin, requireUser, withApiErrors } from "@/lib/api-auth";
+import { ApiError, withApiErrors } from "@/server/errors";
+import { requireAdmin, requireUser } from "@/server/session";
+import { audit } from "@/server/audit";
+import { guardWrite } from "@/server/services/common";
 import { sealSecret, openSecret } from "@/lib/secretBox";
 import { RAZORPAY_PROVIDER, RazorpayError, maskKeyId, testRazorpayCredentials } from "@/lib/integrations/razorpay";
 
@@ -30,10 +35,16 @@ export const GET = withApiErrors(async () => {
  * Save keys and/or switch the integration on or off. New keys are checked
  * against Razorpay before they're stored, so a typo can't be saved as "connected".
  */
+const putSchema = z.object({
+  enabled: z.boolean().optional(),
+  keyId: z.string().trim().max(100).optional(),
+  keySecret: z.string().trim().max(200).optional(),
+});
+
 export const PUT = withApiErrors(async (req: NextRequest) => {
-  await requireAdmin();
-  const body = (await req.json().catch(() => null)) as { enabled?: boolean; keyId?: string; keySecret?: string } | null;
-  if (!body) throw new ApiError(400, "Expected JSON");
+  const admin = await requireAdmin();
+  await guardWrite(admin);
+  const body = await parseJson(req, putSchema);
 
   const existing = await prisma.integration.findUnique({ where: { provider: RAZORPAY_PROVIDER } });
   const keyId = body.keyId?.trim() || existing?.keyId || null;
@@ -66,12 +77,24 @@ export const PUT = withApiErrors(async (req: NextRequest) => {
     create: { provider: RAZORPAY_PROVIDER, enabled, keyId, secretEnc, connectedAt, lastError: null },
     update: { enabled, keyId, secretEnc, connectedAt, lastError: null },
   });
+  await audit({
+    user: admin,
+    action: "integration.razorpay",
+    entityType: "integration",
+    entityId: RAZORPAY_PROVIDER,
+    summary: [keySecret ? `Razorpay keys set (${maskKeyId(keyId)})` : null, existing?.enabled !== enabled ? (enabled ? "switched on" : "switched off") : null]
+      .filter(Boolean)
+      .join(", ") || "Razorpay settings saved",
+    req,
+  });
   return NextResponse.json(await status());
 });
 
 /** Disconnect: forget the keys entirely. */
-export const DELETE = withApiErrors(async () => {
-  await requireAdmin();
+export const DELETE = withApiErrors(async (req: NextRequest) => {
+  const admin = await requireAdmin();
+  await guardWrite(admin);
   await prisma.integration.deleteMany({ where: { provider: RAZORPAY_PROVIDER } });
+  await audit({ user: admin, action: "integration.razorpay", entityType: "integration", entityId: RAZORPAY_PROVIDER, summary: "Razorpay disconnected (keys deleted)", req });
   return NextResponse.json(await status());
 });

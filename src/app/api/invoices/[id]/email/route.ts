@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { ApiError, requireUser, withApiErrors } from "@/lib/api-auth";
+import { ApiError, badRequest, withApiErrors } from "@/server/errors";
+import { requireUser } from "@/server/session";
+import { requireInvoiceAccess } from "@/server/access";
+import { enforce } from "@/server/rateLimit";
+import { audit } from "@/server/audit";
 import { BRANDS } from "@/lib/brands";
 import { invoiceEmailHtml, invoiceEmailText } from "@/lib/invoiceEmail";
 import { isMailConfigured, sendMail } from "@/lib/mailer";
@@ -13,8 +17,9 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 
 /** The draft shown in the compose box: template wording with placeholders filled. */
 export const GET = withApiErrors(async (_req: NextRequest, { params }: Params) => {
-  await requireUser();
+  const user = await requireUser();
   const { id } = await params;
+  await requireInvoiceAccess(user, id);
 
   const invoice = await prisma.invoice.findUnique({
     where: { id },
@@ -44,8 +49,11 @@ export const GET = withApiErrors(async (_req: NextRequest, { params }: Params) =
 });
 
 export const POST = withApiErrors(async (req: NextRequest, { params }: Params) => {
-  await requireUser();
+  const user = await requireUser();
   const { id } = await params;
+  const access = await requireInvoiceAccess(user, id);
+  // A leaked session mustn't be able to use the business's mail account to spam.
+  await enforce("emailPerUser", user.id);
 
   if (!isMailConfigured()) {
     throw new ApiError(
@@ -55,7 +63,9 @@ export const POST = withApiErrors(async (req: NextRequest, { params }: Params) =
   }
 
   const form = await req.formData().catch(() => null);
-  const override = form?.get("to") ? String(form.get("to")).trim() : "";
+  const override = form?.get("to") ? String(form.get("to")).trim().slice(0, 254) : "";
+  const subjectOverride = form?.get("subject") ? String(form.get("subject")).slice(0, 300) : "";
+  const bodyOverride = form?.get("body") ? String(form.get("body")).slice(0, 20_000) : "";
 
   const invoice = await prisma.invoice.findUnique({
     where: { id },
@@ -64,9 +74,7 @@ export const POST = withApiErrors(async (req: NextRequest, { params }: Params) =
   if (!invoice) throw new ApiError(404, "Invoice not found");
 
   const to = override || invoice.customerEmail || "";
-  if (!EMAIL_RE.test(to)) {
-    throw new ApiError(400, "Add a valid customer email address before sending");
-  }
+  if (!EMAIL_RE.test(to)) throw badRequest("Add a valid customer email address before sending", { to: "Not a valid email" });
 
   const brand = BRANDS[invoice.brand];
   const amountPaid = invoice.payments.reduce((sum, p) => sum + p.amount, 0);
@@ -85,11 +93,9 @@ export const POST = withApiErrors(async (req: NextRequest, { params }: Params) =
     itemDescription: invoice.itemDescription,
   });
 
-  const subject = renderTemplate(
-    form?.get("subject") ? String(form.get("subject")) : template.subject,
-    vars
-  );
-  const message = renderTemplate(form?.get("body") ? String(form.get("body")) : template.body, vars);
+  // Header injection: a subject is one line.
+  const subject = renderTemplate(subjectOverride || template.subject, vars).replace(/[\r\n]+/g, " ");
+  const message = renderTemplate(bodyOverride || template.body, vars);
 
   const data = {
     brand: invoice.brand,
@@ -117,6 +123,15 @@ export const POST = withApiErrors(async (req: NextRequest, { params }: Params) =
   await prisma.invoice.update({
     where: { id },
     data: { emailSentAt: new Date(), customerEmail: to },
+  });
+  await audit({
+    user,
+    businessId: access.businessId,
+    action: "invoice.email",
+    entityType: "invoice",
+    entityId: id,
+    summary: `Emailed ${invoice.invoiceNumber} to ${to}`,
+    req,
   });
 
   return NextResponse.json({ ok: true, to });

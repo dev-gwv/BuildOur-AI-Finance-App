@@ -36,17 +36,24 @@ export type EditableInvoice = {
   notes: string;
   terms: string;
   emailSentAt: string | null;
+  businessId: string;
 };
+
+/** A business an admin can move this invoice to (same legal entity only). */
+export type BusinessOption = { id: string; name: string; color: string };
 
 export function InvoiceEditForm({
   invoice,
   detailHref,
   minGross,
+  businessOptions,
 }: {
   invoice: EditableInvoice;
   detailHref: string;
   /** Money already received; the amount can't be edited below it. */
   minGross: number;
+  /** Given to admins only: other businesses of the same entity it can move to. */
+  businessOptions?: BusinessOption[];
 }) {
   const router = useRouter();
   const toast = useToast();
@@ -68,6 +75,7 @@ export function InvoiceEditForm({
   const [gstPercent, setGstPercent] = useState(String(invoice.gstPercent));
   const [notes, setNotes] = useState(invoice.notes);
   const [terms, setTerms] = useState(invoice.terms);
+  const [businessId, setBusinessId] = useState(invoice.businessId);
 
   const buyerStateCode = stateCodeFromGstin(customerGstin);
   const buyerStateName = stateNameFromCode(buyerStateCode);
@@ -111,6 +119,7 @@ export function InvoiceEditForm({
           gstPercent: Number(gstPercent),
           notes,
           terms,
+          ...(businessId !== invoice.businessId ? { businessId } : {}),
         }),
       });
       if (!res.ok) {
@@ -150,6 +159,23 @@ export function InvoiceEditForm({
               <label className={labelClass}>Invoice number</label>
               <input value={invoiceNumber} onChange={(e) => setInvoiceNumber(e.target.value)} required className={inputClass} />
             </div>
+            {businessOptions && businessOptions.length > 1 && (
+              <div>
+                <label className={labelClass}>Business</label>
+                <select value={businessId} onChange={(e) => setBusinessId(e.target.value)} className={inputClass}>
+                  {businessOptions.map((b) => (
+                    <option key={b.id} value={b.id}>
+                      {b.name}
+                    </option>
+                  ))}
+                </select>
+                {businessId !== invoice.businessId && (
+                  <p className="mt-1 text-xs text-amber-700 dark:text-amber-400">
+                    Moves the invoice and its payments to that business&apos;s reports and sheet. The number stays as it is.
+                  </p>
+                )}
+              </div>
+            )}
             <div>
               <label className={labelClass}>Invoice date</label>
               <input type="date" value={invoiceDate} onChange={(e) => setInvoiceDate(e.target.value)} required className={inputClass} />

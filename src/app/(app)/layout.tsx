@@ -1,26 +1,31 @@
-import { redirect } from "next/navigation";
-import { auth } from "@/lib/auth";
 import { AppShell } from "@/components/AppShell";
 import { alertCount } from "@/lib/alerts";
+import { isAdmin, requirePageUser } from "@/server/session";
+import { getScope } from "@/server/scope";
 
-export default async function AppLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
-  const session = await auth();
-  if (!session?.user) {
-    redirect("/login");
-  }
+export default async function AppLayout({ children }: { children: React.ReactNode }) {
+  const user = await requirePageUser();
+  const scope = await getScope(user);
+  // A member's bell only counts the businesses they can see.
+  const alerts = await alertCount(scope.access);
 
-  const alerts = await alertCount();
+  const toShell = (b: (typeof scope.businesses)[number]) => ({
+    id: b.id,
+    name: b.name,
+    slug: b.slug,
+    entity: b.entity,
+    color: b.color,
+    needsReview: b.needsReview,
+  });
 
   return (
     <AppShell
-      name={session.user.name ?? "User"}
-      role={session.user.role}
-      isAdmin={session.user.role === "ADMIN"}
+      name={user.name}
+      role={user.role}
+      isAdmin={isAdmin(user)}
       alertCount={alerts}
+      businesses={scope.businesses.map(toShell)}
+      current={scope.current ? toShell(scope.current) : null}
     >
       {children}
     </AppShell>

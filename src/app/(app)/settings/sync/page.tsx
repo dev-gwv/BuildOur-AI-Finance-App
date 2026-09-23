@@ -1,7 +1,8 @@
 import { CheckCircle2, CircleSlash, CloudOff } from "lucide-react";
 import { prisma } from "@/lib/prisma";
-import { requireSessionUser } from "@/lib/session";
-import { LEDGERS, LEDGER_KEYS, parseLedger } from "@/lib/ventures";
+import Link from "next/link";
+import { requirePageAdmin } from "@/server/session";
+import { sheetSource } from "@/server/businesses";
 import { SyncRetryButton } from "@/components/SyncRetryButton";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Card, CardBody, CardHeader, CardTitle } from "@/components/ui/Card";
@@ -37,42 +38,50 @@ function describe(payload: unknown): string {
 }
 
 export default async function SheetSyncPage() {
-  await requireSessionUser();
+  await requirePageAdmin();
 
-  const [pending, resolved] = await Promise.all([
+  const [pending, resolved, businesses] = await Promise.all([
     prisma.sheetSyncFailure.findMany({ where: { resolvedAt: null }, orderBy: { createdAt: "desc" } }),
     prisma.sheetSyncFailure.findMany({
       where: { resolvedAt: { not: null } },
       orderBy: { resolvedAt: "desc" },
       take: 10,
     }),
+    prisma.business.findMany({
+      where: { archivedAt: null },
+      orderBy: { name: "asc" },
+      select: { id: true, name: true, color: true, slug: true, sheetUrl: true, sheetSecretEnc: true },
+    }),
   ]);
 
-  // Only whether each is set — the URL and secret themselves never leave the server.
-  const workbooks = LEDGER_KEYS.map((key) => ({
-    key,
-    label: LEDGERS[key].label,
-    urlVar: LEDGERS[key].sheetEnvUrl,
-    secretVar: LEDGERS[key].sheetEnvSecret,
-    configured: Boolean(process.env[LEDGERS[key].sheetEnvUrl] && process.env[LEDGERS[key].sheetEnvSecret]),
-    pending: pending.filter((f) => f.ledger === key).length,
+  // Only whether each is connected — the URL and secret themselves never leave the server.
+  const nameOf = new Map(businesses.map((b) => [b.id, b.name]));
+  const workbooks = businesses.map((b) => ({
+    id: b.id,
+    label: b.name,
+    color: b.color,
+    source: sheetSource(b),
+    pending: pending.filter((f) => f.businessId === b.id).length,
   }));
 
   return (
     <div className="space-y-6">
       <PageHeader
-        eyebrow="Setup"
+        eyebrow="Settings"
         title="Sheet sync"
-        description="Every payment and tagged expense is written to its business's Google Sheet. Anything that didn't get through waits here to be retried."
+        description="Every payment and money in/out entry is written to its business's Google Sheet. Anything that didn't get through waits here to be retried."
         actions={pending.length > 1 ? <SyncRetryButton label={`Retry all ${pending.length}`} /> : undefined}
       />
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         {workbooks.map((w) => (
-          <Card key={w.key} className="px-5 py-4">
+          <Card key={w.id} className="px-5 py-4">
             <div className="flex items-center justify-between gap-2">
-              <p className="text-sm font-semibold text-neutral-900 dark:text-white">{w.label}</p>
-              {!w.configured ? (
+              <p className="flex items-center gap-2 text-sm font-semibold text-neutral-900 dark:text-white">
+                <span className="h-2 w-2 rounded-full" style={{ background: w.color }} />
+                {w.label}
+              </p>
+              {!w.source ? (
                 <Badge dot>Not connected</Badge>
               ) : w.pending > 0 ? (
                 <Badge tone="danger" dot>
@@ -85,13 +94,15 @@ export default async function SheetSyncPage() {
               )}
             </div>
             <p className="mt-2 text-xs text-neutral-500 dark:text-neutral-400">
-              {w.configured ? (
-                "Connected — new records are written as they're saved."
-              ) : (
-                <>
-                  Set <code className="font-mono">{w.urlVar}</code> and <code className="font-mono">{w.secretVar}</code>{" "}
-                  to start mirroring.
-                </>
+              {w.source === "settings"
+                ? "Connected — new records are written as they're saved."
+                : w.source === "environment"
+                  ? "Connected through environment variables. "
+                  : "Not connected yet. "}
+              {w.source !== "settings" && (
+                <Link href={`/settings/businesses/${w.id}#sheet`} className="font-medium text-brand-600 hover:underline dark:text-brand-400">
+                  {w.source ? "Manage it in the app →" : "Connect its sheet →"}
+                </Link>
               )}
             </p>
           </Card>
@@ -125,12 +136,11 @@ export default async function SheetSyncPage() {
               </THead>
               <TBody>
                 {pending.map((f) => {
-                  const ledger = parseLedger(f.ledger);
                   return (
                     <TR key={f.id}>
                       <TD className="whitespace-nowrap">{when(f.createdAt)}</TD>
                       <TD className="font-medium text-neutral-900 dark:text-neutral-100">
-                        {ledger ? LEDGERS[ledger].label : f.ledger}
+                        {nameOf.get(f.businessId) ?? "Removed business"}
                       </TD>
                       <TD>
                         <Badge tone={f.action.startsWith("remove") ? "neutral" : "brand"}>
@@ -181,12 +191,11 @@ export default async function SheetSyncPage() {
               </THead>
               <TBody>
                 {resolved.map((f) => {
-                  const ledger = parseLedger(f.ledger);
                   return (
                     <TR key={f.id}>
                       <TD className="whitespace-nowrap">{when(f.createdAt)}</TD>
                       <TD className="whitespace-nowrap text-emerald-600 dark:text-emerald-400">{when(f.resolvedAt!)}</TD>
-                      <TD>{ledger ? LEDGERS[ledger].label : f.ledger}</TD>
+                      <TD>{nameOf.get(f.businessId) ?? "Removed business"}</TD>
                       <TD className="max-w-64 truncate">{describe(f.payload)}</TD>
                       <TD className="text-right tabular-nums">{f.attempts}</TD>
                     </TR>

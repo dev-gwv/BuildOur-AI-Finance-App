@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import ExcelJS from "exceljs";
-import { requireUser, withApiErrors } from "@/lib/api-auth";
+import { withApiErrors } from "@/server/errors";
+import { requireUser } from "@/server/session";
+import { getScope } from "@/server/scope";
 import { monthLabel, parseGstPeriod, type GstLine } from "@/lib/gstReport";
-import { loadGstReport, parseGstScope } from "@/lib/gstReportData";
+import { loadGstReport, resolveGstBusinessIds } from "@/lib/gstReportData";
 
 const MONEY = "#,##0.00";
 const day = (d: Date) => d.toISOString().slice(0, 10);
@@ -12,8 +14,10 @@ export const GET = withApiErrors(async (req: NextRequest) => {
   const user = await requireUser();
   const { searchParams } = new URL(req.url);
   const period = parseGstPeriod(searchParams.get("period") ?? undefined);
-  const scope = parseGstScope(searchParams.get("venture") ?? undefined);
-  const report = await loadGstReport(user, period, scope);
+  // Only Grateful-entity businesses the user can access; a crafted id is ignored.
+  const scope = await getScope(user);
+  const businessIds = resolveGstBusinessIds(scope, searchParams.get("businessId"));
+  const report = await loadGstReport({ businessIds, period });
 
   const workbook = new ExcelJS.Workbook();
 
@@ -51,7 +55,7 @@ export const GET = withApiErrors(async (req: NextRequest) => {
     { header: "Customer", key: "customerName", width: 28 },
     { header: "GSTIN", key: "customerGstin", width: 18 },
     { header: "Place of supply", key: "placeOfSupply", width: 20 },
-    { header: "Venture", key: "venture", width: 10 },
+    { header: "Business", key: "business", width: 20 },
     { header: "Taxable value", key: "taxable", width: 14, style: { numFmt: MONEY } },
     { header: "Rate %", key: "gstPercent", width: 8 },
     { header: "CGST", key: "cgst", width: 12, style: { numFmt: MONEY } },
@@ -64,7 +68,7 @@ export const GET = withApiErrors(async (req: NextRequest) => {
     sheet.columns = invoiceColumns;
     sheet.getRow(1).font = { bold: true };
     for (const l of lines) {
-      sheet.addRow({ ...l, date: day(l.invoiceDate), customerGstin: l.customerGstin ?? "", venture: l.venture ?? "" });
+      sheet.addRow({ ...l, date: day(l.invoiceDate), customerGstin: l.customerGstin ?? "" });
     }
   };
   addInvoices("B2B", report.lines.filter((l) => l.b2b));
@@ -83,7 +87,7 @@ export const GET = withApiErrors(async (req: NextRequest) => {
     input.addRow({
       date: day(c.date),
       source: "Cost",
-      details: [c.description || c.category.name, c.venture].filter(Boolean).join(" · "),
+      details: [c.description || c.category.name, c.business.name].filter(Boolean).join(" · "),
       amount: c.grossAmount,
       gst: c.gstAmount,
     });
@@ -99,7 +103,8 @@ export const GET = withApiErrors(async (req: NextRequest) => {
   }
 
   const buffer = await workbook.xlsx.writeBuffer();
-  const name = `gst-${scope ?? "grateful"}-${day(report.range.start)}-to-${day(new Date(report.range.end.getTime() - 86_400_000))}.xlsx`;
+  const label = businessIds.length === 1 ? (scope.businesses.find((b) => b.id === businessIds[0])?.slug ?? "business") : "grateful";
+  const name = `gst-${label}-${day(report.range.start)}-to-${day(new Date(report.range.end.getTime() - 86_400_000))}.xlsx`;
   return new NextResponse(buffer as ArrayBuffer, {
     headers: {
       "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

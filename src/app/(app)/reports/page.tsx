@@ -1,8 +1,8 @@
 import Link from "next/link";
 import { ArrowRight, Download, FileImage, Percent } from "lucide-react";
 import { prisma } from "@/lib/prisma";
-import { getAccessibleCompanyIds } from "@/lib/access";
-import { requireSessionUser } from "@/lib/session";
+import { requirePageUser } from "@/server/session";
+import { getScope, scopeWhere } from "@/server/scope";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
@@ -10,7 +10,6 @@ import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Segmented } from "@/components/ui/Segmented";
 import { formatCurrency, formatDate } from "@/lib/format";
-import { LEDGERS, LEDGER_KEYS, parseLedger, type LedgerKey } from "@/lib/ventures";
 
 const inputClass =
   "h-9 rounded-lg border border-neutral-200 bg-white px-2.5 text-sm shadow-xs dark:border-white/10 dark:bg-neutral-950/60";
@@ -18,24 +17,12 @@ const inputClass =
 export default async function ReportsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ companyId?: string; from?: string; to?: string; venture?: string; direction?: string }>;
+  searchParams: Promise<{ from?: string; to?: string; direction?: string }>;
 }) {
-  const { companyId, from, to, venture: ventureParam, direction: directionParam } = await searchParams;
-  const venture = parseLedger(ventureParam);
+  const { from, to, direction: directionParam } = await searchParams;
   const direction = directionParam === "IN" || directionParam === "OUT" ? directionParam : null;
-  const user = await requireSessionUser();
-  const accessible = await getAccessibleCompanyIds(user);
-
-  const companies = await prisma.company.findMany({
-    where: accessible === "ALL" ? {} : { id: { in: accessible } },
-    orderBy: { name: "asc" },
-  });
-
-  const companyFilter = companyId
-    ? { companyId }
-    : accessible === "ALL"
-      ? {}
-      : { companyId: { in: accessible } };
+  const user = await requirePageUser();
+  const scope = await getScope(user);
 
   const dateFilter =
     from || to
@@ -47,40 +34,37 @@ export default async function ReportsPage({
         }
       : {};
 
-  const expenses = await prisma.expense.findMany({
-    where: { ...companyFilter, ...dateFilter, ...(venture ? { venture } : {}), ...(direction ? { direction } : {}) },
+  const entries = await prisma.expense.findMany({
+    where: { ...scopeWhere(scope), ...dateFilter, ...(direction ? { direction } : {}) },
     orderBy: { date: "desc" },
-    include: { company: true, category: true },
+    include: { business: { select: { name: true, color: true } }, category: { select: { name: true } } },
     take: 100,
   });
 
   const params = {
-    ...(companyId ? { companyId } : {}),
     ...(from ? { from } : {}),
     ...(to ? { to } : {}),
-    ...(venture ? { venture } : {}),
     ...(direction ? { direction } : {}),
   };
-  const exportUrl = `/api/export?${new URLSearchParams(params).toString()}`;
-  const href = (overrides: { venture?: LedgerKey | null; direction?: "IN" | "OUT" | null }) => {
+  // The export covers the business being worked in; on "All", everything the user can access.
+  const exportUrl = `/api/export?${new URLSearchParams({
+    ...params,
+    ...(scope.current ? { businessId: scope.current.id } : {}),
+  }).toString()}`;
+  const href = (d: "IN" | "OUT" | null) => {
     const next: Record<string, string> = { ...params };
-    if (overrides.venture !== undefined) {
-      if (overrides.venture) next.venture = overrides.venture;
-      else delete next.venture;
-    }
-    if (overrides.direction !== undefined) {
-      if (overrides.direction) next.direction = overrides.direction;
-      else delete next.direction;
-    }
+    if (d) next.direction = d;
+    else delete next.direction;
     return { pathname: "/reports", query: next };
   };
+  const hasGst = (scope.current ? [scope.current] : scope.businesses).some((b) => b.entity === "GRATEFUL");
 
   return (
     <div className="space-y-6">
       <PageHeader
-        eyebrow="Money"
+        eyebrow={scope.current?.name ?? "All businesses"}
         title="Reports"
-        description="Proof-of-payment screenshots and Excel exports — money in & out, invoices and payments, per venture"
+        description="Excel exports of money in & out, invoices and payments, and the proof-of-payment screenshots behind them"
         actions={
           <a href={exportUrl}>
             <Button>
@@ -91,6 +75,7 @@ export default async function ReportsPage({
         }
       />
 
+      {hasGst && (
       <Link
         href="/reports/gst"
         className="group flex items-center gap-4 rounded-2xl border border-brand-200/70 bg-gradient-to-r from-brand-50 to-white p-5 shadow-card transition-colors hover:border-brand-300 dark:border-brand-500/20 dark:from-brand-500/10 dark:to-transparent"
@@ -106,35 +91,19 @@ export default async function ReportsPage({
         </span>
         <ArrowRight className="h-4 w-4 text-brand-600 transition-transform group-hover:translate-x-0.5 dark:text-brand-400" />
       </Link>
+      )}
 
       <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-        <div className="flex flex-wrap gap-2">
-          <Segmented
-            items={[
-              { key: "all", label: "All ventures", href: href({ venture: null }), active: !venture },
-              ...LEDGER_KEYS.map((key) => ({ key, label: LEDGERS[key].label, href: href({ venture: key }), active: venture === key })),
-            ]}
-          />
-          <Segmented
-            items={[
-              { key: "all", label: "In & out", href: href({ direction: null }), active: !direction },
-              { key: "IN", label: "Money in", href: href({ direction: "IN" }), active: direction === "IN" },
-              { key: "OUT", label: "Money out", href: href({ direction: "OUT" }), active: direction === "OUT" },
-            ]}
-          />
-        </div>
+        <Segmented
+          items={[
+            { key: "all", label: "In & out", href: href(null), active: !direction },
+            { key: "IN", label: "Money in", href: href("IN"), active: direction === "IN" },
+            { key: "OUT", label: "Money out", href: href("OUT"), active: direction === "OUT" },
+          ]}
+        />
 
         <form method="get" className="flex flex-wrap items-center gap-2 text-sm">
-          {venture && <input type="hidden" name="venture" value={venture} />}
           {direction && <input type="hidden" name="direction" value={direction} />}
-          <select name="companyId" defaultValue={companyId ?? ""} className={inputClass}>
-            <option value="">All companies</option>
-            {companies.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </select>
           <input type="date" name="from" defaultValue={from ?? ""} className={inputClass} />
           <input type="date" name="to" defaultValue={to ?? ""} className={inputClass} />
           <Button type="submit" variant="secondary">
@@ -143,11 +112,12 @@ export default async function ReportsPage({
         </form>
       </div>
 
-      {expenses.length === 0 ? (
+      <h2 className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">Proof of payment</h2>
+      {entries.length === 0 ? (
         <EmptyState icon={FileImage} title="Nothing matches these filters" />
       ) : (
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
-          {expenses.map((exp) => (
+          {entries.map((exp) => (
             <Card key={exp.id} className="overflow-hidden">
               {exp.screenshotPath ? (
                 <a href={`/api/uploads/${exp.screenshotPath}`} target="_blank" rel="noopener noreferrer">
@@ -166,7 +136,7 @@ export default async function ReportsPage({
               <div className="space-y-1 p-3 text-xs">
                 <div className="flex items-center justify-between gap-2">
                   <p className="truncate font-medium text-neutral-900 dark:text-neutral-100">
-                    {exp.company.name} · {exp.category.name}
+                    {scope.current ? exp.category.name : `${exp.business.name} · ${exp.category.name}`}
                   </p>
                   {exp.direction === "OUT" ? <Badge tone="danger">Out</Badge> : <Badge tone="success">In</Badge>}
                 </div>

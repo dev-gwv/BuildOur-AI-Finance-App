@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { ApiError, requireAdmin, requireUser, withApiErrors } from "@/lib/api-auth";
+import { ApiError, withApiErrors } from "@/server/errors";
+import { requireAdmin, requireUser } from "@/server/session";
+import { audit } from "@/server/audit";
+import { guardWrite } from "@/server/services/common";
 import { DEFAULT_TEMPLATES } from "@/lib/emailTemplate";
 import type { BrandKey } from "@/lib/brands";
 
@@ -15,7 +18,8 @@ export const GET = withApiErrors(async () => {
 });
 
 export const PATCH = withApiErrors(async (req: NextRequest) => {
-  await requireAdmin();
+  const admin = await requireAdmin();
+  await guardWrite(admin);
   const form = await req.formData().catch(() => null);
   if (!form) throw new ApiError(400, "Expected a form submission");
 
@@ -27,11 +31,12 @@ export const PATCH = withApiErrors(async (req: NextRequest) => {
   // Resetting to the built-in wording is just clearing the saved row.
   if (form.get("reset") === "true") {
     await prisma.emailTemplate.deleteMany({ where: { brand } });
+    await audit({ user: admin, action: "settings.email", entityType: "emailTemplate", entityId: brand, summary: `Reset the ${brand.toLowerCase()} email to the default wording`, req });
     return NextResponse.json({ template: { brand, ...DEFAULT_TEMPLATES[brand], isDefault: true } });
   }
 
-  const subject = String(form.get("subject") ?? "").trim();
-  const body = String(form.get("body") ?? "").trim();
+  const subject = String(form.get("subject") ?? "").trim().replace(/[\r\n]+/g, " ").slice(0, 300);
+  const body = String(form.get("body") ?? "").trim().slice(0, 20_000);
   if (!subject || !body) throw new ApiError(400, "Both a subject and a message are required");
 
   const template = await prisma.emailTemplate.upsert({
@@ -39,6 +44,7 @@ export const PATCH = withApiErrors(async (req: NextRequest) => {
     create: { brand, subject, body },
     update: { subject, body },
   });
+  await audit({ user: admin, action: "settings.email", entityType: "emailTemplate", entityId: brand, summary: `Edited the ${brand.toLowerCase()} invoice email`, req });
 
   return NextResponse.json({ template: { ...template, isDefault: false } });
 });
