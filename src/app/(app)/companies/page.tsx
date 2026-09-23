@@ -62,7 +62,7 @@ export default async function CompaniesPage() {
               <Card className="h-full transition-shadow hover:shadow-md">
                 <CardBody>
                   <div className="flex items-start justify-between">
-                    <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-indigo-50 text-indigo-600 dark:bg-indigo-950 dark:text-indigo-400">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-brand-50 text-brand-600 dark:bg-brand-950 dark:text-brand-400">
                       <Building2 className="h-5 w-5" />
                     </div>
                     <ArrowRight className="h-4 w-4 text-neutral-300 dark:text-neutral-600" />

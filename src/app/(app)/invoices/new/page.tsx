@@ -9,7 +9,8 @@ export default async function NewInvoicePage() {
 
   const [last, catalog, settings] = await Promise.all([
     prisma.invoice.findFirst({
-      where: { brand: "GRATEFUL" },
+      // Venture invoices run their own IPC-/IWC- series and must not advance this one.
+      where: { brand: "GRATEFUL", venture: null },
       orderBy: { createdAt: "desc" },
       select: { invoiceNumber: true },
     }),

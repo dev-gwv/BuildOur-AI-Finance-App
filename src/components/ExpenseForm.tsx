@@ -2,9 +2,10 @@
 
 import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
-import { Receipt, Upload } from "lucide-react";
-import { calculateBreakup } from "@/lib/calc";
+import { ArrowDownLeft, ArrowUpRight, Receipt, Upload } from "lucide-react";
+import { calculateBreakup, calculateCostBreakup } from "@/lib/calc";
 import { formatCurrency } from "@/lib/format";
+import { LEDGERS, LEDGER_KEYS } from "@/lib/ventures";
 import { Button } from "@/components/ui/Button";
 import { Card, CardBody } from "@/components/ui/Card";
 import { useToast } from "@/components/ui/Toast";
@@ -27,6 +28,8 @@ type ExistingExpense = {
   grossAmount: number;
   gstPercent: number;
   screenshotPath: string | null;
+  venture: string | null;
+  direction: string;
 };
 
 export function ExpenseForm({
@@ -51,15 +54,18 @@ export function ExpenseForm({
     String(expense?.gstPercent ?? company?.defaultGstPercent ?? 18)
   );
   const [pending, setPending] = useState(false);
+  const [direction, setDirection] = useState<"IN" | "OUT">(expense?.direction === "OUT" ? "OUT" : "IN");
+  const isOut = direction === "OUT";
 
   const gateway = company?.gateways.find((g) => g.id === gatewayId);
-  const gatewayChargePercent = gateway?.chargePercent ?? 0;
+  const gatewayChargePercent = isOut ? 0 : (gateway?.chargePercent ?? 0);
 
   const breakup = calculateBreakup({
     grossAmount: Number(grossAmount) || 0,
     gatewayChargePercent,
     gstPercent: Number(gstPercent) || 0,
   });
+  const cost = calculateCostBreakup({ grossAmount: Number(grossAmount) || 0, gstPercent: Number(gstPercent) || 0 });
 
   function onCompanyChange(id: string) {
     setCompanyId(id);
@@ -101,6 +107,31 @@ export function ExpenseForm({
 
   return (
     <form onSubmit={onSubmit} className="grid max-w-2xl gap-6">
+      <input type="hidden" name="direction" value={direction} />
+      <div className="grid grid-cols-2 gap-2 rounded-2xl border border-neutral-200/80 bg-white p-1.5 shadow-card dark:border-white/[0.07] dark:bg-neutral-900/70">
+        {(
+          [
+            { key: "IN", label: "Money in", hint: "Received via a gateway — charges and GST come off", icon: ArrowDownLeft, on: "bg-emerald-50 text-emerald-800 ring-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-300 dark:ring-emerald-500/30" },
+            { key: "OUT", label: "Money out", hint: "A cost the business paid, GST-inclusive", icon: ArrowUpRight, on: "bg-red-50 text-red-800 ring-red-200 dark:bg-red-500/10 dark:text-red-300 dark:ring-red-500/30" },
+          ] as const
+        ).map((opt) => (
+          <button
+            key={opt.key}
+            type="button"
+            onClick={() => setDirection(opt.key)}
+            aria-pressed={direction === opt.key}
+            className={`flex items-start gap-3 rounded-xl px-4 py-3 text-left transition-colors ${
+              direction === opt.key ? `ring-1 ${opt.on}` : "text-neutral-600 hover:bg-neutral-50 dark:text-neutral-400 dark:hover:bg-white/[0.04]"
+            }`}
+          >
+            <opt.icon className="mt-0.5 h-4 w-4 shrink-0" />
+            <span>
+              <span className="block text-sm font-semibold">{opt.label}</span>
+              <span className="block text-xs opacity-75">{opt.hint}</span>
+            </span>
+          </button>
+        ))}
+      </div>
       <Card>
         <CardBody className="grid gap-4">
           <div>
@@ -112,7 +143,7 @@ export function ExpenseForm({
               value={companyId}
               disabled={isEdit}
               onChange={(e) => onCompanyChange(e.target.value)}
-              className="mt-1 w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 disabled:bg-neutral-100 dark:border-neutral-700 dark:bg-neutral-950 dark:disabled:bg-neutral-900"
+              className="mt-1 w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 shadow-xs text-sm outline-none focus:border-brand-500 focus:ring-4 focus:ring-brand-500/15 disabled:bg-neutral-100 dark:border-white/10 dark:bg-neutral-950/60 dark:disabled:bg-neutral-900"
             >
               {companies.map((c) => (
                 <option key={c.id} value={c.id}>
@@ -120,6 +151,27 @@ export function ExpenseForm({
                 </option>
               ))}
             </select>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-neutral-700 dark:text-neutral-300">
+              Venture
+            </label>
+            <select
+              name="venture"
+              defaultValue={expense?.venture ?? ""}
+              className="mt-1 w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 shadow-xs text-sm outline-none focus:border-brand-500 focus:ring-4 focus:ring-brand-500/15 dark:border-white/10 dark:bg-neutral-950/60"
+            >
+              <option value="">None — not mirrored to a sheet</option>
+              {LEDGER_KEYS.map((key) => (
+                <option key={key} value={key}>
+                  {LEDGERS[key].label}
+                </option>
+              ))}
+            </select>
+            <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
+              Picks the dashboard filter and the Google Sheet this expense is written into.
+            </p>
           </div>
 
           <div className="grid grid-cols-2 gap-4">
@@ -131,7 +183,7 @@ export function ExpenseForm({
                 name="categoryId"
                 required
                 defaultValue={expense?.categoryId}
-                className="mt-1 w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 dark:border-neutral-700 dark:bg-neutral-950"
+                className="mt-1 w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 shadow-xs text-sm outline-none focus:border-brand-500 focus:ring-4 focus:ring-brand-500/15 dark:border-white/10 dark:bg-neutral-950/60"
               >
                 {company?.categories.map((cat) => (
                   <option key={cat.id} value={cat.id}>
@@ -150,7 +202,7 @@ export function ExpenseForm({
                 type="date"
                 required
                 defaultValue={expense?.date ?? new Date().toISOString().slice(0, 10)}
-                className="mt-1 w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 dark:border-neutral-700 dark:bg-neutral-950"
+                className="mt-1 w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 shadow-xs text-sm outline-none focus:border-brand-500 focus:ring-4 focus:ring-brand-500/15 dark:border-white/10 dark:bg-neutral-950/60"
               />
             </div>
           </div>
@@ -158,7 +210,7 @@ export function ExpenseForm({
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-neutral-700 dark:text-neutral-300">
-                Gross amount paid
+                {isOut ? "Amount paid (incl. GST)" : "Gross amount received"}
               </label>
               <input
                 name="grossAmount"
@@ -168,10 +220,11 @@ export function ExpenseForm({
                 required
                 value={grossAmount}
                 onChange={(e) => setGrossAmount(e.target.value)}
-                className="mt-1 w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 dark:border-neutral-700 dark:bg-neutral-950"
+                className="mt-1 w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 shadow-xs text-sm outline-none focus:border-brand-500 focus:ring-4 focus:ring-brand-500/15 dark:border-white/10 dark:bg-neutral-950/60"
               />
             </div>
 
+            {!isOut && (
             <div>
               <label className="block text-sm font-medium text-neutral-700 dark:text-neutral-300">
                 Payment gateway
@@ -180,7 +233,7 @@ export function ExpenseForm({
                 name="gatewayId"
                 value={gatewayId}
                 onChange={(e) => setGatewayId(e.target.value)}
-                className="mt-1 w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 dark:border-neutral-700 dark:bg-neutral-950"
+                className="mt-1 w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 shadow-xs text-sm outline-none focus:border-brand-500 focus:ring-4 focus:ring-brand-500/15 dark:border-white/10 dark:bg-neutral-950/60"
               >
                 <option value="">None</option>
                 {company?.gateways.map((gw) => (
@@ -190,6 +243,7 @@ export function ExpenseForm({
                 ))}
               </select>
             </div>
+            )}
           </div>
 
           <div className="grid grid-cols-2 gap-4">
@@ -204,7 +258,7 @@ export function ExpenseForm({
                 min="0"
                 value={gstPercent}
                 onChange={(e) => setGstPercent(e.target.value)}
-                className="mt-1 w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 dark:border-neutral-700 dark:bg-neutral-950"
+                className="mt-1 w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 shadow-xs text-sm outline-none focus:border-brand-500 focus:ring-4 focus:ring-brand-500/15 dark:border-white/10 dark:bg-neutral-950/60"
               />
             </div>
 
@@ -212,7 +266,7 @@ export function ExpenseForm({
               <label className="block text-sm font-medium text-neutral-700 dark:text-neutral-300">
                 Screenshot (proof of payment)
               </label>
-              <label className="mt-1 flex cursor-pointer items-center gap-2 rounded-lg border border-dashed border-neutral-300 px-3 py-2 text-sm text-neutral-500 hover:border-indigo-400 hover:text-indigo-600 dark:border-neutral-700 dark:text-neutral-400">
+              <label className="mt-1 flex cursor-pointer items-center gap-2 rounded-lg border border-dashed border-neutral-200 px-3 py-2 text-sm text-neutral-500 hover:border-brand-400 hover:text-brand-600 dark:border-white/10 dark:text-neutral-400">
                 <Upload className="h-4 w-4" />
                 {expense?.screenshotPath ? "Replace file" : "Choose file"}
                 <input name="screenshot" type="file" accept="image/*,.pdf" className="hidden" />
@@ -228,44 +282,59 @@ export function ExpenseForm({
               name="description"
               type="text"
               defaultValue={expense?.description ?? ""}
-              className="mt-1 w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 dark:border-neutral-700 dark:bg-neutral-950"
+              className="mt-1 w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 shadow-xs text-sm outline-none focus:border-brand-500 focus:ring-4 focus:ring-brand-500/15 dark:border-white/10 dark:bg-neutral-950/60"
             />
           </div>
         </CardBody>
       </Card>
 
-      <Card className="border-indigo-100 dark:border-indigo-950">
+      <Card className="border-brand-100 dark:border-brand-950">
         <CardBody>
           <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-neutral-700 dark:text-neutral-300">
-            <Receipt className="h-4 w-4 text-indigo-500" />
+            <Receipt className="h-4 w-4 text-brand-500" />
             Breakup preview
           </h3>
+          {isOut ? (
+            <dl className="grid grid-cols-2 gap-y-2 text-sm text-neutral-600 dark:text-neutral-400">
+              <dt>Total incl. GST</dt>
+              <dd className="text-right tabular-nums">{formatCurrency(Number(grossAmount) || 0)}</dd>
+              <dt>GST ({gstPercent || 0}%, input credit)</dt>
+              <dd className="text-right tabular-nums text-amber-600 dark:text-amber-400">− {formatCurrency(cost.gstAmount)}</dd>
+              <dt className="border-t border-neutral-100 pt-2 font-semibold text-neutral-900 dark:border-white/[0.06] dark:text-neutral-100">
+                Cost excl. GST
+              </dt>
+              <dd className="border-t border-neutral-100 pt-2 text-right tabular-nums font-semibold text-red-600 dark:border-white/[0.06] dark:text-red-400">
+                {formatCurrency(cost.netAmount)}
+              </dd>
+            </dl>
+          ) : (
           <dl className="grid grid-cols-2 gap-y-2 text-sm text-neutral-600 dark:text-neutral-400">
-            <dt>Gross amount</dt>
-            <dd className="text-right tabular-nums">{formatCurrency(Number(grossAmount) || 0)}</dd>
-            <dt>Gateway charge ({gatewayChargePercent}%)</dt>
-            <dd className="text-right tabular-nums text-amber-600 dark:text-amber-400">
-              − {formatCurrency(breakup.gatewayChargeAmount)}
-            </dd>
-            <dt>After gateway</dt>
-            <dd className="text-right tabular-nums">{formatCurrency(breakup.afterGatewayAmount)}</dd>
-            <dt>GST ({gstPercent || 0}%)</dt>
-            <dd className="text-right tabular-nums text-amber-600 dark:text-amber-400">
-              − {formatCurrency(breakup.gstAmount)}
-            </dd>
-            <dt className="border-t border-neutral-100 pt-2 font-semibold text-neutral-900 dark:border-neutral-800 dark:text-neutral-100">
-              Net revenue
-            </dt>
-            <dd className="border-t border-neutral-100 pt-2 text-right tabular-nums font-semibold text-emerald-600 dark:border-neutral-800 dark:text-emerald-400">
-              {formatCurrency(breakup.netAmount)}
-            </dd>
-          </dl>
+              <dt>Gross amount</dt>
+              <dd className="text-right tabular-nums">{formatCurrency(Number(grossAmount) || 0)}</dd>
+              <dt>Gateway charge ({gatewayChargePercent}%)</dt>
+              <dd className="text-right tabular-nums text-amber-600 dark:text-amber-400">
+                − {formatCurrency(breakup.gatewayChargeAmount)}
+              </dd>
+              <dt>After gateway</dt>
+              <dd className="text-right tabular-nums">{formatCurrency(breakup.afterGatewayAmount)}</dd>
+              <dt>GST ({gstPercent || 0}%)</dt>
+              <dd className="text-right tabular-nums text-amber-600 dark:text-amber-400">
+                − {formatCurrency(breakup.gstAmount)}
+              </dd>
+              <dt className="border-t border-neutral-100 pt-2 font-semibold text-neutral-900 dark:border-white/[0.06] dark:text-neutral-100">
+                Net revenue
+              </dt>
+              <dd className="border-t border-neutral-100 pt-2 text-right tabular-nums font-semibold text-emerald-600 dark:border-white/[0.06] dark:text-emerald-400">
+                {formatCurrency(breakup.netAmount)}
+              </dd>
+            </dl>
+          )}
         </CardBody>
       </Card>
 
       <div className="flex items-center gap-2">
         <Button type="submit" loading={pending}>
-          {isEdit ? "Save changes" : "Save expense"}
+          {isEdit ? "Save changes" : isOut ? "Save money out" : "Save money in"}
         </Button>
         <Button type="button" variant="secondary" onClick={() => router.push("/expenses")}>
           Cancel

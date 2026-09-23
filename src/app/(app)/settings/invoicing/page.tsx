@@ -32,9 +32,9 @@ export default async function InvoicingSettingsPage() {
 
       <Card>
         <CardHeader className="flex items-center gap-2">
-          <Settings2 className="h-4 w-4 text-indigo-500" />
+          <Settings2 className="h-4 w-4 text-brand-500" />
           <h2 className="text-sm font-semibold text-neutral-700 dark:text-neutral-300">
-            Notes, terms &amp; signature
+            Notes, terms, signature &amp; Razorpay charges
           </h2>
         </CardHeader>
         <CardBody>
@@ -42,6 +42,8 @@ export default async function InvoicingSettingsPage() {
             defaultTerms={settings?.terms ?? ""}
             defaultNotes={settings?.notes ?? "Thank you for your business."}
             signatureDataUri={settings?.signatureDataUri ?? null}
+            razorpayFeePercent={settings?.razorpayFeePercent ?? 2}
+            razorpayFeeGstPercent={settings?.razorpayFeeGstPercent ?? 18}
           />
         </CardBody>
       </Card>
@@ -52,7 +54,7 @@ export default async function InvoicingSettingsPage() {
         return (
           <Card key={key}>
             <CardHeader className="flex items-center gap-2">
-              <Mail className="h-4 w-4 text-indigo-500" />
+              <Mail className="h-4 w-4 text-brand-500" />
               <h2 className="text-sm font-semibold text-neutral-700 dark:text-neutral-300">
                 Email message — {BRANDS[key].name}
               </h2>
@@ -72,7 +74,7 @@ export default async function InvoicingSettingsPage() {
 
       <Card>
         <CardHeader className="flex items-center gap-2">
-          <ListChecks className="h-4 w-4 text-indigo-500" />
+          <ListChecks className="h-4 w-4 text-brand-500" />
           <h2 className="text-sm font-semibold text-neutral-700 dark:text-neutral-300">Item catalog</h2>
         </CardHeader>
         <CardBody className="space-y-4">
@@ -85,7 +87,7 @@ export default async function InvoicingSettingsPage() {
           {catalog.length === 0 ? (
             <EmptyState icon={ListChecks} title="No mappings yet" description="Add your first amount → item mapping below." />
           ) : (
-            <ul className="divide-y divide-neutral-100 dark:divide-neutral-800">
+            <ul className="divide-y divide-neutral-100 dark:divide-white/[0.05]">
               {catalog.map((entry) => (
                 <li key={entry.id} className="flex items-center justify-between py-2.5 text-sm">
                   <div>

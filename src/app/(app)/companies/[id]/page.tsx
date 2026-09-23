@@ -46,14 +46,14 @@ export default async function CompanyDetailPage({
 
       <Card>
         <CardHeader className="flex items-center gap-2">
-          <CreditCard className="h-4 w-4 text-indigo-500" />
+          <CreditCard className="h-4 w-4 text-brand-500" />
           <h2 className="text-sm font-semibold text-neutral-700 dark:text-neutral-300">Payment gateways</h2>
         </CardHeader>
         <CardBody className="space-y-4">
           {company.gateways.length === 0 ? (
             <EmptyState icon={CreditCard} title="No gateways yet" description="Add Razorpay, PayU, or any processor you use, with its charge %." />
           ) : (
-            <ul className="divide-y divide-neutral-100 dark:divide-neutral-800">
+            <ul className="divide-y divide-neutral-100 dark:divide-white/[0.05]">
               {company.gateways.map((gw) => (
                 <li key={gw.id} className="flex items-center justify-between py-2.5">
                   <span className="text-sm font-medium text-neutral-900 dark:text-neutral-100">{gw.name}</span>
@@ -82,14 +82,14 @@ export default async function CompanyDetailPage({
 
       <Card>
         <CardHeader className="flex items-center gap-2">
-          <Tag className="h-4 w-4 text-indigo-500" />
+          <Tag className="h-4 w-4 text-brand-500" />
           <h2 className="text-sm font-semibold text-neutral-700 dark:text-neutral-300">Expense categories</h2>
         </CardHeader>
         <CardBody className="space-y-4">
           {company.categories.length === 0 ? (
             <EmptyState icon={Tag} title="No categories yet" description="Add categories like Guest Fees, Rent, or Salaries to organize expenses." />
           ) : (
-            <ul className="divide-y divide-neutral-100 dark:divide-neutral-800">
+            <ul className="divide-y divide-neutral-100 dark:divide-white/[0.05]">
               {company.categories.map((cat) => (
                 <li key={cat.id} className="flex items-center justify-between py-2.5">
                   <span className="text-sm font-medium text-neutral-900 dark:text-neutral-100">{cat.name}</span>

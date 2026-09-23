@@ -46,7 +46,7 @@ export function GstRateForm({
         step="0.01"
         min="0"
         defaultValue={defaultGstPercent}
-        className="w-20 rounded-lg border border-neutral-300 px-2 py-1.5 text-sm outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 dark:border-neutral-700 dark:bg-neutral-950"
+        className="w-20 rounded-lg border border-neutral-200 px-2 py-1.5 text-sm outline-none focus:border-brand-500 focus:ring-4 focus:ring-brand-500/15 dark:border-white/10 dark:bg-neutral-950/60"
       />
       <span className="text-neutral-500 dark:text-neutral-400">%</span>
       <Button type="submit" size="sm" variant="secondary" loading={pending}>

@@ -92,6 +92,13 @@ model Expense {
   gstAmount           Float    @default(0)
   netAmount           Float
   screenshotPath      String?
+  /// Which workbook the expense is mirrored into: "IPC", "IWC" or "MULBERRY"
+  /// (see src/lib/ventures.ts). Null for expenses recorded before ventures.
+  venture             String?
+  /// "IN" = money received (gross -> gateway charge -> GST -> net, written to
+  /// the sheet's receipts), "OUT" = a cost (GST-inclusive, written to the
+  /// sheet's expenses). Everything logged before the split was money in.
+  direction           String   @default("IN")
   createdById         String
   createdAt           DateTime @default(now())
 
@@ -101,6 +108,7 @@ model Expense {
   createdBy  User      @relation(fields: [createdById], references: [id])
 
   @@index([companyId, date])
+  @@index([companyId, venture, date])
 }
 
 // Invoices raised under either brand, from an uploaded
@@ -109,6 +117,9 @@ model Expense {
 model Invoice {
   id              String       @id @default(cuid())
   brand           InvoiceBrand @default(GRATEFUL)
+  /// "IPC" or "IWC" for Grateful invoices raised under a venture, each with its
+  /// own series and sheet. Null for Mulberry and for legacy Grateful invoices.
+  venture         String?
   invoiceNumber   String       @unique
   invoiceDate     DateTime
   dueDate         DateTime
@@ -118,6 +129,8 @@ model Invoice {
   customerEmail   String?
   /** When the invoice was last emailed out, so the UI can show it's been sent. */
   emailSentAt     DateTime?
+  /** Set when the invoice is edited after it was emailed, so it reads as revised. */
+  revisedAt       DateTime?
   /** Present when the invoice was raised from a customer's GST certificate (B2B). */
   customerGstin   String?
   placeOfSupply   String
@@ -139,6 +152,7 @@ model Invoice {
 
   @@index([createdAt])
   @@index([brand, createdAt])
+  @@index([brand, venture, createdAt])
 }
 
 /// Money actually received against an invoice. Wedding work is paid in
@@ -152,6 +166,14 @@ model Payment {
   note      String?
   /// Screenshot or receipt for the transfer, stored like expense proofs.
   proofPath String?
+  /// Payment gateway the money came through (e.g. "Razorpay"), which keeps a
+  /// commission. `amount` stays what the customer paid, since that is what
+  /// settles the invoice; the business receives amount - fee - feeGst.
+  gateway      String?
+  /// The gateway's own payment id (Razorpay "pay_..."), when it was visible.
+  gatewayRef   String?
+  feeAmount    Float    @default(0)
+  feeGstAmount Float    @default(0)
   createdAt DateTime @default(now())
 
   invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
@@ -188,4 +210,39 @@ model InvoiceSettings {
   terms            String?
   notes            String?
   signatureDataUri String?
+  /// Razorpay's commission on a payment, and the GST it charges on that commission.
+  razorpayFeePercent    Float @default(2)
+  razorpayFeeGstPercent Float @default(18)
+}
+
+/// A sheet write that failed, kept so it can be seen and retried. Rows are
+/// resolved when a later write for the same record succeeds.
+model SheetSyncFailure {
+  id         String    @id @default(cuid())
+  ledger     String
+  action     String
+  recordId   String
+  payload    Json
+  error      String
+  attempts   Int       @default(1)
+  createdAt  DateTime  @default(now())
+  resolvedAt DateTime?
+
+  @@index([resolvedAt])
+  @@index([recordId])
+}
+
+/// A connection to an outside service, one row per provider ("razorpay").
+/// Off until someone turns it on in Settings -> Integrations. The secret is
+/// stored encrypted with a key derived from AUTH_SECRET (src/lib/secretBox.ts)
+/// and never sent back to the browser.
+model Integration {
+  provider    String    @id
+  enabled     Boolean   @default(false)
+  /// Public half of the credentials (Razorpay "rzp_live_..."), shown masked.
+  keyId       String?
+  secretEnc   String?
+  connectedAt DateTime?
+  lastError   String?
+  updatedAt   DateTime  @updatedAt
 }

@@ -11,7 +11,7 @@ import { Card, CardBody, CardHeader } from "@/components/ui/Card";
 import { useToast } from "@/components/ui/Toast";
 
 const inputClass =
-  "mt-1 w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-rose-500 focus:ring-1 focus:ring-rose-500 dark:border-neutral-700 dark:bg-neutral-950";
+  "mt-1 w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 shadow-xs text-sm outline-none focus:border-rose-500 focus:ring-1 focus:ring-rose-500 dark:border-white/10 dark:bg-neutral-950/60";
 const labelClass = "block text-sm font-medium text-neutral-700 dark:text-neutral-300";
 
 export function MulberryInvoiceForm({
@@ -135,7 +135,7 @@ export function MulberryInvoiceForm({
               className={`flex cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed px-6 py-8 text-center transition-colors ${
                 file
                   ? "border-emerald-300 bg-emerald-50/50 dark:border-emerald-800 dark:bg-emerald-950/20"
-                  : "border-neutral-300 hover:border-rose-400 hover:bg-rose-50/40 dark:border-neutral-700 dark:hover:bg-rose-950/20"
+                  : "border-neutral-200 hover:border-rose-400 hover:bg-rose-50/40 dark:border-white/10 dark:hover:bg-rose-950/20"
               }`}
             >
               {file ? (
@@ -245,7 +245,7 @@ export function MulberryInvoiceForm({
           </Card>
         )}
 
-        <details className="group rounded-xl border border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-900">
+        <details className="group rounded-2xl border border-neutral-200/80 bg-white shadow-card dark:border-white/[0.07] dark:bg-neutral-900/70">
           <summary className="flex cursor-pointer items-center gap-2 px-5 py-4 text-sm font-semibold text-neutral-700 marker:content-none dark:text-neutral-300">
             <SlidersHorizontal className="h-4 w-4 text-neutral-400" />
             Edit all details
@@ -253,7 +253,7 @@ export function MulberryInvoiceForm({
               invoice no., dates, address, notes…
             </span>
           </summary>
-          <div className="grid gap-4 border-t border-neutral-100 px-5 py-4 dark:border-neutral-800">
+          <div className="grid gap-4 border-t border-neutral-100 px-5 py-4 dark:border-white/[0.06]">
             <div className="grid gap-4 sm:grid-cols-2">
               <div>
                 <label className={labelClass}>Invoice number</label>
@@ -347,10 +347,10 @@ export function MulberryInvoiceForm({
               <dd className="text-right tabular-nums text-emerald-600 dark:text-emerald-400">
                 {advance > 0 ? `− ${formatCurrency(advance)}` : "—"}
               </dd>
-              <dt className="border-t border-neutral-100 pt-2 font-semibold text-neutral-900 dark:border-neutral-800 dark:text-neutral-100">
+              <dt className="border-t border-neutral-100 pt-2 font-semibold text-neutral-900 dark:border-white/[0.06] dark:text-neutral-100">
                 Balance due
               </dt>
-              <dd className="border-t border-neutral-100 pt-2 text-right font-semibold tabular-nums text-neutral-900 dark:border-neutral-800 dark:text-neutral-100">
+              <dd className="border-t border-neutral-100 pt-2 text-right font-semibold tabular-nums text-neutral-900 dark:border-white/[0.06] dark:text-neutral-100">
                 {formatCurrency(balance)}
               </dd>
             </dl>

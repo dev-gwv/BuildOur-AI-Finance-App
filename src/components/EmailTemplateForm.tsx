@@ -8,7 +8,7 @@ import { useToast } from "@/components/ui/Toast";
 import { PLACEHOLDERS } from "@/lib/emailTemplate";
 
 const fieldClass =
-  "mt-1 w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 dark:border-neutral-700 dark:bg-neutral-950";
+  "mt-1 w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 shadow-xs text-sm outline-none focus:border-brand-500 focus:ring-4 focus:ring-brand-500/15 dark:border-white/10 dark:bg-neutral-950/60";
 const labelClass = "block text-sm font-medium text-neutral-700 dark:text-neutral-300";
 
 export function EmailTemplateForm({
@@ -105,7 +105,7 @@ export function EmailTemplateForm({
               type="button"
               onClick={() => setBodyValue((v) => `${v}{{${p.token}}}`)}
               title={`Insert ${p.label}`}
-              className="rounded-full border border-neutral-200 bg-neutral-50 px-2.5 py-1 text-xs text-neutral-600 hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-700 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-300 dark:hover:bg-indigo-950"
+              className="rounded-full border border-neutral-200 bg-neutral-50 px-2.5 py-1 text-xs text-neutral-600 hover:border-brand-300 hover:bg-brand-50 hover:text-brand-700 dark:border-white/10 dark:bg-neutral-800 dark:text-neutral-300 dark:hover:bg-brand-950"
             >
               {p.label}
             </button>

@@ -29,7 +29,7 @@ export default function RootLayout({
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="flex min-h-full flex-col bg-neutral-50 dark:bg-neutral-950">
+      <body className="flex min-h-full flex-col">
         <ToastProvider>
           <ConfirmProvider>{children}</ConfirmProvider>
         </ToastProvider>

@@ -7,17 +7,21 @@ import { useToast } from "@/components/ui/Toast";
 import { Button } from "@/components/ui/Button";
 
 const fieldClass =
-  "mt-1 w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 dark:border-neutral-700 dark:bg-neutral-950";
+  "mt-1 w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 shadow-xs text-sm outline-none focus:border-brand-500 focus:ring-4 focus:ring-brand-500/15 dark:border-white/10 dark:bg-neutral-950/60";
 const labelClass = "block text-sm font-medium text-neutral-700 dark:text-neutral-300";
 
 export function InvoiceSettingsForm({
   defaultTerms,
   defaultNotes,
   signatureDataUri,
+  razorpayFeePercent,
+  razorpayFeeGstPercent,
 }: {
   defaultTerms: string;
   defaultNotes: string;
   signatureDataUri: string | null;
+  razorpayFeePercent: number;
+  razorpayFeeGstPercent: number;
 }) {
   const router = useRouter();
   const toast = useToast();
@@ -41,6 +45,8 @@ export function InvoiceSettingsForm({
     const body = new FormData();
     body.append("terms", String(form.get("terms") ?? ""));
     body.append("notes", String(form.get("notes") ?? ""));
+    body.append("razorpayFeePercent", String(form.get("razorpayFeePercent") ?? ""));
+    body.append("razorpayFeeGstPercent", String(form.get("razorpayFeeGstPercent") ?? ""));
     if (signatureFile) body.append("signature", signatureFile);
     if (removeSignature) body.append("removeSignature", "true");
 
@@ -80,7 +86,7 @@ export function InvoiceSettingsForm({
       <div>
         <label className={labelClass}>Authorised signature</label>
         <div className="mt-1 flex flex-wrap items-center gap-4">
-          <div className="flex h-20 w-48 items-center justify-center rounded-lg border border-dashed border-neutral-300 bg-white dark:border-neutral-700">
+          <div className="flex h-20 w-48 items-center justify-center rounded-lg border border-dashed border-neutral-200 bg-white dark:border-white/10">
             {preview && !removeSignature ? (
               // eslint-disable-next-line @next/next/no-img-element -- data/blob URI preview
               <img src={preview} alt="Signature preview" className="max-h-16 w-auto object-contain" />
@@ -93,7 +99,7 @@ export function InvoiceSettingsForm({
           </div>
 
           <div className="flex flex-col gap-2">
-            <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-neutral-300 px-3 py-1.5 text-sm text-neutral-700 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-200 dark:hover:bg-neutral-800">
+            <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-neutral-200 px-3 py-1.5 text-sm text-neutral-700 hover:bg-neutral-50 dark:border-white/10 dark:text-neutral-200 dark:hover:bg-neutral-800">
               <UploadCloud className="h-4 w-4" />
               {preview && !removeSignature ? "Replace signature" : "Upload signature"}
               <input type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={onSignatureChange} />
@@ -117,6 +123,45 @@ export function InvoiceSettingsForm({
         <p className="mt-2 text-xs text-neutral-500 dark:text-neutral-400">
           A PNG with a transparent background looks best. Max 500 KB. This signature is printed on
           every invoice automatically.
+        </p>
+      </div>
+
+      <div>
+        <label className={labelClass}>Razorpay charges</label>
+        <div className="mt-1 grid max-w-md grid-cols-2 gap-3">
+          <label className="text-xs text-neutral-500 dark:text-neutral-400">
+            Commission %
+            <input
+              name="razorpayFeePercent"
+              type="number"
+              step="0.01"
+              min="0"
+              max="100"
+              required
+              defaultValue={razorpayFeePercent}
+              className={fieldClass}
+            />
+          </label>
+          <label className="text-xs text-neutral-500 dark:text-neutral-400">
+            GST on commission %
+            <input
+              name="razorpayFeeGstPercent"
+              type="number"
+              step="0.01"
+              min="0"
+              max="100"
+              required
+              defaultValue={razorpayFeeGstPercent}
+              className={fieldClass}
+            />
+          </label>
+        </div>
+        <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
+          Used to estimate what Razorpay keeps from a payment marked &ldquo;Paid through Razorpay&rdquo; — the fee
+          stays editable on each payment.
+        </p>
+        <p className="mt-0.5 text-xs text-neutral-500 dark:text-neutral-400">
+          Connected to Razorpay? Exact fees come from the API instead — Settings → Integrations.
         </p>
       </div>
 

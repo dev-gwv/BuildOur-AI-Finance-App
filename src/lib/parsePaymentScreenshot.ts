@@ -4,6 +4,30 @@ export interface ParsedPaymentScreenshot {
   /** UPI reference / transaction id, handy to keep on the payment note. */
   reference: string | null;
   paidOn: string | null;
+  /**
+   * A payment gateway that keeps a commission, when the screenshot shows one.
+   * Separate from `method`: a Razorpay checkout is still paid from PhonePe/GPay,
+   * and both facts matter (where it came from, and who takes a cut).
+   */
+  gateway: "Razorpay" | null;
+  /** The gateway's payment id, e.g. Razorpay's "pay_29QQoUBi66xm2f". */
+  gatewayRef: string | null;
+}
+
+/**
+ * Razorpay's own receipts and dashboard say "Razorpay" and carry a "pay_" id
+ * (14 alphanumerics). A customer's UPI app often shows neither — the payee is
+ * the merchant's name — so a miss here is expected and the form keeps a
+ * manual switch.
+ */
+const RAZORPAY_ID = /\bpay_([A-Za-z0-9]{14})\b/;
+const RAZORPAY_NAME = /razorpay|razor\s*pay|\brzp\b|via\s+razorpay/i;
+
+export function detectGateway(text: string): { gateway: "Razorpay" | null; gatewayRef: string | null } {
+  const id = RAZORPAY_ID.exec(text);
+  if (id) return { gateway: "Razorpay", gatewayRef: `pay_${id[1]}` };
+  if (RAZORPAY_NAME.test(text)) return { gateway: "Razorpay", gatewayRef: null };
+  return { gateway: null, gatewayRef: null };
 }
 
 const APPS: Array<[RegExp, string]> = [
@@ -14,6 +38,8 @@ const APPS: Array<[RegExp, string]> = [
   [/amazon\s*pay/i, "Amazon Pay"],
   [/cred\b/i, "CRED"],
   [/net\s*banking|imps|neft|rtgs/i, "Bank transfer"],
+  // Last, so the UPI app a Razorpay checkout was paid from wins when shown.
+  [/razorpay|razor\s*pay/i, "Razorpay"],
 ];
 
 /**
@@ -152,5 +178,5 @@ export function parsePaymentScreenshotText(
     paidOn = `${numeric[3]}-${numeric[2].padStart(2, "0")}-${numeric[1].padStart(2, "0")}`;
   }
 
-  return { amount, method, reference, paidOn };
+  return { amount, method, reference, paidOn, ...detectGateway(text) };
 }

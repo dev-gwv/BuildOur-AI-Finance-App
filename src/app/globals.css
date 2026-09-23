@@ -1,33 +1,87 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+/*
+ * Design tokens. "brand" is the app's accent (links, focus, active states);
+ * primary actions use ink (near-black) so colour stays meaningful — green for
+ * money in, amber for money owed, red for problems.
+ */
+@theme {
+  --color-brand-50: #f3f4ff;
+  --color-brand-100: #e8eaff;
+  --color-brand-200: #d3d7fe;
+  --color-brand-300: #b2b8fc;
+  --color-brand-400: #8b90f7;
+  --color-brand-500: #6a6cf0;
+  --color-brand-600: #5750e4;
+  --color-brand-700: #4a40c9;
+  --color-brand-800: #3d36a3;
+  --color-brand-900: #353281;
+  --color-brand-950: #211e4b;
+
+  --color-canvas: #f6f6f3;
+  --color-canvas-dark: #09090b;
+
+  --shadow-card: 0 1px 2px rgba(16, 24, 40, 0.04), 0 1px 1px rgba(16, 24, 40, 0.02);
+  --shadow-pop: 0 12px 32px -8px rgba(16, 24, 40, 0.18), 0 2px 6px rgba(16, 24, 40, 0.06);
+
+  --animate-fade-up: fade-up 0.35s cubic-bezier(0.2, 0.7, 0.2, 1) both;
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+@layer base {
+  html {
+    -webkit-font-smoothing: antialiased;
+    font-feature-settings: "cv11", "ss01";
+  }
+
+  body {
+    background: var(--color-canvas);
+    color: var(--color-neutral-900);
+    font-family: var(--font-sans);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    body {
+      background: var(--color-canvas-dark);
+      color: var(--color-neutral-100);
+    }
+  }
+
+  ::selection {
+    background: var(--color-brand-200);
+  }
+
+  /* Form controls share one look without every form repeating it. */
+  input:not([type="checkbox"]):not([type="radio"]):not([type="file"]),
+  select,
+  textarea {
+    transition:
+      border-color 120ms,
+      box-shadow 120ms;
+  }
 }
 
 @media print {
   @page {
     size: A4;
     margin: 10mm;
+  }
+  body {
+    background: #fff;
   }
 }

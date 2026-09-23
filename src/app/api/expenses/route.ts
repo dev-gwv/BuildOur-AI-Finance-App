@@ -1,9 +1,11 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { ApiError, requireUser, withApiErrors } from "@/lib/api-auth";
 import { canAccessCompany, getAccessibleCompanyIds } from "@/lib/access";
-import { calculateBreakup } from "@/lib/calc";
+import { calculateBreakup, calculateCostBreakup } from "@/lib/calc";
 import { saveUpload } from "@/lib/storage";
+import { syncExpense } from "@/lib/sheet";
+import { parseLedger } from "@/lib/ventures";
 
 export const GET = withApiErrors(async (req: NextRequest) => {
   const user = await requireUser();
@@ -13,6 +15,9 @@ export const GET = withApiErrors(async (req: NextRequest) => {
   const companyId = searchParams.get("companyId");
   const from = searchParams.get("from");
   const to = searchParams.get("to");
+  const venture = parseLedger(searchParams.get("venture"));
+  const directionParam = searchParams.get("direction");
+  const direction = directionParam === "IN" || directionParam === "OUT" ? directionParam : null;
 
   if (companyId && !(await canAccessCompany(user, companyId))) {
     throw new ApiError(403, "No access to this company");
@@ -35,7 +40,7 @@ export const GET = withApiErrors(async (req: NextRequest) => {
       : {};
 
   const expenses = await prisma.expense.findMany({
-    where: { ...companyFilter, ...dateFilter },
+    where: { ...companyFilter, ...dateFilter, ...(venture ? { venture } : {}), ...(direction ? { direction } : {}) },
     orderBy: { date: "desc" },
     include: {
       company: { select: { name: true } },
@@ -54,12 +59,15 @@ export const POST = withApiErrors(async (req: NextRequest) => {
 
   const companyId = String(form.get("companyId") ?? "");
   const categoryId = String(form.get("categoryId") ?? "");
-  const gatewayId = form.get("gatewayId") ? String(form.get("gatewayId")) : null;
+  // Money out is a cost: no gateway takes a cut of it.
+  const direction = String(form.get("direction") ?? "IN") === "OUT" ? "OUT" : "IN";
+  const gatewayId = direction === "IN" && form.get("gatewayId") ? String(form.get("gatewayId")) : null;
   const description = form.get("description") ? String(form.get("description")) : null;
   const dateStr = String(form.get("date") ?? "");
   const grossAmount = Number(form.get("grossAmount") ?? 0);
   const gstPercent = Number(form.get("gstPercent") ?? 0);
   const screenshot = form.get("screenshot");
+  const venture = parseLedger(form.get("venture"));
 
   if (!companyId || !categoryId || !dateStr || !grossAmount) {
     return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
@@ -78,7 +86,10 @@ export const POST = withApiErrors(async (req: NextRequest) => {
     gatewayChargePercent = gateway.chargePercent;
   }
 
-  const breakup = calculateBreakup({ grossAmount, gatewayChargePercent, gstPercent });
+  const breakup =
+    direction === "OUT"
+      ? { gatewayChargeAmount: 0, ...calculateCostBreakup({ grossAmount, gstPercent }) }
+      : calculateBreakup({ grossAmount, gatewayChargePercent, gstPercent });
 
   let screenshotPath: string | null = null;
   if (screenshot instanceof File && screenshot.size > 0) {
@@ -99,9 +110,15 @@ export const POST = withApiErrors(async (req: NextRequest) => {
       gstAmount: breakup.gstAmount,
       netAmount: breakup.netAmount,
       screenshotPath,
+      venture,
+      direction,
       createdById: user.id,
     },
+    include: { category: { select: { name: true } } },
   });
+
+  // Keeps the venture's workbook (and so its P&L) current without re-keying.
+  if (venture) after(() => syncExpense(expense.id));
 
   return NextResponse.json({ expense }, { status: 201 });
 });

@@ -12,7 +12,15 @@ const ALLOWED_SIGNATURE_TYPES = ["image/png", "image/jpeg", "image/webp"];
 export const GET = withApiErrors(async () => {
   await requireUser();
   const settings = await prisma.invoiceSettings.findUnique({ where: { id: SETTINGS_ID } });
-  return NextResponse.json({ settings: settings ?? { terms: null, notes: null, signatureDataUri: null } });
+  return NextResponse.json({
+    settings: settings ?? {
+      terms: null,
+      notes: null,
+      signatureDataUri: null,
+      razorpayFeePercent: 2,
+      razorpayFeeGstPercent: 18,
+    },
+  });
 });
 
 export const PATCH = withApiErrors(async (req: NextRequest) => {
@@ -25,6 +33,21 @@ export const PATCH = withApiErrors(async (req: NextRequest) => {
   const notes = form.get("notes") ? String(form.get("notes")) : null;
   const signature = form.get("signature");
   const removeSignature = form.get("removeSignature") === "true";
+
+  // Absent means unchanged, so older forms can't reset the rates by accident.
+  const readPercent = (name: string, label: string): number | undefined => {
+    const raw = form.get(name);
+    if (raw === null || String(raw).trim() === "") return undefined;
+    const n = Number(raw);
+    if (!Number.isFinite(n) || n < 0 || n > 100) throw new ApiError(400, `${label} must be between 0 and 100`);
+    return n;
+  };
+  const razorpayFeePercent = readPercent("razorpayFeePercent", "Razorpay commission");
+  const razorpayFeeGstPercent = readPercent("razorpayFeeGstPercent", "GST on the Razorpay commission");
+  const rates = {
+    ...(razorpayFeePercent !== undefined ? { razorpayFeePercent } : {}),
+    ...(razorpayFeeGstPercent !== undefined ? { razorpayFeeGstPercent } : {}),
+  };
 
   // Left undefined so an ordinary save of terms/notes doesn't disturb the
   // stored signature; only an explicit upload or removal touches it.
@@ -45,8 +68,8 @@ export const PATCH = withApiErrors(async (req: NextRequest) => {
 
   const settings = await prisma.invoiceSettings.upsert({
     where: { id: SETTINGS_ID },
-    create: { id: SETTINGS_ID, terms, notes, signatureDataUri: signatureDataUri ?? null },
-    update: { terms, notes, ...(signatureDataUri !== undefined ? { signatureDataUri } : {}) },
+    create: { id: SETTINGS_ID, terms, notes, signatureDataUri: signatureDataUri ?? null, ...rates },
+    update: { terms, notes, ...rates, ...(signatureDataUri !== undefined ? { signatureDataUri } : {}) },
   });
 
   return NextResponse.json({ settings });

@@ -19,7 +19,7 @@ export default async function NewExpensePage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Add expense" description="Log a payment and see its gateway + GST breakup instantly" />
+      <PageHeader eyebrow="Money" title="Add an entry" description="Money in (received via a gateway) or money out (a cost) — tagged to the venture whose sheet it belongs in" />
       <ExpenseForm companies={companies} />
     </div>
   );

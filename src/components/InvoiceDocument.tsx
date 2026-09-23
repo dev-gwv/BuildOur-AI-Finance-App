@@ -1,5 +1,6 @@
 import { CheckCircle2 } from "lucide-react";
 import { calculateInvoiceBreakup } from "@/lib/invoiceCalc";
+import { isInterStateSupply } from "@/lib/gstState";
 import { amountInWords } from "@/lib/numberToWords";
 import { formatCurrency, formatDate } from "@/lib/format";
 import { BRANDS, type BrandKey } from "@/lib/brands";
@@ -22,6 +23,8 @@ export interface InvoiceDocumentData {
   notes: string | null;
   terms: string | null;
   doId?: string | null;
+  /** Set when edited after being emailed; the document then says it's a revision. */
+  revisedAt?: string | Date | null;
 }
 
 export interface PaymentLine {
@@ -46,10 +49,15 @@ export function InvoiceDocument({
   const brand = BRANDS[invoice.brand ?? "GRATEFUL"];
   const signature = signatureDataUri || AUTHORIZED_SIGNATURE_DATA_URI;
 
+  // GSTIN first 2 digits decide the tax mode: same state (07 Delhi) -> CGST+SGST,
+  // other state -> IGST. No GSTIN (B2C) stays intra-state. Mulberry is unregistered.
+  const isInterState = brand.gstRegistered ? isInterStateSupply(invoice.customerGstin) : false;
+
   const breakup = calculateInvoiceBreakup({
     grossAmount: invoice.grossAmount,
     gstPercent: brand.gstRegistered ? invoice.gstPercent : 0,
     qty: invoice.qty,
+    isInterState,
   });
 
   const paidAmount = payments.reduce((sum, p) => sum + p.amount, 0);
@@ -72,6 +80,11 @@ export function InvoiceDocument({
             <div>
               <p className={`text-xs font-semibold uppercase tracking-[0.2em] ${brand.accentTextClass}`}>
                 {brand.documentTitle}
+                {invoice.revisedAt && (
+                  <span className="ml-2 rounded bg-white/15 px-1.5 py-0.5 tracking-normal normal-case">
+                    Revised {formatDate(invoice.revisedAt)}
+                  </span>
+                )}
               </p>
               <h1 className="mt-1 text-2xl font-bold">{brand.name}</h1>
               {brand.addressLines.map((line) => (
@@ -142,7 +155,10 @@ export function InvoiceDocument({
                 {brand.gstRegistered && <th className="py-3 pr-2 font-semibold">HSN/SAC</th>}
                 <th className="py-3 pr-2 text-right font-semibold">Qty</th>
                 <th className="py-3 pr-2 text-right font-semibold">Rate</th>
-                {brand.gstRegistered && (
+                {brand.gstRegistered && breakup.taxMode === "IGST" && (
+                  <th className="py-3 pr-2 text-right font-semibold">IGST</th>
+                )}
+                {brand.gstRegistered && breakup.taxMode !== "IGST" && (
                   <>
                     <th className="py-3 pr-2 text-right font-semibold">CGST</th>
                     <th className="py-3 pr-2 text-right font-semibold">SGST</th>
@@ -160,7 +176,14 @@ export function InvoiceDocument({
                 )}
                 <td className="py-4 pr-2 align-top text-right text-neutral-600">{invoice.qty.toFixed(2)}</td>
                 <td className="py-4 pr-2 align-top text-right text-neutral-600">{formatCurrency(breakup.rate)}</td>
-                {brand.gstRegistered && (
+                {brand.gstRegistered && breakup.taxMode === "IGST" && (
+                  <td className="py-4 pr-2 align-top text-right text-neutral-600">
+                    {formatCurrency(breakup.igstAmount)}
+                    <br />
+                    <span className="text-xs text-neutral-400">{breakup.igstPercent}%</span>
+                  </td>
+                )}
+                {brand.gstRegistered && breakup.taxMode !== "IGST" && (
                   <>
                     <td className="py-4 pr-2 align-top text-right text-neutral-600">
                       {formatCurrency(breakup.cgstAmount)}
@@ -190,14 +213,23 @@ export function InvoiceDocument({
             </div>
             {brand.gstRegistered && (
               <>
-                <div className="flex justify-between text-neutral-600">
-                  <span>CGST ({breakup.cgstPercent}%)</span>
-                  <span className="tabular-nums">{formatCurrency(breakup.cgstAmount)}</span>
-                </div>
-                <div className="flex justify-between text-neutral-600">
-                  <span>SGST ({breakup.sgstPercent}%)</span>
-                  <span className="tabular-nums">{formatCurrency(breakup.sgstAmount)}</span>
-                </div>
+                {breakup.taxMode === "IGST" ? (
+                  <div className="flex justify-between text-neutral-600">
+                    <span>IGST ({breakup.igstPercent}%)</span>
+                    <span className="tabular-nums">{formatCurrency(breakup.igstAmount)}</span>
+                  </div>
+                ) : (
+                  <>
+                    <div className="flex justify-between text-neutral-600">
+                      <span>CGST ({breakup.cgstPercent}%)</span>
+                      <span className="tabular-nums">{formatCurrency(breakup.cgstAmount)}</span>
+                    </div>
+                    <div className="flex justify-between text-neutral-600">
+                      <span>SGST ({breakup.sgstPercent}%)</span>
+                      <span className="tabular-nums">{formatCurrency(breakup.sgstAmount)}</span>
+                    </div>
+                  </>
+                )}
                 {breakup.adjustment !== 0 && (
                   <div className="flex justify-between text-neutral-600">
                     <span>Adjustment</span>

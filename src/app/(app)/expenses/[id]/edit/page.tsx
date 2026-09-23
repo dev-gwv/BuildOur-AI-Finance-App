@@ -44,6 +44,8 @@ export default async function EditExpensePage({
           grossAmount: expense.grossAmount,
           gstPercent: expense.gstPercent,
           screenshotPath: expense.screenshotPath,
+          venture: expense.venture,
+          direction: expense.direction,
         }}
       />
     </div>

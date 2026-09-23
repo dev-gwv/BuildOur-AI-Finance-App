@@ -4,15 +4,18 @@ import { useState, type ChangeEvent, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { AlertCircle, CheckCircle2, FileCheck2, Receipt, SlidersHorizontal, UploadCloud } from "lucide-react";
 import { calculateInvoiceBreakup } from "@/lib/invoiceCalc";
+import { isInterStateSupply, placeOfSupplyFromGstin, stateCodeFromGstin, stateNameFromCode } from "@/lib/gstState";
 import { amountInWords } from "@/lib/numberToWords";
 import { formatCurrency } from "@/lib/format";
 import { BRANDS } from "@/lib/brands";
+import type { VentureKey } from "@/lib/ventures";
+import { readImageText } from "@/lib/clientUpload";
 import { Button } from "@/components/ui/Button";
 import { Card, CardBody, CardHeader } from "@/components/ui/Card";
 import { useToast } from "@/components/ui/Toast";
 
 const inputClass =
-  "mt-1 w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 dark:border-neutral-700 dark:bg-neutral-950";
+  "mt-1 w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 shadow-xs text-sm outline-none focus:border-brand-500 focus:ring-4 focus:ring-brand-500/15 dark:border-white/10 dark:bg-neutral-950/60";
 const labelClass = "block text-sm font-medium text-neutral-700 dark:text-neutral-300";
 
 export type CatalogEntry = { id: string; amount: number; itemDescription: string; hsnSac: string };
@@ -22,11 +25,18 @@ export function InvoiceForm({
   catalog,
   defaultTerms,
   defaultNotes,
+  venture,
+  successRedirectBase = "/invoices",
+  cancelHref = "/invoices",
 }: {
   suggestedNumber: string;
   catalog: CatalogEntry[];
   defaultTerms: string;
   defaultNotes: string;
+  /** IPC / IWC venture under GRATEFUL. Same seller header, separate series + sheet. */
+  venture?: VentureKey | null;
+  successRedirectBase?: string;
+  cancelHref?: string;
 }) {
   const router = useRouter();
   const toast = useToast();
@@ -34,6 +44,7 @@ export function InvoiceForm({
 
   const [doFile, setDoFile] = useState<File | null>(null);
   const [parsing, setParsing] = useState(false);
+  const [ocrRunning, setOcrRunning] = useState(false);
   const [pending, setPending] = useState(false);
   const [doId, setDoId] = useState("");
   const [doDate, setDoDate] = useState("");
@@ -59,11 +70,26 @@ export function InvoiceForm({
   const [notes, setNotes] = useState(defaultNotes);
   const [terms, setTerms] = useState(defaultTerms);
 
+  // GSTIN first 2 digits -> buyer state. 07 Delhi = CGST+SGST, else IGST.
+  const buyerStateCode = stateCodeFromGstin(customerGstin);
+  const buyerStateName = stateNameFromCode(buyerStateCode);
+  const interState = isInterStateSupply(customerGstin);
+
   const breakup = calculateInvoiceBreakup({
     grossAmount: Number(grossAmount) || 0,
     gstPercent: Number(gstPercent) || 0,
     qty: Number(qty) || 1,
+    isInterState: interState,
   });
+
+  function applyGstin(gstin: string) {
+    const clean = gstin.trim().toUpperCase();
+    setCustomerGstin(clean);
+    const pos = placeOfSupplyFromGstin(clean);
+    if (pos) setPlaceOfSupply(pos);
+    // Clearing the GSTIN makes it B2C again, which is billed as intra-state.
+    else if (!clean) setPlaceOfSupply(BRANDS.GRATEFUL.placeOfSupply ?? "Delhi (07)");
+  }
 
   // A DO has been read (or details were entered by hand) — worth showing the summary.
   const parsed = Boolean(customerName || grossAmount);
@@ -77,15 +103,23 @@ export function InvoiceForm({
     setParsing(true);
     try {
       const body = new FormData();
-      body.append("file", file);
+      if (file.type.startsWith("image/")) {
+        // A photo or screenshot has no text layer: read it here with OCR and
+        // send only the text, so the parsing rules are the same as for a PDF.
+        setOcrRunning(true);
+        body.append("text", await readImageText(file));
+      } else {
+        body.append("file", file);
+      }
       const res = await fetch("/api/invoices/parse", { method: "POST", body });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         toast.error(err.error ?? "Couldn't read that PDF — fill in the details manually");
         return;
       }
-      const { parsed } = await res.json();
+      const { parsed, ocr } = await res.json();
       setDocType(parsed.docType);
+      if (ocr) toast.info("Read from an image with OCR — double-check the name, date and amount");
 
       if (parsed.docType === "GST") {
         // A GST certificate carries who the customer is, but never an amount —
@@ -93,7 +127,8 @@ export function InvoiceForm({
         const name = parsed.tradeName || parsed.legalName;
         if (name) setCustomerName(name);
         if (parsed.address) setCustomerAddress(parsed.address);
-        if (parsed.gstin) setCustomerGstin(parsed.gstin);
+        // The GSTIN's state code also decides place of supply and CGST+SGST vs IGST.
+        if (parsed.gstin) applyGstin(parsed.gstin);
         setAmountFromCatalog(false);
         toast.success(
           parsed.gstin
@@ -130,9 +165,10 @@ export function InvoiceForm({
         toast.success("Extracted the DO — review the details below and add the item");
       }
     } catch {
-      toast.error("Network error while reading the PDF");
+      toast.error("Couldn't read that file — fill in the details below by hand");
     } finally {
       setParsing(false);
+      setOcrRunning(false);
     }
   }
 
@@ -157,8 +193,11 @@ export function InvoiceForm({
       body.append("notes", notes);
       body.append("terms", terms);
       body.append("doId", doId);
+      // Tells the server whether this was a Bajaj-financed sale (paid in full on disbursement).
+      if (docType) body.append("source", docType);
       body.append("doDate", doDate);
       if (doFile) body.append("doFile", doFile);
+      if (venture) body.append("venture", venture);
 
       const res = await fetch("/api/invoices", { method: "POST", body });
       if (!res.ok) {
@@ -168,7 +207,7 @@ export function InvoiceForm({
       }
       const { invoice } = await res.json();
       toast.success("Invoice generated");
-      router.push(`/invoices/${invoice.id}`);
+      router.push(`${successRedirectBase}/${invoice.id}`);
     } catch {
       toast.error("Network error — please try again");
     } finally {
@@ -186,7 +225,7 @@ export function InvoiceForm({
               className={`flex cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed px-6 py-8 text-center transition-colors ${
                 doFile
                   ? "border-emerald-300 bg-emerald-50/50 dark:border-emerald-800 dark:bg-emerald-950/20"
-                  : "border-neutral-300 hover:border-indigo-400 hover:bg-indigo-50/40 dark:border-neutral-700 dark:hover:bg-indigo-950/20"
+                  : "border-neutral-200 hover:border-brand-400 hover:bg-brand-50/40 dark:border-white/10 dark:hover:bg-brand-950/20"
               }`}
             >
               {doFile ? (
@@ -195,20 +234,22 @@ export function InvoiceForm({
                 <UploadCloud className="h-7 w-7 text-neutral-400" />
               )}
               <span className="text-sm font-semibold text-neutral-800 dark:text-neutral-100">
-                {doFile ? doFile.name : "Upload the delivery order or GST certificate (PDF)"}
+                {doFile ? doFile.name : "Upload the delivery order or GST certificate"}
               </span>
               <span className="text-xs text-neutral-500 dark:text-neutral-400">
                 {parsing
-                  ? "Reading the document…"
+                  ? ocrRunning
+                    ? "Reading the image with OCR — this takes a few seconds…"
+                    : "Reading the document…"
                   : doFile
                     ? docType === "GST"
                       ? "Read as a GST certificate · click to choose a different file"
                       : docType === "DO"
                         ? "Read as a Bajaj delivery order · click to choose a different file"
                         : "Click to choose a different file"
-                    : "Bajaj DO or the customer's GST certificate — details fill in automatically"}
+                    : "Bajaj DO or GST certificate — PDF, photo or screenshot. Details fill in automatically"}
               </span>
-              <input type="file" accept="application/pdf" className="hidden" onChange={onFileChange} />
+              <input type="file" accept="application/pdf,image/*" className="hidden" onChange={onFileChange} />
             </label>
           </CardBody>
         </Card>
@@ -334,7 +375,7 @@ export function InvoiceForm({
         )}
 
         {/* Everything else stays out of the way until it's actually needed */}
-        <details className="group rounded-xl border border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-900">
+        <details className="group rounded-2xl border border-neutral-200/80 bg-white shadow-card dark:border-white/[0.07] dark:bg-neutral-900/70">
           <summary className="flex cursor-pointer items-center gap-2 px-5 py-4 text-sm font-semibold text-neutral-700 marker:content-none dark:text-neutral-300">
             <SlidersHorizontal className="h-4 w-4 text-neutral-400" />
             Edit all details
@@ -343,7 +384,7 @@ export function InvoiceForm({
             </span>
           </summary>
 
-          <div className="grid gap-4 border-t border-neutral-100 px-5 py-4 dark:border-neutral-800">
+          <div className="grid gap-4 border-t border-neutral-100 px-5 py-4 dark:border-white/[0.06]">
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className={labelClass}>Invoice number</label>
@@ -413,7 +454,7 @@ export function InvoiceForm({
               <label className={labelClass}>Customer GSTIN (optional)</label>
               <input
                 value={customerGstin}
-                onChange={(e) => setCustomerGstin(e.target.value.toUpperCase())}
+                onChange={(e) => applyGstin(e.target.value)}
                 placeholder="Filled in automatically from a GST certificate"
                 className={inputClass}
               />
@@ -484,7 +525,7 @@ export function InvoiceForm({
           <Button type="submit" loading={pending} disabled={!ready}>
             Generate invoice
           </Button>
-          <Button type="button" variant="secondary" onClick={() => router.push("/invoices")}>
+          <Button type="button" variant="secondary" onClick={() => router.push(cancelHref)}>
             Cancel
           </Button>
           {!ready && (
@@ -496,29 +537,51 @@ export function InvoiceForm({
       </div>
 
       <div className="lg:sticky lg:top-6 lg:self-start">
-        <Card className="border-indigo-100 dark:border-indigo-950">
+        <Card className="border-brand-100 dark:border-brand-950">
           <CardHeader className="flex items-center gap-2">
-            <Receipt className="h-4 w-4 text-indigo-500" />
+            <Receipt className="h-4 w-4 text-brand-500" />
             <h3 className="text-sm font-semibold text-neutral-700 dark:text-neutral-300">Breakup preview</h3>
           </CardHeader>
           <CardBody>
+            <p
+              className={`mb-3 rounded-lg px-2.5 py-1.5 text-xs font-medium ${
+                interState
+                  ? "bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300"
+                  : "bg-neutral-100 text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300"
+              }`}
+            >
+              {buyerStateCode
+                ? `${buyerStateName ?? "Unknown state"} (${buyerStateCode}) · ${
+                    interState ? "Inter-state · IGST" : "Intra-state · CGST + SGST"
+                  }`
+                : "No GSTIN · Intra-state · CGST + SGST"}
+            </p>
             <dl className="grid grid-cols-2 gap-y-2 text-sm text-neutral-600 dark:text-neutral-400">
               <dt>Sub total</dt>
               <dd className="text-right tabular-nums">{formatCurrency(breakup.subTotal)}</dd>
-              <dt>CGST ({breakup.cgstPercent}%)</dt>
-              <dd className="text-right tabular-nums">{formatCurrency(breakup.cgstAmount)}</dd>
-              <dt>SGST ({breakup.sgstPercent}%)</dt>
-              <dd className="text-right tabular-nums">{formatCurrency(breakup.sgstAmount)}</dd>
+              {breakup.taxMode === "IGST" ? (
+                <>
+                  <dt>IGST ({breakup.igstPercent}%)</dt>
+                  <dd className="text-right tabular-nums">{formatCurrency(breakup.igstAmount)}</dd>
+                </>
+              ) : (
+                <>
+                  <dt>CGST ({breakup.cgstPercent}%)</dt>
+                  <dd className="text-right tabular-nums">{formatCurrency(breakup.cgstAmount)}</dd>
+                  <dt>SGST ({breakup.sgstPercent}%)</dt>
+                  <dd className="text-right tabular-nums">{formatCurrency(breakup.sgstAmount)}</dd>
+                </>
+              )}
               {breakup.adjustment !== 0 && (
                 <>
                   <dt>Adjustment</dt>
                   <dd className="text-right tabular-nums">{formatCurrency(breakup.adjustment)}</dd>
                 </>
               )}
-              <dt className="border-t border-neutral-100 pt-2 font-semibold text-neutral-900 dark:border-neutral-800 dark:text-neutral-100">
+              <dt className="border-t border-neutral-100 pt-2 font-semibold text-neutral-900 dark:border-white/[0.06] dark:text-neutral-100">
                 Total
               </dt>
-              <dd className="border-t border-neutral-100 pt-2 text-right tabular-nums font-semibold text-emerald-600 dark:border-neutral-800 dark:text-emerald-400">
+              <dd className="border-t border-neutral-100 pt-2 text-right tabular-nums font-semibold text-emerald-600 dark:border-white/[0.06] dark:text-emerald-400">
                 {formatCurrency(breakup.total)}
               </dd>
             </dl>

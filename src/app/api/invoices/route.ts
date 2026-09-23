@@ -1,7 +1,9 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { ApiError, requireUser, withApiErrors } from "@/lib/api-auth";
 import { saveUpload } from "@/lib/storage";
+import { syncPayment } from "@/lib/sheet";
+import { parseVenture } from "@/lib/ventures";
 
 export const GET = withApiErrors(async () => {
   await requireUser();
@@ -17,6 +19,8 @@ export const POST = withApiErrors(async (req: NextRequest) => {
   const form = await req.formData();
 
   const brand = String(form.get("brand") ?? "GRATEFUL") === "MULBERRY" ? "MULBERRY" : "GRATEFUL";
+  // IPC / IWC are ventures under Grateful's GSTIN — never under Mulberry.
+  const venture = brand === "GRATEFUL" ? parseVenture(form.get("venture")) : null;
   const invoiceNumber = String(form.get("invoiceNumber") ?? "").trim();
   const invoiceDate = String(form.get("invoiceDate") ?? "");
   const dueDate = String(form.get("dueDate") ?? invoiceDate);
@@ -55,22 +59,30 @@ export const POST = withApiErrors(async (req: NextRequest) => {
     doFilePath = await saveUpload(doFile);
   }
 
-  // A Bajaj-financed sale is disbursed in full, so the invoice is settled the
-  // moment it's raised. Mulberry bookings are paid in instalments, so only the
-  // advance actually received is recorded and the rest stays outstanding.
-  const initialPayment =
-    brand === "GRATEFUL" ? grossAmount : advancePaid > 0 ? Math.min(advancePaid, grossAmount) : 0;
+  // A Bajaj-financed sale (raised from its DO) is disbursed in full, so the
+  // invoice is settled the moment it's raised. One raised from a GST
+  // certificate is a direct B2B sale paid by UPI/bank like any other, so it
+  // starts unpaid and its payments are recorded as they arrive. Mulberry
+  // bookings are paid in instalments; only the advance received is recorded.
+  const source = form.get("source") ? String(form.get("source")) : null;
+  const bajajFinanced = brand === "GRATEFUL" && (source === "DO" || Boolean(doId));
+  const initialPayment = bajajFinanced
+    ? grossAmount
+    : advancePaid > 0
+      ? Math.min(advancePaid, grossAmount)
+      : 0;
 
   const invoice = await prisma.invoice.create({
     data: {
       brand,
+      venture,
       ...(initialPayment > 0
         ? {
             payments: {
               create: {
                 amount: initialPayment,
                 paidOn: new Date(invoiceDate),
-                method: brand === "GRATEFUL" ? "Bajaj Finance disbursement" : "Advance",
+                method: bajajFinanced ? "Bajaj Finance disbursement" : "Advance",
               },
             },
           }
@@ -95,7 +107,14 @@ export const POST = withApiErrors(async (req: NextRequest) => {
       doFilePath,
       createdById: user.id,
     },
+    include: { payments: true },
   });
+
+  // The money received on raising the invoice belongs in the venture's (or
+  // Mulberry's) sheet like any later instalment. Legacy Grateful invoices have
+  // no workbook. Sent after the response so Apps Script's latency isn't the user's.
+  const [payment] = invoice.payments;
+  if (payment) after(() => syncPayment(payment.id));
 
   return NextResponse.json({ invoice }, { status: 201 });
 });

@@ -68,7 +68,7 @@ export default async function UsersSettingsPage() {
                 )}
               </div>
               {u.role === "MEMBER" && (
-                <div className="mt-3 border-t border-neutral-100 pt-3 dark:border-neutral-800">
+                <div className="mt-3 border-t border-neutral-100 pt-3 dark:border-white/[0.06]">
                   <p className="mb-1.5 flex items-center gap-1.5 text-xs text-neutral-500 dark:text-neutral-400">
                     <UsersIcon className="h-3.5 w-3.5" />
                     Company access

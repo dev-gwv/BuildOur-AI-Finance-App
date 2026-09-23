@@ -31,6 +31,18 @@ export async function extractPdfTextInBrowser(file: File): Promise<string> {
   return text.replace(/\s+/g, " ");
 }
 
+/** Plain OCR of a photographed document (a DO or GST certificate), in the browser. */
+export async function readImageText(file: File): Promise<string> {
+  const { createWorker } = await import("tesseract.js");
+  const worker = await createWorker("eng");
+  try {
+    const { data } = await worker.recognize(file);
+    return data.text;
+  } finally {
+    await worker.terminate();
+  }
+}
+
 export interface ScreenshotText {
   text: string;
   /**

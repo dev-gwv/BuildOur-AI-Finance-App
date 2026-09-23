@@ -19,41 +19,90 @@ export function totalsByPlatform(
   return [...totals.entries()].sort(([, a], [, b]) => b - a);
 }
 
+export type TaxMode = "CGST_SGST" | "IGST" | "NONE";
+
 export interface InvoiceBreakupInput {
   /** GST-inclusive total for the line item (what the customer's loan actually covers). */
   grossAmount: number;
   gstPercent: number;
   qty: number;
+  /**
+   * True for inter-state supply (customer state != seller home state 07 Delhi).
+   * Derived from the first 2 digits of the customer's GSTIN — see src/lib/gstState.ts.
+   */
+  isInterState?: boolean;
 }
 
 export interface InvoiceBreakup {
   rate: number;
   subTotal: number;
+  taxMode: TaxMode;
   cgstPercent: number;
   cgstAmount: number;
   sgstPercent: number;
   sgstAmount: number;
+  igstPercent: number;
+  igstAmount: number;
   adjustment: number;
   total: number;
 }
 
-// Back-calculates subtotal + CGST/SGST from a GST-inclusive total, splitting the
-// rate evenly across CGST/SGST (intra-state supply, matching the seller's own state).
-export function calculateInvoiceBreakup({ grossAmount, gstPercent, qty }: InvoiceBreakupInput): InvoiceBreakup {
-  const halfGst = gstPercent / 2;
+// Back-calculates subtotal + tax from a GST-inclusive total.
+// Intra-state (default, B2C or same-state GSTIN): splits evenly across CGST/SGST.
+// Inter-state (customer GSTIN state != 07 Delhi): single IGST line at full rate.
+export function calculateInvoiceBreakup({ grossAmount, gstPercent, qty, isInterState }: InvoiceBreakupInput): InvoiceBreakup {
   const subTotal = round2(grossAmount / (1 + gstPercent / 100));
+  const rate = qty > 0 ? round2(subTotal / qty) : subTotal;
+
+  if (gstPercent <= 0) {
+    return {
+      rate,
+      subTotal,
+      taxMode: "NONE",
+      cgstPercent: 0,
+      cgstAmount: 0,
+      sgstPercent: 0,
+      sgstAmount: 0,
+      igstPercent: 0,
+      igstAmount: 0,
+      adjustment: 0,
+      total: grossAmount,
+    };
+  }
+
+  if (isInterState) {
+    const igstAmount = round2(subTotal * (gstPercent / 100));
+    const adjustment = round2(grossAmount - (subTotal + igstAmount));
+    return {
+      rate,
+      subTotal,
+      taxMode: "IGST",
+      cgstPercent: 0,
+      cgstAmount: 0,
+      sgstPercent: 0,
+      sgstAmount: 0,
+      igstPercent: gstPercent,
+      igstAmount,
+      adjustment,
+      total: grossAmount,
+    };
+  }
+
+  const halfGst = gstPercent / 2;
   const cgstAmount = round2(subTotal * (halfGst / 100));
   const sgstAmount = cgstAmount;
   const adjustment = round2(grossAmount - (subTotal + cgstAmount + sgstAmount));
-  const rate = qty > 0 ? round2(subTotal / qty) : subTotal;
 
   return {
     rate,
     subTotal,
+    taxMode: "CGST_SGST",
     cgstPercent: halfGst,
     cgstAmount,
     sgstPercent: halfGst,
     sgstAmount,
+    igstPercent: 0,
+    igstAmount: 0,
     adjustment,
     total: grossAmount,
   };

@@ -8,7 +8,7 @@ import { useToast } from "@/components/ui/Toast";
 import { formatDate } from "@/lib/format";
 
 const fieldClass =
-  "mt-1 w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 dark:border-neutral-700 dark:bg-neutral-950";
+  "mt-1 w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 shadow-xs text-sm outline-none focus:border-brand-500 focus:ring-4 focus:ring-brand-500/15 dark:border-white/10 dark:bg-neutral-950/60";
 const labelClass = "block text-xs font-medium text-neutral-600 dark:text-neutral-400";
 
 export function SendInvoiceEmail({
@@ -96,10 +96,10 @@ export function SendInvoiceEmail({
 
       {open && (
         <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 p-4 py-10 print:hidden">
-          <div className="w-full max-w-2xl rounded-xl border border-neutral-200 bg-white shadow-xl dark:border-neutral-800 dark:bg-neutral-900">
-            <div className="flex items-center justify-between border-b border-neutral-100 px-5 py-4 dark:border-neutral-800">
+          <div className="w-full max-w-2xl rounded-xl border border-neutral-200 bg-white shadow-pop dark:border-white/10 dark:bg-neutral-900">
+            <div className="flex items-center justify-between border-b border-neutral-100 px-5 py-4 dark:border-white/[0.06]">
               <h2 className="flex items-center gap-2 text-sm font-semibold text-neutral-800 dark:text-neutral-100">
-                <Mail className="h-4 w-4 text-indigo-500" />
+                <Mail className="h-4 w-4 text-brand-500" />
                 Send invoice by email
               </h2>
               <button
@@ -150,7 +150,7 @@ export function SendInvoiceEmail({
               )}
             </div>
 
-            <div className="flex items-center justify-end gap-2 border-t border-neutral-100 px-5 py-4 dark:border-neutral-800">
+            <div className="flex items-center justify-end gap-2 border-t border-neutral-100 px-5 py-4 dark:border-white/[0.06]">
               <Button type="button" variant="secondary" onClick={() => setOpen(false)}>
                 Cancel
               </Button>

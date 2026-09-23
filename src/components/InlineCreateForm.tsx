@@ -75,7 +75,7 @@ export function InlineCreateForm({
           placeholder={field.placeholder}
           defaultValue={field.defaultValue}
           required
-          className="rounded-lg border border-neutral-300 px-3 py-1.5 text-sm outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 dark:border-neutral-700 dark:bg-neutral-950"
+          className="rounded-lg border border-neutral-200 px-3 py-1.5 text-sm outline-none focus:border-brand-500 focus:ring-4 focus:ring-brand-500/15 dark:border-white/10 dark:bg-neutral-950/60"
         />
       ))}
       <Button type="submit" size="sm" loading={pending}>

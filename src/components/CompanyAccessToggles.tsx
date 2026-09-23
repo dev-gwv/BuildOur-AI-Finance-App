@@ -52,7 +52,7 @@ export function CompanyAccessToggles({
             className={`rounded-md border px-2 py-1 text-xs disabled:opacity-50 ${
               assigned
                 ? "border-emerald-600 bg-emerald-50 text-emerald-700 dark:border-emerald-500 dark:bg-emerald-950 dark:text-emerald-400"
-                : "border-neutral-300 text-neutral-500 dark:border-neutral-700 dark:text-neutral-400"
+                : "border-neutral-200 text-neutral-500 dark:border-white/10 dark:text-neutral-400"
             }`}
           >
             {c.name}
