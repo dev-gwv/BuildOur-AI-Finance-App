@@ -1,19 +1,17 @@
 "use client";
 
-import { todayISO } from "@/lib/dates";
-import { useState, type ChangeEvent, type FormEvent } from "react";
+import { useRef, useState, type ChangeEvent, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
-import { AlertCircle, CheckCircle2, FileCheck2, SlidersHorizontal, UploadCloud } from "lucide-react";
-import { formatCurrency } from "@/lib/format";
+import { AlertCircle, CheckCircle2, FileCheck2, ListOrdered, SlidersHorizontal, UploadCloud, UserRound } from "lucide-react";
+import { todayISO } from "@/lib/dates";
+import { formatCurrency, formatDate } from "@/lib/format";
 import { parseQuotationText } from "@/lib/parseQuotation";
-import { extractPdfTextInBrowser, uploadDirectToBlob } from "@/lib/clientUpload";
+import { extractPdfTextInBrowser, readImageText, uploadDirectToBlob } from "@/lib/clientUpload";
 import { Button } from "@/components/ui/Button";
-import { Card, CardBody, CardHeader } from "@/components/ui/Card";
+import { Card, CardBody, CardHeader, CardTitle } from "@/components/ui/Card";
 import { useToast } from "@/components/ui/Toast";
-
-const inputClass =
-  "mt-1 w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 shadow-xs text-sm outline-none focus:border-rose-500 focus:ring-1 focus:ring-rose-500 dark:border-white/10 dark:bg-neutral-950/60";
-const labelClass = "block text-sm font-medium text-neutral-700 dark:text-neutral-300";
+import { FieldError, focusFirstError, hintClass, inputClass, labelClass, useFieldErrors, type FieldErrors } from "@/components/invoices/LineFields";
+import { LineItemsEditor, lineErrors, newLine, toLineInputs, type EditorLine } from "@/components/invoices/LineItemsEditor";
 
 export function MulberryInvoiceForm({
   suggestedNumber,
@@ -29,7 +27,10 @@ export function MulberryInvoiceForm({
 }) {
   const router = useRouter();
   const toast = useToast();
+  const formRef = useRef<HTMLFormElement>(null);
   const today = todayISO();
+  const { errors, setErrors, clear, props } = useFieldErrors();
+  const [attempted, setAttempted] = useState(false);
 
   const [file, setFile] = useState<File | null>(null);
   const [parsing, setParsing] = useState(false);
@@ -43,17 +44,31 @@ export function MulberryInvoiceForm({
   const [customerName, setCustomerName] = useState("");
   const [customerEmail, setCustomerEmail] = useState("");
   const [customerAddress, setCustomerAddress] = useState("");
-  const [itemDescription, setItemDescription] = useState("");
-  const [qty, setQty] = useState("1");
-  const [grossAmount, setGrossAmount] = useState("");
+  const [lines, setLines] = useState<EditorLine[]>(() => [newLine({ gstPercent: "0" })]);
   const [advancePaid, setAdvancePaid] = useState("");
   const [notes, setNotes] = useState(defaultNotes);
   const [terms, setTerms] = useState(defaultTerms);
 
-  const total = Number(grossAmount) || 0;
+  const lineInputs = toLineInputs(lines, false);
+  const total = Math.round(lineInputs.reduce((s, l) => s + l.grossAmount, 0) * 100) / 100;
   const advance = Number(advancePaid) || 0;
   const balance = Math.max(Math.round((total - advance) * 100) / 100, 0);
-  const ready = Boolean(customerName && itemDescription && total > 0);
+
+  function validate(): FieldErrors {
+    const e: FieldErrors = {};
+    if (!customerName.trim()) e.customerName = "Who is this invoice for?";
+    if (advance < 0) e.advancePaid = "Can't be negative";
+    else if (total > 0 && advance > total) e.advancePaid = `At most the total, ${formatCurrency(total)}`;
+    return { ...e, ...lineErrors(lines, false) };
+  }
+  const live = validate();
+  const ready = Object.keys(live).length === 0;
+  const shown: FieldErrors = attempted ? { ...errors, ...live } : errors;
+  const missing = [
+    live.customerName && "client name",
+    Object.keys(live).some((k) => k.startsWith("lines.")) && "package details and amount",
+    live.advancePaid && "a valid advance",
+  ].filter(Boolean);
 
   async function onFileChange(e: ChangeEvent<HTMLInputElement>) {
     const picked = e.target.files?.[0];
@@ -63,21 +78,27 @@ export function MulberryInvoiceForm({
     try {
       // Parsed here in the browser rather than server-side: these decks are
       // tens of megabytes, far past what a serverless function may receive.
-      const text = await extractPdfTextInBrowser(picked);
+      // A photo of a quotation is read with OCR the same way.
+      const text = picked.type.startsWith("image/") ? await readImageText(picked) : await extractPdfTextInBrowser(picked);
       const parsed = parseQuotationText(text, picked.name);
       setReadIt(true);
       if (parsed.clientName) setCustomerName(parsed.clientName);
-      if (parsed.totalAmount) setGrossAmount(String(parsed.totalAmount));
-      if (parsed.events?.length) {
-        setItemDescription(`Wedding Package — ${parsed.events.join(", ")}`);
+      if (parsed.totalAmount || parsed.events?.length) {
+        setLines((prev) => [
+          newLine({
+            gstPercent: "0",
+            description: parsed.events?.length ? `Wedding Package — ${parsed.events.join(", ")}` : prev[0]?.description ?? "Wedding Package",
+            grossAmount: parsed.totalAmount ? String(parsed.totalAmount) : prev[0]?.grossAmount ?? "",
+          }),
+          ...prev.slice(1),
+        ]);
       }
+      setErrors({});
       toast.success(
-        parsed.totalAmount
-          ? "Quotation read — check the details and generate the invoice"
-          : "Quotation read, but no total found — please enter the amount"
+        parsed.totalAmount ? "Quotation read — check the details and generate the invoice" : "Quotation read, but no total found — please enter the amount"
       );
     } catch {
-      toast.error("Couldn't read that PDF — please fill in the details manually");
+      toast.error("Couldn't read that file — please fill in the details by hand");
     } finally {
       setParsing(false);
     }
@@ -85,6 +106,13 @@ export function MulberryInvoiceForm({
 
   async function onSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    setAttempted(true);
+    const problems = validate();
+    if (Object.keys(problems).length) {
+      setErrors(problems);
+      focusFirstError(formRef.current, problems);
+      return;
+    }
     setPending(true);
     try {
       const body = new FormData();
@@ -97,11 +125,7 @@ export function MulberryInvoiceForm({
       body.append("customerEmail", customerEmail);
       body.append("customerAddress", customerAddress);
       body.append("placeOfSupply", "");
-      body.append("itemDescription", itemDescription);
-      body.append("hsnSac", "");
-      body.append("qty", qty);
-      body.append("grossAmount", grossAmount);
-      body.append("gstPercent", "0");
+      body.append("lines", JSON.stringify(lineInputs));
       body.append("advancePaid", String(advance));
       body.append("notes", notes);
       body.append("terms", terms);
@@ -120,6 +144,10 @@ export function MulberryInvoiceForm({
       const res = await fetch("/api/invoices", { method: "POST", body });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
+        if (err.fields && Object.keys(err.fields).length) {
+          setErrors(err.fields);
+          focusFirstError(formRef.current, err.fields);
+        }
         toast.error(err.error ?? "Something went wrong");
         return;
       }
@@ -135,218 +163,258 @@ export function MulberryInvoiceForm({
   }
 
   return (
-    <form onSubmit={onSubmit} className="grid gap-6 lg:grid-cols-[1fr_320px]">
-      <div className="grid gap-6">
+    <form ref={formRef} onSubmit={onSubmit} noValidate className="grid gap-6 lg:grid-cols-[1fr_320px]">
+      <div className="grid min-w-0 gap-6">
         <Card>
           <CardBody>
             <label
-              className={`flex cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed px-6 py-8 text-center transition-colors ${
+              className={`flex cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed px-6 py-8 text-center transition-colors focus-within:ring-4 focus-within:ring-brand-500/15 ${
                 file
                   ? "border-emerald-300 bg-emerald-50/50 dark:border-emerald-800 dark:bg-emerald-950/20"
-                  : "border-neutral-200 hover:border-rose-400 hover:bg-rose-50/40 dark:border-white/10 dark:hover:bg-rose-950/20"
+                  : "border-neutral-200 hover:border-brand-400 hover:bg-brand-50/40 dark:border-white/10 dark:hover:bg-brand-950/20"
               }`}
             >
-              {file ? (
-                <FileCheck2 className="h-7 w-7 text-emerald-500" />
-              ) : (
-                <UploadCloud className="h-7 w-7 text-neutral-400" />
-              )}
+              {file ? <FileCheck2 className="h-7 w-7 text-emerald-500" /> : <UploadCloud className="h-7 w-7 text-neutral-400" />}
               <span className="text-sm font-semibold text-neutral-800 dark:text-neutral-100">
-                {file ? file.name : "Upload the wedding package quotation (PDF)"}
+                {file ? file.name : "Upload or photograph the wedding package quotation"}
               </span>
               <span className="text-xs text-neutral-500 dark:text-neutral-400">
-                {parsing
-                  ? "Reading the quotation…"
-                  : file
-                    ? "Click to choose a different file"
-                    : "Client name, events and total fill in automatically"}
+                {parsing ? "Reading the quotation…" : file ? "Tap to choose a different file" : "PDF or photo — client name, events and total fill in automatically"}
               </span>
-              <input type="file" accept="application/pdf" className="hidden" onChange={onFileChange} />
+              {/* capture opens the camera on phones; desktops still get the file picker. */}
+              <input
+                type="file"
+                accept="image/*,application/pdf"
+                capture="environment"
+                className="sr-only"
+                onChange={onFileChange}
+                aria-label="Quotation file"
+              />
             </label>
           </CardBody>
         </Card>
 
-        {(readIt || customerName || grossAmount) && (
-          <Card className={ready ? "border-emerald-200 dark:border-emerald-900" : "border-amber-200 dark:border-amber-900"}>
-            <CardHeader>
-              <h2 className="flex items-center gap-2 text-sm font-semibold text-neutral-700 dark:text-neutral-300">
-                {ready ? (
-                  <CheckCircle2 className="h-4 w-4 text-emerald-500" />
-                ) : (
-                  <AlertCircle className="h-4 w-4 text-amber-500" />
-                )}
-                {ready ? "Ready to generate" : "Fill in what's missing"}
-              </h2>
-            </CardHeader>
-            <CardBody className="grid gap-4">
+        <Card>
+          <CardHeader>
+            <CardTitle
+              title={
+                <span className="flex items-center gap-2">
+                  <UserRound className="h-4 w-4 text-neutral-400" />
+                  Client
+                </span>
+              }
+              subtitle={readIt ? "Filled in from the quotation — check it" : "Who the invoice is for"}
+            />
+          </CardHeader>
+          <CardBody className="grid gap-4">
+            <div className="grid gap-4 sm:grid-cols-2">
               <div>
-                <label className={labelClass}>Bill to</label>
+                <label className={labelClass} htmlFor="mb-customerName">
+                  Bill to
+                </label>
                 <input
+                  id="mb-customerName"
                   value={customerName}
-                  onChange={(e) => setCustomerName(e.target.value)}
-                  placeholder="Client name"
-                  required
+                  onChange={(e) => {
+                    setCustomerName(e.target.value);
+                    clear("customerName");
+                  }}
+                  placeholder="e.g. Aman & Ruchika"
                   className={inputClass}
+                  {...props("customerName")}
+                  aria-invalid={shown.customerName ? true : undefined}
                 />
+                <FieldError id="err-customerName" message={shown.customerName} />
               </div>
-
               <div>
-                <label className={labelClass}>Client email</label>
+                <label className={labelClass} htmlFor="mb-customerEmail">
+                  Client email <span className="font-normal text-neutral-500">(optional)</span>
+                </label>
                 <input
+                  id="mb-customerEmail"
                   type="email"
                   value={customerEmail}
-                  onChange={(e) => setCustomerEmail(e.target.value)}
+                  onChange={(e) => {
+                    setCustomerEmail(e.target.value);
+                    clear("customerEmail");
+                  }}
                   placeholder="name@example.com"
                   className={inputClass}
+                  {...props("customerEmail")}
                 />
-                <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
-                  The invoice can be emailed straight to the client once it&apos;s generated.
-                </p>
+                <FieldError id="err-customerEmail" message={shown.customerEmail} />
               </div>
+            </div>
+            <div>
+              <label className={labelClass} htmlFor="mb-customerAddress">
+                Client address <span className="font-normal text-neutral-500">(optional)</span>
+              </label>
+              <textarea
+                id="mb-customerAddress"
+                value={customerAddress}
+                onChange={(e) => {
+                  setCustomerAddress(e.target.value);
+                  clear("customerAddress");
+                }}
+                rows={2}
+                className={inputClass}
+                {...props("customerAddress")}
+              />
+              <FieldError id="err-customerAddress" message={shown.customerAddress} />
+            </div>
+          </CardBody>
+        </Card>
 
-              <div>
-                <label className={labelClass}>Item / description</label>
-                <textarea
-                  value={itemDescription}
-                  onChange={(e) => setItemDescription(e.target.value)}
-                  rows={3}
-                  placeholder="e.g. Wedding Function (Photography Plus Cinematography Plus Album)"
-                  required
-                  className={inputClass}
-                />
-              </div>
-
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div>
-                  <label className={labelClass}>Total amount (₹)</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    value={grossAmount}
-                    onChange={(e) => setGrossAmount(e.target.value)}
-                    required
-                    className={`${inputClass} font-semibold tabular-nums`}
-                  />
-                  <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
-                    From the quotation. Change it for a discount.
-                  </p>
-                </div>
-                <div>
-                  <label className={labelClass}>Advance received (₹)</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    max={total || undefined}
-                    value={advancePaid}
-                    onChange={(e) => setAdvancePaid(e.target.value)}
-                    placeholder="0"
-                    className={`${inputClass} tabular-nums`}
-                  />
-                  <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
-                    Leave blank if nothing has been paid yet.
-                  </p>
-                </div>
-              </div>
-            </CardBody>
-          </Card>
-        )}
+        <Card>
+          <CardHeader>
+            <CardTitle
+              title={
+                <span className="flex items-center gap-2">
+                  <ListOrdered className="h-4 w-4 text-neutral-400" />
+                  Package
+                </span>
+              }
+              subtitle="No GST — The Mulberry Weddings isn't GST-registered"
+            />
+          </CardHeader>
+          <CardBody className="grid gap-4">
+            <LineItemsEditor
+              lines={lines}
+              onChange={setLines}
+              gstRegistered={false}
+              errors={shown}
+              onFieldEdit={clear}
+              fieldProps={(n) => ({ ...props(n), "aria-invalid": shown[n] ? true : undefined })}
+            />
+            <div className="sm:w-1/2">
+              <label className={labelClass} htmlFor="mb-advancePaid">
+                Advance received (₹)
+              </label>
+              <input
+                id="mb-advancePaid"
+                type="number"
+                step="0.01"
+                min="0"
+                inputMode="decimal"
+                value={advancePaid}
+                onChange={(e) => {
+                  setAdvancePaid(e.target.value);
+                  clear("advancePaid");
+                }}
+                placeholder="0"
+                className={`${inputClass} tabular-nums`}
+                {...props("advancePaid")}
+                aria-invalid={shown.advancePaid ? true : undefined}
+              />
+              <FieldError id="err-advancePaid" message={shown.advancePaid} />
+              {!shown.advancePaid && <p className={hintClass}>Leave blank if nothing has been paid yet.</p>}
+            </div>
+          </CardBody>
+        </Card>
 
         <details className="group rounded-2xl border border-neutral-200/80 bg-white shadow-card dark:border-white/[0.07] dark:bg-neutral-900/70">
           <summary className="flex cursor-pointer items-center gap-2 px-5 py-4 text-sm font-semibold text-neutral-700 marker:content-none dark:text-neutral-300">
             <SlidersHorizontal className="h-4 w-4 text-neutral-400" />
-            Edit all details
-            <span className="ml-auto text-xs font-normal text-neutral-400 group-open:hidden">
-              invoice no., dates, address, notes…
+            Number, dates, notes &amp; terms
+            <span className="ml-auto text-xs font-normal text-neutral-500 group-open:hidden">
+              {invoiceNumber || `Auto · ${suggestedNumber}`} · {formatDate(invoiceDate)}
             </span>
           </summary>
           <div className="grid gap-4 border-t border-neutral-100 px-5 py-4 dark:border-white/[0.06]">
-            <div className="grid gap-4 sm:grid-cols-2">
+            <div className="grid gap-4 sm:grid-cols-3">
               <div>
-                <label className={labelClass}>Invoice number</label>
+                <label className={labelClass} htmlFor="mb-invoiceNumber">
+                  Invoice number
+                </label>
                 <input
+                  id="mb-invoiceNumber"
                   value={invoiceNumber}
-                  onChange={(e) => setInvoiceNumber(e.target.value)}
+                  onChange={(e) => {
+                    setInvoiceNumber(e.target.value);
+                    clear("invoiceNumber");
+                  }}
                   placeholder={`Auto · ${suggestedNumber}`}
                   className={inputClass}
+                  {...props("invoiceNumber")}
                 />
-                <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
-                  Leave blank to take the next number in the series.
-                </p>
+                <FieldError id="err-invoiceNumber" message={shown.invoiceNumber} />
+                {!shown.invoiceNumber && <p className={hintClass}>Blank takes the next number in the series.</p>}
               </div>
               <div>
-                <label className={labelClass}>Quantity</label>
+                <label className={labelClass} htmlFor="mb-invoiceDate">
+                  Invoice date
+                </label>
                 <input
-                  type="number"
-                  min="1"
-                  step="1"
-                  value={qty}
-                  onChange={(e) => setQty(e.target.value)}
-                  required
-                  className={inputClass}
-                />
-              </div>
-            </div>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div>
-                <label className={labelClass}>Invoice date</label>
-                <input
+                  id="mb-invoiceDate"
                   type="date"
                   value={invoiceDate}
-                  onChange={(e) => setInvoiceDate(e.target.value)}
-                  required
+                  onChange={(e) => {
+                    setInvoiceDate(e.target.value);
+                    clear("invoiceDate");
+                  }}
                   className={inputClass}
+                  {...props("invoiceDate")}
                 />
+                <FieldError id="err-invoiceDate" message={shown.invoiceDate} />
               </div>
               <div>
-                <label className={labelClass}>Due date</label>
+                <label className={labelClass} htmlFor="mb-dueDate">
+                  Due date
+                </label>
                 <input
+                  id="mb-dueDate"
                   type="date"
                   value={dueDate}
-                  onChange={(e) => setDueDate(e.target.value)}
-                  required
+                  onChange={(e) => {
+                    setDueDate(e.target.value);
+                    clear("dueDate");
+                  }}
                   className={inputClass}
+                  {...props("dueDate")}
                 />
+                <FieldError id="err-dueDate" message={shown.dueDate} />
               </div>
             </div>
             <div>
-              <label className={labelClass}>Client address (optional)</label>
-              <textarea
-                value={customerAddress}
-                onChange={(e) => setCustomerAddress(e.target.value)}
-                rows={2}
-                className={inputClass}
-              />
+              <label className={labelClass} htmlFor="mb-notes">
+                Notes
+              </label>
+              <input id="mb-notes" value={notes} onChange={(e) => setNotes(e.target.value)} className={inputClass} />
             </div>
             <div>
-              <label className={labelClass}>Notes</label>
-              <input value={notes} onChange={(e) => setNotes(e.target.value)} className={inputClass} />
-            </div>
-            <div>
-              <label className={labelClass}>Terms &amp; conditions</label>
-              <textarea value={terms} onChange={(e) => setTerms(e.target.value)} rows={2} className={inputClass} />
+              <label className={labelClass} htmlFor="mb-terms">
+                Terms &amp; conditions
+              </label>
+              <textarea id="mb-terms" value={terms} onChange={(e) => setTerms(e.target.value)} rows={2} className={inputClass} />
             </div>
           </div>
         </details>
 
-        <div className="flex items-center gap-2">
-          <Button type="submit" loading={pending} disabled={!ready}>
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+          <Button type="submit" loading={pending}>
             Generate invoice
           </Button>
           <Button type="button" variant="secondary" onClick={() => router.push("/invoices")}>
             Cancel
           </Button>
-          {!ready && (
-            <span className="text-xs text-neutral-500 dark:text-neutral-400">
-              Upload a quotation, or fill in the client and amount
-            </span>
-          )}
+          <p className="flex items-center gap-1.5 text-xs" aria-live="polite">
+            {ready ? (
+              <>
+                <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
+                <span className="text-neutral-600 dark:text-neutral-400">Ready — {formatCurrency(total)}</span>
+              </>
+            ) : (
+              <>
+                <AlertCircle className="h-3.5 w-3.5 text-amber-500" />
+                <span className="text-neutral-600 dark:text-neutral-400">Still needed: {missing.join(", ")}</span>
+              </>
+            )}
+          </p>
         </div>
       </div>
 
-      <div className="lg:sticky lg:top-6 lg:self-start">
-        <Card className="border-rose-100 dark:border-rose-950">
+      <div className="lg:sticky lg:top-20 lg:self-start">
+        <Card>
           <CardHeader>
             <h3 className="text-sm font-semibold text-neutral-700 dark:text-neutral-300">Summary</h3>
           </CardHeader>
@@ -355,9 +423,7 @@ export function MulberryInvoiceForm({
               <dt>Total</dt>
               <dd className="text-right tabular-nums">{formatCurrency(total)}</dd>
               <dt>Advance received</dt>
-              <dd className="text-right tabular-nums text-emerald-600 dark:text-emerald-400">
-                {advance > 0 ? `− ${formatCurrency(advance)}` : "—"}
-              </dd>
+              <dd className="text-right tabular-nums text-emerald-600 dark:text-emerald-400">{advance > 0 ? `− ${formatCurrency(advance)}` : "—"}</dd>
               <dt className="border-t border-neutral-100 pt-2 font-semibold text-neutral-900 dark:border-white/[0.06] dark:text-neutral-100">
                 Balance due
               </dt>
@@ -365,9 +431,7 @@ export function MulberryInvoiceForm({
                 {formatCurrency(balance)}
               </dd>
             </dl>
-            <p className="mt-3 text-xs text-neutral-500 dark:text-neutral-400">
-              No GST is charged — The Mulberry Weddings is not GST-registered.
-            </p>
+            <p className="mt-3 text-xs text-neutral-600 dark:text-neutral-400">No GST is charged — The Mulberry Weddings is not GST-registered.</p>
           </CardBody>
         </Card>
       </div>

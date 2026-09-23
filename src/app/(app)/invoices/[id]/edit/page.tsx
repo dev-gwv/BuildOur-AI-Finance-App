@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { isAdmin, requirePageUser } from "@/server/session";
 import { canAccessBusiness } from "@/server/access";
@@ -16,10 +16,13 @@ export default async function EditInvoicePage({ params }: { params: Promise<{ id
     where: { id },
     include: {
       payments: { select: { amount: true, method: true } },
+      lines: { orderBy: { position: "asc" } },
       business: { select: { name: true, color: true } },
     },
   });
   if (!invoice || !(await canAccessBusiness(user, invoice.businessId))) notFound();
+  // A cancelled invoice is kept as it was issued; corrections go on a credit note.
+  if (invoice.status === "CANCELLED") redirect(`/invoices/${invoice.id}`);
 
   // Mirrors the PATCH route: a DO invoice whose only payment is its Bajaj
   // disbursement can change amount freely — the disbursement moves with it.
@@ -30,6 +33,7 @@ export default async function EditInvoicePage({ params }: { params: Promise<{ id
 
   // Admins can move an invoice between businesses that bill as the same
   // legal entity — the printed seller can't change after issue.
+  const catalog = invoice.brand === "MULBERRY" ? [] : await prisma.itemCatalogEntry.findMany({ orderBy: { amount: "asc" } });
   const businessOptions = isAdmin(user)
     ? await prisma.business.findMany({
         where: { entity: invoice.brand, archivedAt: null },
@@ -54,6 +58,7 @@ export default async function EditInvoicePage({ params }: { params: Promise<{ id
         detailHref={`/invoices/${invoice.id}`}
         minGross={bajajOnly ? 0 : paid}
         businessOptions={businessOptions}
+        catalog={catalog}
         invoice={{
           id: invoice.id,
           businessId: invoice.businessId,
@@ -66,11 +71,11 @@ export default async function EditInvoicePage({ params }: { params: Promise<{ id
           customerEmail: invoice.customerEmail ?? "",
           customerGstin: invoice.customerGstin ?? "",
           placeOfSupply: invoice.placeOfSupply,
-          itemDescription: invoice.itemDescription,
-          hsnSac: invoice.hsnSac,
-          qty: invoice.qty,
-          grossAmount: invoice.grossAmount,
-          gstPercent: invoice.gstPercent,
+          // Invoices from before line items have exactly one line (backfilled);
+          // the summary columns are the fallback if one somehow has none.
+          lines: invoice.lines.length
+            ? invoice.lines.map((l) => ({ description: l.description, hsnSac: l.hsnSac, qty: l.qty, grossAmount: l.grossAmount, gstPercent: l.gstPercent }))
+            : [{ description: invoice.itemDescription, hsnSac: invoice.hsnSac, qty: invoice.qty, grossAmount: invoice.grossAmount, gstPercent: invoice.gstPercent }],
           notes: invoice.notes ?? "",
           terms: invoice.terms ?? "",
           emailSentAt: invoice.emailSentAt ? invoice.emailSentAt.toISOString() : null,

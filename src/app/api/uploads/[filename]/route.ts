@@ -19,7 +19,11 @@ export const GET = withApiErrors(async (_req: NextRequest, { params }: Params) =
 
   const [entry, invoice, payment] = await Promise.all([
     prisma.expense.findFirst({ where: { screenshotPath: filename }, select: { businessId: true } }),
-    prisma.invoice.findFirst({ where: { doFilePath: filename }, select: { businessId: true } }),
+    // The original document, or the exact PDF emailed to the customer.
+    prisma.invoice.findFirst({
+      where: { OR: [{ doFilePath: filename }, { emailedPdfPath: filename }] },
+      select: { businessId: true },
+    }),
     prisma.payment.findFirst({ where: { proofPath: filename }, select: { invoice: { select: { businessId: true } } } }),
   ]);
   const businessId = entry?.businessId ?? invoice?.businessId ?? payment?.invoice.businessId;

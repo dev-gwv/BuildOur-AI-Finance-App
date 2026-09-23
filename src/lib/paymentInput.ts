@@ -15,7 +15,13 @@ export interface PaymentInput {
   gatewayRef: string | null;
   feeAmount: number;
   feeGstAmount: number;
+  /** Tax the customer deducted at source (TDS). Part of `amount`; never reaches the bank. */
+  tdsAmount: number;
+  tdsSection: string | null;
 }
+
+/** Sections a B2B customer most often deducts under. */
+export const TDS_SECTIONS = ["194J", "194C", "194Q", "194H", "194I", "Other"] as const;
 
 const paymentSchema = z.object({
   amount: positiveMoney("Payment amount"),
@@ -26,6 +32,8 @@ const paymentSchema = z.object({
   gatewayRef: optionalText(60),
   feeAmount: money("Gateway fee").optional(),
   feeGstAmount: money("GST on the gateway fee").optional(),
+  tdsAmount: money("TDS").optional(),
+  tdsSection: optionalText(20),
 });
 
 /**
@@ -37,6 +45,15 @@ const paymentSchema = z.object({
 export async function readPaymentForm(form: FormData): Promise<PaymentInput> {
   const input = paymentSchema.parse(formToObject(form));
   const gateway = input.gateway;
+
+  // TDS is part of what settles the invoice but is paid to the government, so
+  // it can't exceed the payment, and gateway fees come out of the cash only.
+  const tdsAmount = Math.round((input.tdsAmount ?? 0) * 100) / 100;
+  if (tdsAmount < 0) throw badRequest("TDS can't be negative", { tdsAmount: "Can't be negative" });
+  if (tdsAmount >= input.amount) {
+    throw badRequest("TDS must be less than the amount this payment settles", { tdsAmount: "Less than the amount" });
+  }
+  const cash = input.amount - tdsAmount;
   const gatewayRef = gateway ? input.gatewayRef : null;
 
   let feeAmount = 0;
@@ -45,7 +62,7 @@ export async function readPaymentForm(form: FormData): Promise<PaymentInput> {
     if (input.feeAmount === undefined && gateway === "Razorpay") {
       const settings = await prisma.invoiceSettings.findUnique({ where: { id: "default" } });
       const computed = calculateGatewayFee(
-        input.amount,
+        cash,
         settings?.razorpayFeePercent ?? 2,
         settings?.razorpayFeeGstPercent ?? 18
       );
@@ -56,8 +73,8 @@ export async function readPaymentForm(form: FormData): Promise<PaymentInput> {
       feeGstAmount = input.feeGstAmount ?? 0;
     }
     if (feeAmount < 0 || feeGstAmount < 0) throw badRequest("Gateway fees can't be negative");
-    if (feeAmount + feeGstAmount >= input.amount) {
-      throw badRequest("The gateway fee must be less than the amount paid", { feeAmount: "Less than the amount paid" });
+    if (feeAmount + feeGstAmount >= cash) {
+      throw badRequest("The gateway fee must be less than the amount received", { feeAmount: "Less than the amount received" });
     }
   }
 
@@ -72,7 +89,29 @@ export async function readPaymentForm(form: FormData): Promise<PaymentInput> {
     gatewayRef,
     feeAmount: Math.round(feeAmount * 100) / 100,
     feeGstAmount: Math.round(feeGstAmount * 100) / 100,
+    tdsAmount,
+    tdsSection: tdsAmount > 0 ? (input.tdsSection ?? "Other") : null,
   };
+}
+
+const refundSchema = z.object({
+  amount: positiveMoney("Refund amount"),
+  paidOn: isoDate("Refund date"),
+  method: optionalText(60),
+  note: optionalText(500),
+});
+
+export interface RefundInput {
+  amount: number;
+  paidOn: Date;
+  method: string | null;
+  note: string | null;
+}
+
+/** Money handed back to the customer after a credit note. */
+export function readRefundForm(form: FormData): RefundInput {
+  const input = refundSchema.parse(formToObject(form));
+  return { amount: input.amount, paidOn: input.paidOn, method: input.method, note: input.note };
 }
 
 /**

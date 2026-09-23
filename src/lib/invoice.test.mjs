@@ -10,12 +10,13 @@ import { looksLikeQuotation, parseQuotationText } from "./parseQuotation.ts";
 import { PAYMENT_METHODS, parsePaymentScreenshotText } from "./parsePaymentScreenshot.ts";
 import { invoiceEmailHtml, invoiceEmailSubject, invoiceEmailText } from "./invoiceEmail.ts";
 import { guessStateCodeFromAddress, isInterStateSupply, placeOfSupplyFromGstin, stateCodeFromGstin, stateCodeFromPlaceOfSupply } from "./gstState.ts";
-import { formatInvoiceNumber, previewInvoiceNumber, seqInSeries, slugify } from "./invoiceNumbering.ts";
+import { formatInvoiceNumber, fyLabel, longestNumberFor, previewInvoiceNumber, resolvePrefix, seqInSeries, slugify } from "./invoiceNumbering.ts";
+import { computeInvoice, invoiceBalance, invoiceSummaryFields } from "./invoiceLines.ts";
 import { calculateCostBreakup, calculateGatewayFee } from "./calc.ts";
 import { detectGateway } from "./parsePaymentScreenshot.ts";
 import { expenseSheetBody, paymentReceiptRow } from "./sheetRows.ts";
 import { normalizeRazorpayPayment } from "./integrations/razorpayPayment.ts";
-import { gstLine, gstPeriodRange, inputGst, monthlySummary, netGstPayable, sumLines } from "./gstReport.ts";
+import { gstCreditLine, gstLine, gstPeriodRange, hsnSummary, inputGst, monthlySummary, netGstPayable, netOfCredits, sumLines } from "./gstReport.ts";
 
 // --- GST back-calculation, matched against INV-002241 ---
 const ref = calculateInvoiceBreakup({ grossAmount: 117999, gstPercent: 18, qty: 1 });
@@ -467,5 +468,95 @@ assert.equal(guessStateCodeFromAddress("B-4 Laxmi Nagar, New Delhi 110092"), "07
 assert.equal(guessStateCodeFromAddress("12 MG Road, Bengaluru, Karnataka 560001"), "29", "state name wins");
 assert.equal(guessStateCodeFromAddress("Salt Lake, West Bengal"), "19");
 assert.equal(guessStateCodeFromAddress("Somewhere unknown"), null);
+
+// --- Financial-year numbering ---
+assert.equal(fyLabel(new Date("2026-04-01T00:00:00Z")), "26-27", "April starts the FY");
+assert.equal(fyLabel(new Date("2027-03-31T00:00:00Z")), "26-27", "March ends it");
+assert.equal(fyLabel(new Date("2027-04-01T00:00:00Z")), "27-28");
+assert.equal(resolvePrefix("IPC/{FY}/", new Date("2026-09-23T00:00:00Z")), "IPC/26-27/");
+assert.equal(formatInvoiceNumber("IPC/26-27/", 12, 4), "IPC/26-27/0012");
+assert.equal(previewInvoiceNumber({ invoicePrefix: "IPC/{FY}/", invoiceNextNumber: 999, invoiceDigits: 4 }, { date: new Date("2027-04-02T00:00:00Z"), fyNext: 1 }), "IPC/27-28/0001", "a new FY restarts at 1");
+assert.equal(previewInvoiceNumber({ invoicePrefix: "IPC-INV-", invoiceNextNumber: 2250 }), "IPC-INV-002250", "no {FY}: one running series");
+assert.equal(longestNumberFor("IPC/{FY}/", 6), 16, "fits GST's 16 characters exactly");
+
+// --- Multi-line invoices: tax per line at its own rate, then summed ---
+const multi = computeInvoice(
+  [
+    { description: "Course", hsnSac: "999293", qty: 1, grossAmount: 117999, gstPercent: 18 },
+    { description: "Books", hsnSac: "4901", qty: 2, grossAmount: 1050, gstPercent: 5 },
+  ],
+  { isInterState: false }
+);
+assert.equal(multi.total, 119049, "total is the sum of the lines");
+assert.equal(Math.round((multi.subTotal + multi.cgst + multi.sgst + multi.igst + multi.adjustment) * 100) / 100, 119049, "parts reconcile");
+assert.equal(multi.hsnSummary.length, 2, "one HSN row per code and rate");
+assert.equal(multi.hsnSummary.find((h) => h.hsnSac === "4901").taxable, 1000, "books taxable at 5%");
+assert.equal(computeInvoice([{ description: "x", hsnSac: "1", qty: 1, grossAmount: 11800, gstPercent: 18 }], { isInterState: true }).igst, 1800, "IGST per line");
+assert.equal(computeInvoice([{ description: "x", hsnSac: "1", qty: 1, grossAmount: 170000, gstPercent: 18 }], { isInterState: false, gstRegistered: false }).cgst, 0, "unregistered sellers charge no tax");
+assert.equal(invoiceSummaryFields([{ description: "Course", hsnSac: "999293", qty: 1, grossAmount: 100, gstPercent: 18 }, { description: "Books", hsnSac: "4901", qty: 2, grossAmount: 50, gstPercent: 5 }]).itemDescription, "Course + 1 more");
+
+// --- Balance: credit notes, refunds, TDS, cancellation ---
+let bal = invoiceBalance({ grossAmount: 118000, status: "ISSUED", creditNotes: [], payments: [{ amount: 106200 }, { amount: 11800, tdsAmount: 11800 }] });
+assert.ok(bal.settled && bal.tds === 11800, "TDS withheld by the customer settles the invoice");
+bal = invoiceBalance({ grossAmount: 118000, status: "ISSUED", creditNotes: [{ grossAmount: 18000 }], payments: [{ amount: 118000 }] });
+assert.equal(bal.net, 100000, "credit note reduces what's owed");
+assert.equal(bal.toRefund, 18000, "overpaid after a credit note: to refund");
+bal = invoiceBalance({ grossAmount: 118000, status: "ISSUED", creditNotes: [{ grossAmount: 18000 }], payments: [{ amount: 118000 }, { amount: 18000, kind: "REFUND" }] });
+assert.ok(bal.settled && bal.toRefund === 0, "refund closes it");
+bal = invoiceBalance({ grossAmount: 118000, status: "CANCELLED", creditNotes: [], payments: [] });
+assert.ok(bal.cancelled && bal.net === 0 && bal.balance === 0, "a cancelled invoice owes nothing");
+
+// --- Sheet rows for TDS, refunds and multi-rate invoices ---
+{
+  const inv = { brand: "GRATEFUL", customerName: "Acme", invoiceNumber: "IPC-INV-002300", gstPercent: 18 };
+  const tdsRow = paymentReceiptRow(
+    { id: "t1", amount: 118000, paidOn: new Date("2026-09-20T00:00:00Z"), method: "Bank transfer", note: null, gateway: null, feeAmount: 0, feeGstAmount: 0, tdsAmount: 10000, tdsSection: "194J" },
+    inv
+  );
+  assert.equal(tdsRow.amount, 118000, "TDS is still part of what the customer settled");
+  assert.equal(tdsRow.amountExGst, 100000, "TDS isn't a charge: excluding GST is the full taxable value");
+  assert.match(tdsRow.remarks, /TDS 194J ₹10,000/);
+  const refundRow = paymentReceiptRow(
+    { id: "r1", amount: 11800, paidOn: new Date("2026-09-21T00:00:00Z"), method: "UPI", note: null, gateway: null, feeAmount: 0, feeGstAmount: 0, kind: "REFUND" },
+    inv
+  );
+  assert.equal(refundRow.amount, -11800, "a refund is a negative receipt");
+  assert.equal(refundRow.amountExGst, -10000);
+  assert.match(refundRow.remarks, /^Refund · UPI/);
+  const mixed = paymentReceiptRow(
+    { id: "m1", amount: 119049, paidOn: new Date("2026-09-21T00:00:00Z"), method: "UPI", note: null, gateway: null, feeAmount: 0, feeGstAmount: 0 },
+    { ...inv, taxableRatio: 100999.15 / 119049 }
+  );
+  assert.equal(mixed.amountExGst, 100999.15, "several GST rates: the invoice's own taxable share is used");
+}
+
+// --- GST report: multi-line invoices, credit notes (CDNR/CDNUR), HSN summary ---
+const multiLine = gstLine({
+  id: "m", invoiceNumber: "M", invoiceDate: new Date("2026-09-10T00:00:00Z"), customerName: "Acme", customerGstin: "07AAJCG9243K1Z5",
+  placeOfSupply: "Delhi (07)", grossAmount: 119049, gstPercent: 18, qty: 3, business: "IPC Finance",
+  lines: [
+    { description: "Course", hsnSac: "999293", qty: 1, grossAmount: 117999, gstPercent: 18 },
+    { description: "Books", hsnSac: "4901", qty: 2, grossAmount: 1050, gstPercent: 5 },
+  ],
+});
+assert.equal(multiLine.value, 119049, "report value is the lines' total");
+assert.equal(multiLine.hsn.length, 2, "one HSN row per code and rate");
+assert.equal(Math.round((multiLine.taxable + multiLine.tax + multiLine.adjustment) * 100) / 100, 119049, "multi-line reconciles");
+const cnB2B = gstCreditLine({
+  id: "cn1", number: "CN/26-27/000001", noteDate: new Date("2026-10-05T00:00:00Z"), reason: "Price correction",
+  grossAmount: 11800, gstPercent: 18, invoiceNumber: "M", invoiceDate: new Date("2026-09-10T00:00:00Z"),
+  customerName: "Acme", customerGstin: "07AAJCG9243K1Z5", placeOfSupply: "Delhi (07)", business: "IPC Finance", hsnSac: "999293",
+});
+assert.ok(cnB2B.b2b && cnB2B.cgst === 900 && cnB2B.sgst === 900 && cnB2B.taxable === 10000, "CDNR: same split as the Delhi invoice");
+assert.equal(cnB2B.month, "2026-10", "reported in the credit note's month, not the invoice's");
+const cnB2C = gstCreditLine({ ...cnB2B, id: "cn2", customerGstin: null, placeOfSupply: "Uttar Pradesh (09)" });
+assert.ok(!cnB2C.b2b && cnB2C.igst === 1800, "CDNUR to an out-of-state consumer is IGST");
+const netOut = netOfCredits(sumLines([multiLine]), sumLines([cnB2B]));
+assert.equal(netOut.tax, Math.round((multiLine.tax - 1800) * 100) / 100, "credit note tax comes off output tax");
+const hsnRows = hsnSummary([multiLine], [cnB2B]);
+assert.equal(hsnRows.find((h) => h.hsnSac === "999293").taxable, Math.round((multiLine.hsn.find((h) => h.hsnSac === "999293").taxable - 10000) * 100) / 100, "HSN net of credit note");
+const months2 = monthlySummary([multiLine], [cnB2B]);
+assert.deepEqual(months2.map((x) => x.month), ["2026-09", "2026-10"], "a month with only a credit note still appears");
+assert.equal(months2[1].net.tax, -1800, "October: only the credit, negative net output");
 
 console.log("All invoice money-path checks passed.");

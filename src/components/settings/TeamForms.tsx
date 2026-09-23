@@ -1,12 +1,14 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
-import { KeyRound, MoreHorizontal, Power, ShieldCheck, UserPlus, X } from "lucide-react";
+import { KeyRound, MoreHorizontal, Power, ShieldCheck, UserPlus } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { useToast } from "@/components/ui/Toast";
 import { useConfirm } from "@/components/ui/ConfirmDialog";
-import { hintClass, inputClass, labelClass, request } from "./request";
+import { Field, Input, useFieldErrors } from "@/components/ui/Field";
+import { Modal } from "@/components/ui/Modal";
+import { request } from "./request";
 
 /** Mirrors the server's rule (src/server/validation.ts `password`) so it's caught before sending. */
 export function passwordProblem(p: string): string | null {
@@ -21,27 +23,39 @@ export function CreateUserForm({ businesses }: { businesses: BusinessOption[] })
   const router = useRouter();
   const toast = useToast();
   const [open, setOpen] = useState(false);
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
   const [role, setRole] = useState<"MEMBER" | "ADMIN">("MEMBER");
   const [access, setAccess] = useState<Set<string>>(new Set());
   const [password, setPassword] = useState("");
-  const [fields, setFields] = useState<Record<string, string>>();
   const [pending, setPending] = useState(false);
+  const { errors, apply, clear } = useFieldErrors<"name" | "email" | "password">();
   const pwProblem = password ? passwordProblem(password) : null;
+
+  function close() {
+    setOpen(false);
+    clear();
+  }
 
   async function onSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    const form = new FormData(e.currentTarget);
+    const local: Partial<Record<"name" | "email" | "password", string>> = {};
+    if (!name.trim()) local.name = "Enter their name";
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) local.email = "Enter a valid email";
+    const problem = passwordProblem(password);
+    if (problem) local.password = problem;
+    if (Object.keys(local).length) return apply(local);
+
     setPending(true);
-    setFields(undefined);
     const created = await request<{ user: { id: string } }>("/api/users", "POST", {
-      name: String(form.get("name") ?? "").trim(),
-      email: String(form.get("email") ?? "").trim(),
+      name: name.trim(),
+      email: email.trim(),
       password,
       role,
     });
     if (!created.ok) {
       setPending(false);
-      setFields(created.fields);
+      apply(created.fields as Partial<Record<"name" | "email" | "password", string>>);
       return toast.error(created.error);
     }
     if (role === "MEMBER" && access.size > 0 && created.data.user?.id) {
@@ -49,65 +63,64 @@ export function CreateUserForm({ businesses }: { businesses: BusinessOption[] })
       if (!granted.ok) toast.error(`User created, but access wasn't saved: ${granted.error}`);
     }
     setPending(false);
-    toast.success("User created");
+    toast.success(`${name.trim()} can now sign in`);
     setOpen(false);
+    setName("");
+    setEmail("");
     setPassword("");
     setAccess(new Set());
     router.refresh();
   }
 
-  if (!open) {
-    return (
+  return (
+    <>
       <Button onClick={() => setOpen(true)}>
         <UserPlus className="h-4 w-4" />
         Add person
       </Button>
-    );
-  }
-
-  const err = (name: string) => fields?.[name] && <p className="mt-1 text-xs text-red-600 dark:text-red-400">{fields[name]}</p>;
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 p-4 pt-[10vh] backdrop-blur-sm">
-      <form
-        onSubmit={onSubmit}
-        className="w-full max-w-lg animate-fade-up rounded-2xl border border-neutral-200/80 bg-white p-6 shadow-pop dark:border-white/10 dark:bg-neutral-900"
+      <Modal
+        open={open}
+        onClose={close}
+        dismissible={!pending}
+        title="Add a person"
+        description="They sign in with their email and this temporary password."
+        footer={
+          <>
+            <Button type="button" variant="secondary" onClick={close} disabled={pending}>
+              Cancel
+            </Button>
+            <Button type="submit" form="create-user" loading={pending}>
+              Create user
+            </Button>
+          </>
+        }
       >
-        <div className="mb-5 flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-neutral-950 dark:text-white">Add a person</h2>
-          <button type="button" onClick={() => setOpen(false)} className="rounded-md p-1 text-neutral-400 hover:text-neutral-900 dark:hover:text-white" aria-label="Close">
-            <X className="h-5 w-5" />
-          </button>
-        </div>
-        <div className="grid gap-4">
-          <label className={labelClass}>
-            Full name
-            <input name="name" required maxLength={80} className={inputClass} autoFocus />
-            {err("name")}
-          </label>
-          <label className={labelClass}>
-            Email
-            <input name="email" type="email" required className={inputClass} />
-            {err("email")}
-          </label>
-          <label className={labelClass}>
-            Temporary password
-            <input
+        <form id="create-user" onSubmit={onSubmit} noValidate className="grid gap-4">
+          <Field label="Full name" error={errors.name}>
+            <Input value={name} onChange={(e) => { setName(e.target.value); clear("name"); }} maxLength={80} autoComplete="off" />
+          </Field>
+          <Field label="Email" error={errors.email}>
+            <Input type="email" inputMode="email" value={email} onChange={(e) => { setEmail(e.target.value); clear("email"); }} autoComplete="off" />
+          </Field>
+          <Field
+            label="Temporary password"
+            error={errors.password}
+            hint={pwProblem ?? "At least 10 characters with letters and numbers. Share it privately; they can change it under Account."}
+          >
+            <Input
               type="text"
               value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
+              onChange={(e) => {
+                setPassword(e.target.value);
+                clear("password");
+              }}
               autoComplete="off"
-              className={`${inputClass} font-mono`}
+              className="font-mono"
             />
-            <p className={pwProblem ? "mt-1 text-xs text-amber-700 dark:text-amber-400" : hintClass}>
-              {pwProblem ?? "At least 10 characters with letters and numbers. Share it privately; they can change it under Account."}
-            </p>
-            {err("password")}
-          </label>
-          <div>
-            <p className={labelClass}>Role</p>
-            <div className="mt-1.5 grid grid-cols-2 gap-2">
+          </Field>
+          <fieldset>
+            <legend className="mb-1.5 text-sm font-medium text-neutral-800 dark:text-neutral-200">Role</legend>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
               {(
                 [
                   ["MEMBER", "Member", "Works in the businesses they're given"],
@@ -118,6 +131,7 @@ export function CreateUserForm({ businesses }: { businesses: BusinessOption[] })
                   key={key}
                   type="button"
                   onClick={() => setRole(key)}
+                  aria-pressed={role === key}
                   className={`rounded-xl border p-3 text-left ${
                     role === key
                       ? "border-brand-500 bg-brand-50/60 dark:border-brand-400 dark:bg-brand-500/10"
@@ -125,21 +139,22 @@ export function CreateUserForm({ businesses }: { businesses: BusinessOption[] })
                   }`}
                 >
                   <p className="text-sm font-semibold text-neutral-900 dark:text-white">{label}</p>
-                  <p className="text-xs text-neutral-500">{hint}</p>
+                  <p className="text-xs text-neutral-600 dark:text-neutral-400">{hint}</p>
                 </button>
               ))}
             </div>
-          </div>
+          </fieldset>
           {role === "MEMBER" && businesses.length > 0 && (
-            <div>
-              <p className={labelClass}>Businesses they can work in</p>
-              <div className="mt-1.5 flex flex-wrap gap-2">
+            <fieldset>
+              <legend className="mb-1.5 text-sm font-medium text-neutral-800 dark:text-neutral-200">Businesses they can work in</legend>
+              <div className="flex flex-wrap gap-2">
                 {businesses.map((b) => {
                   const on = access.has(b.id);
                   return (
                     <button
                       key={b.id}
                       type="button"
+                      aria-pressed={on}
                       onClick={() =>
                         setAccess((prev) => {
                           const next = new Set(prev);
@@ -148,10 +163,10 @@ export function CreateUserForm({ businesses }: { businesses: BusinessOption[] })
                           return next;
                         })
                       }
-                      className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-medium ${
+                      className={`inline-flex min-h-9 items-center gap-1.5 rounded-lg border px-3 text-xs font-medium ${
                         on
                           ? "border-brand-400 bg-brand-50 text-brand-800 dark:border-brand-400/50 dark:bg-brand-500/15 dark:text-brand-200"
-                          : "border-neutral-200 text-neutral-600 dark:border-white/10 dark:text-neutral-300"
+                          : "border-neutral-300 text-neutral-700 dark:border-white/15 dark:text-neutral-300"
                       }`}
                     >
                       <span className="h-1.5 w-1.5 rounded-full" style={{ background: b.color }} />
@@ -160,19 +175,11 @@ export function CreateUserForm({ businesses }: { businesses: BusinessOption[] })
                   );
                 })}
               </div>
-            </div>
+            </fieldset>
           )}
-        </div>
-        <div className="mt-6 flex justify-end gap-2">
-          <Button type="button" variant="ghost" onClick={() => setOpen(false)}>
-            Cancel
-          </Button>
-          <Button type="submit" loading={pending} disabled={Boolean(pwProblem) || !password}>
-            Create user
-          </Button>
-        </div>
-      </form>
-    </div>
+        </form>
+      </Modal>
+    </>
   );
 }
 
@@ -188,6 +195,20 @@ export function UserActions({
   const toast = useToast();
   const confirm = useConfirm();
   const [open, setOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (!menuRef.current?.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
   const [settingPassword, setSettingPassword] = useState(false);
   const [password, setPassword] = useState("");
   const [pending, setPending] = useState(false);
@@ -243,15 +264,15 @@ export function UserActions({
   }
 
   if (isSelf) {
-    return <span className="text-xs text-neutral-400">You</span>;
+    return <span className="text-xs text-neutral-500 dark:text-neutral-400">You</span>;
   }
 
   return (
-    <div className="relative flex items-center justify-end">
+    <div ref={menuRef} className="relative flex items-center justify-end">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="rounded-md p-1.5 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-900 dark:hover:bg-white/10 dark:hover:text-white"
+        className="flex h-10 w-10 items-center justify-center rounded-lg text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900 sm:h-8 sm:w-8 dark:text-neutral-400 dark:hover:bg-white/10 dark:hover:text-white"
         aria-label={`Actions for ${user.name}`}
         aria-expanded={open}
       >
@@ -276,36 +297,30 @@ export function UserActions({
           </MenuItem>
         </div>
       )}
-      {settingPassword && (
-        <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 p-4 pt-[15vh] backdrop-blur-sm">
-          <form
-            onSubmit={savePassword}
-            className="w-full max-w-sm animate-fade-up rounded-2xl border border-neutral-200/80 bg-white p-6 text-left shadow-pop dark:border-white/10 dark:bg-neutral-900"
-          >
-            <h2 className="text-base font-semibold text-neutral-950 dark:text-white">New password for {user.name}</h2>
-            <p className="mt-1 text-sm text-neutral-500">They&apos;ll be signed out everywhere within a minute and sign in with this.</p>
-            <input
-              type="text"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              autoFocus
-              autoComplete="off"
-              className={`${inputClass} mt-4 font-mono`}
-            />
-            <p className={pwProblem ? "mt-1 text-xs text-amber-700 dark:text-amber-400" : hintClass}>
-              {pwProblem ?? "At least 10 characters with letters and numbers."}
-            </p>
-            <div className="mt-5 flex justify-end gap-2">
-              <Button type="button" variant="ghost" onClick={() => setSettingPassword(false)}>
-                Cancel
-              </Button>
-              <Button type="submit" loading={pending} disabled={!password || Boolean(pwProblem)}>
-                Set password
-              </Button>
-            </div>
-          </form>
-        </div>
-      )}
+      <Modal
+        open={settingPassword}
+        onClose={() => setSettingPassword(false)}
+        dismissible={!pending}
+        size="sm"
+        title={`New password for ${user.name}`}
+        description="They'll be signed out everywhere within a minute and sign in with this."
+        footer={
+          <>
+            <Button type="button" variant="secondary" onClick={() => setSettingPassword(false)} disabled={pending}>
+              Cancel
+            </Button>
+            <Button type="submit" form={`pw-${user.id}`} loading={pending} disabled={!password || Boolean(pwProblem)}>
+              Set password
+            </Button>
+          </>
+        }
+      >
+        <form id={`pw-${user.id}`} onSubmit={savePassword} noValidate>
+          <Field label="New password" error={pwProblem} hint="At least 10 characters with letters and numbers.">
+            <Input type="text" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="off" className="font-mono" />
+          </Field>
+        </form>
+      </Modal>
     </div>
   );
 }
@@ -328,7 +343,7 @@ function MenuItem({
       type="button"
       onClick={onClick}
       disabled={disabled}
-      className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm disabled:opacity-50 ${
+      className={`flex min-h-10 w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm disabled:opacity-50 ${
         danger
           ? "text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-500/10"
           : "text-neutral-700 hover:bg-neutral-100 dark:text-neutral-200 dark:hover:bg-white/[0.06]"

@@ -5,7 +5,9 @@ import { UnsupportedUpload, deleteUpload, saveUpload } from "@/lib/storage";
 import { syncInvoicePayments, syncPayment, unsyncPayment } from "@/lib/sheet";
 import { accessibleBusinessIds, accessWhere, assertBusinessAccess, requireInvoiceAccess } from "../access";
 import { audit, diff } from "../audit";
-import { allocateInvoiceNumber, formatInvoiceNumber, previewInvoiceNumber, seqInSeries } from "../businesses";
+import { allocateInvoiceNumber, businessSummarySelect, nextInvoiceNumberPreview } from "../businesses";
+import { assertPeriodOpen } from "../gstLock";
+import { invoiceSummaryFields, type LineInput } from "@/lib/invoiceLines";
 import { ApiError, badRequest, conflict, forbidden, notFound } from "../errors";
 import { isAdmin, type SessionUser } from "../session";
 import {
@@ -41,6 +43,30 @@ const STORED_NAME = /^[a-zA-Z0-9-]+\.[a-zA-Z0-9]{1,5}$/;
 const blankAsMissing = <T extends z.ZodType>(schema: T) =>
   z.preprocess((v) => (typeof v === "string" && v.trim() === "" ? undefined : v), schema);
 
+/** One line: GST-inclusive amount at its own rate. */
+const lineSchema = z.object({
+  description: requiredText("Item", 500),
+  hsnSac: z.string().trim().max(20).default(""),
+  qty: z.coerce.number({ error: "Quantity must be a number" }).positive("More than 0").max(100_000).default(1),
+  grossAmount: positiveMoney("Amount"),
+  gstPercent: z.coerce.number({ error: "GST % must be a number" }).min(0, "Can't be negative").max(28, "At most 28%").default(18),
+});
+
+/**
+ * `lines` arrives as a JSON string in the create form (a multipart upload),
+ * or as an array in the edit JSON. Either way: 1–50 lines.
+ */
+const linesField = z
+  .preprocess((v) => {
+    if (typeof v !== "string") return v;
+    try {
+      return JSON.parse(v);
+    } catch {
+      return "invalid";
+    }
+  }, z.array(lineSchema, { error: "The items couldn't be read — reload and try again" }).min(1, "Add at least one item").max(50, "At most 50 items"))
+  .optional();
+
 const invoiceFields = {
   invoiceDate: isoDate("Invoice date"),
   dueDate: isoDate("Due date").optional(),
@@ -52,10 +78,13 @@ const invoiceFields = {
   customerGstin: blankAsMissing(gstin),
   // Mulberry's quotation invoices have no place of supply or HSN.
   placeOfSupply: z.string().trim().max(100).default(""),
-  itemDescription: requiredText("Item", 500),
+  // Line items (the source of truth). Older clients send one item in the
+  // flat fields below instead; they're turned into a single line.
+  lines: linesField,
+  itemDescription: z.string().trim().max(500).optional(),
   hsnSac: z.string().trim().max(20).default(""),
   qty: z.coerce.number({ error: "Quantity must be a number" }).positive("Quantity must be more than zero").max(100_000).default(1),
-  grossAmount: positiveMoney("Amount"),
+  grossAmount: money("Amount").optional(),
   gstPercent: percent("GST %").default(18),
   notes: optionalText(2000),
   terms: optionalText(5000),
@@ -89,6 +118,36 @@ export const updateInvoiceSchema = z.object({
   doId: blankAsMissing(optionalText(40)),
   downPayment: blankAsMissing(money("Down payment").optional()),
 });
+
+/**
+ * The invoice's lines, from `lines` or the legacy single-item fields, checked
+ * for what a tax invoice needs. Unregistered sellers (Mulberry) charge no GST
+ * and need no HSN.
+ */
+function resolveLines(
+  input: { lines?: LineInput[]; itemDescription?: string; hsnSac: string; qty: number; grossAmount?: number; gstPercent: number },
+  gstRegistered: boolean
+): LineInput[] {
+  let lines: LineInput[];
+  if (input.lines?.length) {
+    lines = input.lines;
+  } else {
+    const fields: Record<string, string> = {};
+    if (!input.itemDescription) fields["lines.0.description"] = "Describe the item";
+    if (!(input.grossAmount && input.grossAmount > 0)) fields["lines.0.grossAmount"] = "Enter the amount";
+    if (Object.keys(fields).length) throw badRequest("Add at least one item with an amount", fields);
+    lines = [{ description: input.itemDescription!, hsnSac: input.hsnSac, qty: input.qty, grossAmount: input.grossAmount!, gstPercent: input.gstPercent }];
+  }
+  const fields: Record<string, string> = {};
+  lines = lines.map((l, i) => {
+    if (gstRegistered && !l.hsnSac) fields[`lines.${i}.hsnSac`] = "HSN/SAC is required on a tax invoice";
+    return { ...l, gstPercent: gstRegistered ? l.gstPercent : 0, hsnSac: l.hsnSac ?? "" };
+  });
+  if (Object.keys(fields).length) throw badRequest("Every item needs its HSN/SAC code", fields);
+  return lines;
+}
+
+const linesCreate = (lines: LineInput[]) => lines.map((l, position) => ({ position, ...l }));
 
 /** Bajaj sales: the down payment must leave something for Bajaj to finance. */
 function checkDownPayment(downPayment: number, price: number) {
@@ -138,15 +197,19 @@ export async function getInvoice(user: SessionUser, invoiceId: string) {
   await requireInvoiceAccess(user, invoiceId);
   return prisma.invoice.findUniqueOrThrow({
     where: { id: invoiceId },
-    include: { payments: { orderBy: { paidOn: "asc" } }, business: { select: { name: true, slug: true, color: true } } },
+    include: {
+      payments: { orderBy: { paidOn: "asc" } },
+      lines: { orderBy: { position: "asc" } },
+      business: { select: { name: true, slug: true, color: true } },
+    },
   });
 }
 
 export async function nextInvoiceNumber(user: SessionUser, businessId: string): Promise<string> {
   await assertBusinessAccess(user, businessId);
-  const business = await prisma.business.findUnique({ where: { id: businessId }, select: { invoicePrefix: true, invoiceNextNumber: true } });
+  const business = await prisma.business.findUnique({ where: { id: businessId }, select: businessSummarySelect });
   if (!business) throw notFound("That business");
-  return previewInvoiceNumber(business);
+  return nextInvoiceNumberPreview(business);
 }
 
 export async function createInvoice(user: SessionUser, input: z.infer<typeof createInvoiceSchema>, form: FormData, req: Request) {
@@ -155,15 +218,18 @@ export async function createInvoice(user: SessionUser, input: z.infer<typeof cre
 
   const business = await prisma.business.findUnique({
     where: { id: input.businessId },
-    select: { id: true, name: true, entity: true, archivedAt: true },
+    select: { ...businessSummarySelect, archivedAt: true },
   });
   if (!business) throw notFound("That business");
   if (business.archivedAt) throw badRequest(`${business.name} is archived — restore it in Settings to raise invoices`);
 
   const isMulberry = business.entity === "MULBERRY";
   requireAddressForTaxInvoice(isMulberry, input.customerAddress);
+  await assertPeriodOpen(business.id, [input.invoiceDate], "This invoice's date");
   // An unregistered entity can't charge GST, whatever the form sent.
-  const gstPercent = isMulberry ? 0 : input.gstPercent;
+  const lines = resolveLines(input, !isMulberry);
+  const summary = invoiceSummaryFields(lines);
+  const total = summary.grossAmount;
 
   // The source document is a convenience copy; the invoice must not be lost
   // because storage hiccupped. A rejected file (wrong type, too big) is still
@@ -191,32 +257,28 @@ export async function createInvoice(user: SessionUser, input: z.infer<typeof cre
     throw badRequest("Enter the DO number from Bajaj's delivery order", { doId: "The DO number is required for a Bajaj sale" });
   }
   const downPayment = isBajaj ? round2(input.downPayment) : null;
-  if (isBajaj) checkDownPayment(downPayment!, input.grossAmount);
-  const financedAmount = isBajaj ? round2(input.grossAmount - downPayment!) : null;
+  if (isBajaj) checkDownPayment(downPayment!, total);
+  const financedAmount = isBajaj ? round2(total - downPayment!) : null;
 
   const initialPayment = isBajaj
     ? input.downPaymentReceived && downPayment! > 0
       ? downPayment!
       : 0
     : isMulberry && input.advancePaid > 0
-      ? Math.min(input.advancePaid, input.grossAmount)
+      ? Math.min(input.advancePaid, total)
       : 0;
   const initialMethod = isBajaj ? DOWN_PAYMENT : "Advance";
+
+  const suggested = input.invoiceNumber ? await nextInvoiceNumberPreview(business, input.invoiceDate) : null;
 
   let invoice;
   try {
     invoice = await prisma.$transaction(async (tx) => {
       // Submitting the number the form suggested is the same as asking for the
       // next one: if someone else took it meanwhile, this still gets a free one.
-      const series = await tx.business.findUniqueOrThrow({
-        where: { id: business.id },
-        select: { invoicePrefix: true, invoiceNextNumber: true },
-      });
-      const requested =
-        input.invoiceNumber && input.invoiceNumber !== formatInvoiceNumber(series.invoicePrefix, series.invoiceNextNumber)
-          ? input.invoiceNumber
-          : null;
-      const invoiceNumber = await allocateInvoiceNumber(tx, business.id, requested);
+      const requested = input.invoiceNumber && input.invoiceNumber !== suggested ? input.invoiceNumber : null;
+      // The invoice date picks the financial year when the series restarts each April.
+      const invoiceNumber = await allocateInvoiceNumber(tx, business.id, requested, input.invoiceDate);
 
       return tx.invoice.create({
         data: {
@@ -230,11 +292,8 @@ export async function createInvoice(user: SessionUser, input: z.infer<typeof cre
           customerEmail: input.customerEmail,
           customerGstin: isMulberry ? null : input.customerGstin,
           placeOfSupply: input.placeOfSupply,
-          itemDescription: input.itemDescription,
-          hsnSac: input.hsnSac,
-          qty: input.qty,
-          grossAmount: input.grossAmount,
-          gstPercent,
+          ...summary,
+          lines: { create: linesCreate(lines) },
           notes: input.notes,
           terms: input.terms,
           doId: input.doId,
@@ -256,7 +315,7 @@ export async function createInvoice(user: SessionUser, input: z.infer<typeof cre
               }
             : {}),
         },
-        include: { payments: true },
+        include: { payments: true, lines: { orderBy: { position: "asc" } } },
       });
     });
   } catch (e) {
@@ -272,6 +331,8 @@ export async function createInvoice(user: SessionUser, input: z.infer<typeof cre
     entityType: "invoice",
     entityId: invoice.id,
     summary: `Raised ${invoice.invoiceNumber} for ${invoice.customerName} · ${rupees(invoice.grossAmount)}${
+      lines.length > 1 ? ` · ${lines.length} items` : ""
+    }${
       isBajaj ? ` · Bajaj DO ${invoice.doId}, financing ${rupees(financedAmount!)}` : ""
     }${initialPayment > 0 ? ` (${initialMethod.toLowerCase()} ${rupees(initialPayment)} received)` : ""}`,
     req,
@@ -310,10 +371,19 @@ export async function updateInvoice(user: SessionUser, invoiceId: string, input:
 
   const existing = await prisma.invoice.findUniqueOrThrow({
     where: { id: invoiceId },
-    include: { payments: { select: { id: true, amount: true, method: true } } },
+    include: {
+      payments: { select: { id: true, amount: true, method: true } },
+      lines: { orderBy: { position: "asc" } },
+    },
   });
+  if (existing.status === "CANCELLED") throw conflict(`${existing.invoiceNumber} is cancelled — it can't be edited`);
   const isMulberry = existing.brand === "MULBERRY";
   requireAddressForTaxInvoice(isMulberry, input.customerAddress);
+  // Neither the old date nor the new one may be in a period whose GST is filed.
+  await assertPeriodOpen(existing.businessId, [existing.invoiceDate, input.invoiceDate], existing.invoiceNumber);
+  const lines = resolveLines(input, !isMulberry);
+  const summary = invoiceSummaryFields(lines);
+  const total = summary.grossAmount;
 
   // Moving between businesses keeps the legal entity: the printed seller can't change.
   let targetBusinessId = existing.businessId;
@@ -325,11 +395,6 @@ export async function updateInvoice(user: SessionUser, invoiceId: string, input:
       throw badRequest(`${target.name} bills as a different legal entity — an issued invoice can't change its seller`);
     }
     targetBusinessId = target.id;
-  }
-
-  if (input.invoiceNumber !== existing.invoiceNumber) {
-    const clash = await prisma.invoice.findUnique({ where: { invoiceNumber: input.invoiceNumber }, select: { id: true } });
-    if (clash) throw conflict(`Invoice ${input.invoiceNumber} already exists`);
   }
 
   // A Bajaj DO invoice was marked paid by its disbursement when raised. While
@@ -349,8 +414,8 @@ export async function updateInvoice(user: SessionUser, invoiceId: string, input:
     const doId = input.doId ?? existing.doId;
     if (!doId) throw badRequest("A Bajaj sale needs its DO number", { doId: "The DO number is required for a Bajaj sale" });
     const downPayment = round2(input.downPayment ?? existing.downPayment ?? 0);
-    checkDownPayment(downPayment, input.grossAmount);
-    const financedAmount = round2(input.grossAmount - downPayment);
+    checkDownPayment(downPayment, total);
+    const financedAmount = round2(total - downPayment);
     const disbursed = existing.payments.some((p) => p.method === BAJAJ_DISBURSEMENT);
     if (disbursed && !bajajPayment && Math.abs(financedAmount - (existing.financedAmount ?? financedAmount)) > 0.005) {
       throw badRequest("Bajaj has already paid out on this sale — the price and down payment can't change the financed amount now", {
@@ -359,9 +424,9 @@ export async function updateInvoice(user: SessionUser, invoiceId: string, input:
     }
     bajajFields = { doId, downPayment, financedAmount };
   }
-  if (!bajajPayment && input.grossAmount < paid - 0.005) {
-    throw badRequest(`${rupees(paid)} has already been received against this invoice — the amount can't go below that`, {
-      grossAmount: `At least ${rupees(paid)}`,
+  if (!bajajPayment && total < paid - 0.005) {
+    throw badRequest(`${rupees(paid)} has already been received against this invoice — the total can't go below that`, {
+      [`lines.${lines.length - 1}.grossAmount`]: `The total must stay at least ${rupees(paid)}`,
     });
   }
 
@@ -374,21 +439,33 @@ export async function updateInvoice(user: SessionUser, invoiceId: string, input:
     customerEmail: input.customerEmail,
     customerGstin: isMulberry ? existing.customerGstin : input.customerGstin,
     placeOfSupply: input.placeOfSupply,
-    itemDescription: input.itemDescription,
-    hsnSac: input.hsnSac,
-    qty: input.qty,
-    grossAmount: input.grossAmount,
-    // Mulberry isn't GST-registered; its stored rate is left as it was.
-    gstPercent: isMulberry ? existing.gstPercent : input.gstPercent,
+    ...summary,
     notes: input.notes,
     terms: input.terms,
     businessId: targetBusinessId,
     ...(bajajFields ?? {}),
   };
   const changed = diff(existing, data, EDIT_LABELS);
+  // Lines are compared as a whole: any edit to an item's text, qty, amount or rate.
+  const lineKey = (ls: LineInput[]) => JSON.stringify(ls.map((l) => [l.description, l.hsnSac, l.qty, l.grossAmount, l.gstPercent]));
+  const linesChanged = lineKey(existing.lines) !== lineKey(lines);
+  if (linesChanged) {
+    changed.changes.lines = { from: existing.lines.length, to: lines.length };
+    const note = existing.lines.length === lines.length ? "items edited" : `items ${existing.lines.length} → ${lines.length}`;
+    changed.summary = changed.summary ? `${changed.summary}, ${note}` : note;
+  }
   if (Object.keys(changed.changes).length === 0) return existing;
 
   const invoice = await prisma.$transaction(async (tx) => {
+    // A changed number is checked and moves the series counter past it
+    // (the same rules as typing a number on a new invoice).
+    if (input.invoiceNumber !== existing.invoiceNumber) {
+      await allocateInvoiceNumber(tx, targetBusinessId, input.invoiceNumber, input.invoiceDate);
+    }
+    if (linesChanged) {
+      await tx.invoiceLine.deleteMany({ where: { invoiceId } });
+      await tx.invoiceLine.createMany({ data: linesCreate(lines).map((l) => ({ ...l, invoiceId })) });
+    }
     const updated = await tx.invoice.update({
       where: { id: invoiceId },
       data: {
@@ -397,14 +474,8 @@ export async function updateInvoice(user: SessionUser, invoiceId: string, input:
         ...(existing.emailSentAt ? { revisedAt: new Date() } : {}),
       },
     });
-    if (bajajPayment && (bajajPayment.amount !== input.grossAmount || data.invoiceDate.getTime() !== existing.invoiceDate.getTime())) {
-      await tx.payment.update({ where: { id: bajajPayment.id }, data: { amount: input.grossAmount, paidOn: data.invoiceDate } });
-    }
-    // A number typed ahead of the series moves the counter past it.
-    const series = await tx.business.findUniqueOrThrow({ where: { id: targetBusinessId }, select: { invoicePrefix: true, invoiceNextNumber: true } });
-    const seq = seqInSeries(input.invoiceNumber, series.invoicePrefix);
-    if (seq !== null && seq >= series.invoiceNextNumber) {
-      await tx.business.update({ where: { id: targetBusinessId }, data: { invoiceNextNumber: seq + 1 } });
+    if (bajajPayment && (bajajPayment.amount !== total || data.invoiceDate.getTime() !== existing.invoiceDate.getTime())) {
+      await tx.payment.update({ where: { id: bajajPayment.id }, data: { amount: total, paidOn: data.invoiceDate } });
     }
     return updated;
   });
@@ -443,13 +514,29 @@ export async function deleteInvoice(user: SessionUser, invoiceId: string, req: R
       id: true,
       businessId: true,
       invoiceNumber: true,
+      invoiceDate: true,
       customerName: true,
       grossAmount: true,
       doFilePath: true,
+      emailSentAt: true,
       payments: { select: { id: true, proofPath: true } },
+      _count: { select: { creditNotes: true } },
     },
   });
   if (!invoice) throw notFound("That invoice");
+  // An issued invoice is a tax document: once money has moved against it, a
+  // credit note exists, or the customer has a copy, it's cancelled (keeping
+  // its number, so the series has no gap) — never deleted.
+  if (invoice.payments.length > 0 || invoice._count.creditNotes > 0 || invoice.emailSentAt) {
+    const why =
+      invoice.payments.length > 0
+        ? "it has payments recorded"
+        : invoice._count.creditNotes > 0
+          ? "it has credit notes"
+          : "it has already been emailed to the customer";
+    throw conflict(`${invoice.invoiceNumber} can't be deleted because ${why}. Cancel it instead.`);
+  }
+  await assertPeriodOpen(invoice.businessId, [invoice.invoiceDate], invoice.invoiceNumber);
 
   await prisma.invoice.delete({ where: { id: invoiceId } });
   await audit({

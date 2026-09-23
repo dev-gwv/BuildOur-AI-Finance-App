@@ -1,6 +1,5 @@
 import Link from "next/link";
-import { FileText, Plus, Search } from "lucide-react";
-import { DeleteButton } from "@/components/DeleteButton";
+import { FileText, Lock, Plus, Search } from "lucide-react";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -9,6 +8,7 @@ import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/Table";
 import { isInterStateSupply } from "@/lib/gstState";
 import { formatCurrency, formatCurrencyWhole, formatDate } from "@/lib/format";
 import { startOfToday } from "@/lib/alerts";
+import { invoiceBalance } from "@/lib/invoiceLines";
 
 export type ListedInvoice = {
   id: string;
@@ -25,8 +25,10 @@ export type ListedInvoice = {
   saleType: string;
   doId: string | null;
   financedAmount: number | null;
-  business: { name: string; color: string };
-  payments: { amount: number; method: string | null }[];
+  status: string;
+  business: { name: string; color: string; gstLockedThrough: Date | null };
+  creditNotes: { grossAmount: number }[];
+  payments: { amount: number; method: string | null; kind: string; tdsAmount: number }[];
 };
 
 /** Must match BAJAJ_DISBURSEMENT in src/server/services/invoices.ts. */
@@ -52,14 +54,16 @@ export const listedInvoiceSelect = {
   saleType: true,
   doId: true,
   financedAmount: true,
-  business: { select: { name: true, color: true } },
-  payments: { select: { amount: true, method: true } },
+  status: true,
+  business: { select: { name: true, color: true, gstLockedThrough: true } },
+  creditNotes: { select: { grossAmount: true } },
+  payments: { select: { amount: true, method: true, kind: true, tdsAmount: true } },
 } as const;
 
-export type StatusFilter = "all" | "open" | "paid" | "bajaj";
+export type StatusFilter = "all" | "open" | "paid" | "bajaj" | "cancelled";
 
 export function parseStatusFilter(value: string | undefined): StatusFilter {
-  return value === "open" || value === "paid" || value === "bajaj" ? value : "all";
+  return value === "open" || value === "paid" || value === "bajaj" || value === "cancelled" ? value : "all";
 }
 
 /** The list's filters, kept in the URL so a filtered view can be shared or bookmarked. */
@@ -75,7 +79,6 @@ export function InvoiceList({
   filters,
   periods,
   showBusiness,
-  canDelete,
   newHref,
 }: {
   invoices: ListedInvoice[];
@@ -83,48 +86,68 @@ export function InvoiceList({
   periods: readonly { key: string; label: string }[];
   /** On "All businesses", each row says which business it belongs to. */
   showBusiness: boolean;
-  canDelete: boolean;
   newHref: string;
 }) {
   // Due dates are calendar days: an invoice due today isn't overdue until tomorrow.
   const today = startOfToday();
   const rows = invoices.map((inv) => {
-    const paid = inv.payments.reduce((s, p) => s + p.amount, 0);
-    const balance = Math.round((inv.grossAmount - paid) * 100) / 100;
-    return { ...inv, paid, balance, awaiting: awaitingBajaj(inv, balance) };
+    // The one balance rule: invoice − credit notes − (receipts − refunds); cancelled owes nothing.
+    const b = invoiceBalance(inv);
+    const lock = inv.business.gstLockedThrough;
+    return {
+      ...inv,
+      bal: b,
+      paid: Math.round((b.received - b.refunded) * 100) / 100,
+      balance: b.balance,
+      awaiting: !b.cancelled && awaitingBajaj(inv, b.balance),
+      locked: Boolean(lock && inv.invoiceDate.getTime() <= lock.getTime()),
+    };
   });
+  const issued = rows.filter((r) => !r.bal.cancelled);
 
-  const totals = rows.reduce(
-    (acc, r) => ({ billed: acc.billed + r.grossAmount, paid: acc.paid + r.paid, due: acc.due + Math.max(0, r.balance) }),
+  const totals = issued.reduce(
+    (acc, r) => ({ billed: acc.billed + r.bal.net, paid: acc.paid + r.paid, due: acc.due + r.balance }),
     { billed: 0, paid: 0, due: 0 }
   );
-  const openCount = rows.filter((r) => r.balance > 0.5).length;
+  const openCount = issued.filter((r) => !r.bal.settled).length;
+  const paidCount = issued.length - openCount;
+  const cancelledCount = rows.length - issued.length;
   // A sale waiting on Bajaj's payout isn't overdue from the customer.
-  const overdueCount = rows.filter((r) => r.balance > 0.5 && !r.awaiting && r.dueDate < today).length;
+  const overdueCount = issued.filter((r) => !r.bal.settled && !r.awaiting && r.dueDate < today).length;
   const awaitingCount = rows.filter((r) => r.awaiting).length;
+  const refundCount = issued.filter((r) => r.bal.toRefund > 0).length;
   // Bajaj owes only the financed part; any unpaid down payment is the customer's.
   const awaitingTotal = rows
     .filter((r) => r.awaiting)
     .reduce((s, r) => s + Math.min(r.financedAmount ?? r.balance, r.balance), 0);
   const visible = rows.filter((r) =>
     filters.status === "open"
-      ? r.balance > 0.5
+      ? !r.bal.cancelled && !r.bal.settled
       : filters.status === "paid"
-        ? r.balance <= 0.5
+        ? !r.bal.cancelled && r.bal.settled
         : filters.status === "bajaj"
           ? r.awaiting
-          : true
+          : filters.status === "cancelled"
+            ? r.bal.cancelled
+            : true
   );
 
   const status = (inv: (typeof rows)[number]) => {
-    const settled = inv.balance <= 0.5;
-    const late = !settled && inv.dueDate < today;
-    if (settled) return <Badge tone="success" dot>Paid</Badge>;
+    const b = inv.bal;
+    if (b.cancelled) return <Badge dot>Cancelled</Badge>;
+    if (b.toRefund > 0) return <Badge tone="danger" dot>To refund</Badge>;
+    const late = !b.settled && inv.dueDate < today;
+    if (b.settled) return b.credited > 0 ? <Badge tone="success" dot>{b.net > 0 ? "Paid · credited" : "Credited"}</Badge> : <Badge tone="success" dot>Paid</Badge>;
     // Waiting on Bajaj's payout isn't the customer being late.
     if (inv.awaiting) return <Badge tone="brand" dot>Awaiting Bajaj</Badge>;
     if (inv.paid > 0) return <Badge tone={late ? "danger" : "warning"} dot>Part paid</Badge>;
     return <Badge tone={late ? "danger" : "neutral"} dot>{late ? "Overdue" : "Unpaid"}</Badge>;
   };
+  const lockIcon = (
+    <span title="GST for this period is filed — correct it with a credit note" className="inline-flex text-neutral-400">
+      <Lock className="h-3 w-3" aria-label="Filed GST period" />
+    </span>
+  );
 
   const href = (over: Partial<ListFilters>) => {
     const f = { ...filters, ...over };
@@ -165,7 +188,7 @@ export function InvoiceList({
           {
             label: "Billed",
             value: totals.billed,
-            hint: `${rows.length} invoice${rows.length === 1 ? "" : "s"}`,
+            hint: `${issued.length} invoice${issued.length === 1 ? "" : "s"}${cancelledCount ? ` · ${cancelledCount} cancelled` : ""}`,
             cls: "text-neutral-950 dark:text-white",
           },
           {
@@ -179,7 +202,7 @@ export function InvoiceList({
             value: totals.due,
             hint: `${openCount} open${overdueCount ? ` · ${overdueCount} overdue` : ""}${
               awaitingCount ? ` · ${formatCurrencyWhole(awaitingTotal)} awaiting Bajaj` : ""
-            }`,
+            }${refundCount ? ` · ${refundCount} to refund` : ""}`,
             cls: totals.due > 0 ? "text-amber-700 dark:text-amber-400" : "text-neutral-950 dark:text-white",
           },
         ].map((m) => (
@@ -201,9 +224,12 @@ export function InvoiceList({
                 [
                   { key: "all", label: `All · ${rows.length}` },
                   { key: "open", label: `Open · ${openCount}` },
-                  { key: "paid", label: `Paid · ${rows.length - openCount}` },
+                  { key: "paid", label: `Paid · ${paidCount}` },
                   ...(awaitingCount > 0 || filters.status === "bajaj"
                     ? [{ key: "bajaj" as const, label: `Awaiting Bajaj · ${awaitingCount}` }]
+                    : []),
+                  ...(cancelledCount > 0 || filters.status === "cancelled"
+                    ? [{ key: "cancelled" as const, label: `Cancelled · ${cancelledCount}` }]
                     : []),
                 ] as const
               ).map((s) => ({ key: s.key, label: s.label, href: href({ status: s.key }), active: filters.status === s.key }))}
@@ -231,7 +257,12 @@ export function InvoiceList({
             <li key={inv.id}>
               <Link href={`/invoices/${inv.id}`} className="block px-4 py-3 active:bg-neutral-50 dark:active:bg-white/[0.03]">
                 <div className="flex items-center justify-between gap-3">
-                  <span className="truncate font-medium text-neutral-900 dark:text-neutral-100">{inv.invoiceNumber}</span>
+                  <span
+                    className={`flex items-center gap-1.5 truncate font-medium text-neutral-900 dark:text-neutral-100 ${inv.bal.cancelled ? "line-through decoration-neutral-400" : ""}`}
+                  >
+                    {inv.invoiceNumber}
+                    {inv.locked && lockIcon}
+                  </span>
                   {status(inv)}
                 </div>
                 <div className="mt-0.5 flex items-center gap-1.5 text-sm text-neutral-600 dark:text-neutral-400">
@@ -241,10 +272,13 @@ export function InvoiceList({
                 <div className="mt-1.5 flex items-baseline justify-between gap-3 text-xs text-neutral-500 dark:text-neutral-400">
                   <span>{formatDate(inv.invoiceDate)}</span>
                   <span className="tabular-nums">
-                    <span className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">{formatCurrency(inv.grossAmount)}</span>
-                    {inv.balance > 0.5 && inv.paid > 0 && (
+                    <span className={`text-sm font-semibold ${inv.bal.cancelled ? "text-neutral-400 line-through" : "text-neutral-900 dark:text-neutral-100"}`}>
+                      {formatCurrency(inv.grossAmount)}
+                    </span>
+                    {!inv.bal.settled && inv.paid > 0 && (
                       <span className="ml-1.5 text-amber-700 dark:text-amber-400">{formatCurrency(inv.balance)} due</span>
                     )}
+                    {inv.bal.toRefund > 0 && <span className="ml-1.5 text-red-600 dark:text-red-400">{formatCurrency(inv.bal.toRefund)} to refund</span>}
                   </span>
                 </div>
               </Link>
@@ -265,21 +299,25 @@ export function InvoiceList({
                 <TH className="text-right">Amount</TH>
                 <TH className="text-right">Collected</TH>
                 <TH className="text-right">Balance</TH>
-                {canDelete && <TH />}
               </tr>
             </THead>
             <TBody>
               {visible.map((inv) => {
-                const settled = inv.balance <= 0.5;
+                const settled = inv.bal.settled;
                 return (
                   <TR key={inv.id}>
                     <TD>
-                      <Link
-                        href={`/invoices/${inv.id}`}
-                        className="whitespace-nowrap font-medium text-neutral-900 hover:text-brand-600 dark:text-neutral-100 dark:hover:text-brand-400"
-                      >
-                        {inv.invoiceNumber}
-                      </Link>
+                      <span className="flex items-center gap-1.5">
+                        <Link
+                          href={`/invoices/${inv.id}`}
+                          className={`whitespace-nowrap font-medium text-neutral-900 hover:text-brand-600 dark:text-neutral-100 dark:hover:text-brand-400 ${
+                            inv.bal.cancelled ? "line-through decoration-neutral-400" : ""
+                          }`}
+                        >
+                          {inv.invoiceNumber}
+                        </Link>
+                        {inv.locked && lockIcon}
+                      </span>
                       <div className="mt-1 flex flex-wrap gap-1">
                         {inv.brand === "GRATEFUL" &&
                           (isInterStateSupply(inv.customerGstin, inv.placeOfSupply) ? <Badge tone="warning">IGST</Badge> : <Badge>CGST+SGST</Badge>)}
@@ -304,28 +342,32 @@ export function InvoiceList({
                     )}
                     <TD className="whitespace-nowrap">{formatDate(inv.invoiceDate)}</TD>
                     <TD>{status(inv)}</TD>
-                    <TD className="text-right tabular-nums font-medium text-neutral-900 dark:text-neutral-100">
-                      {formatCurrency(inv.grossAmount)}
-                    </TD>
-                    <TD className="text-right tabular-nums text-emerald-600 dark:text-emerald-400">{formatCurrency(inv.paid)}</TD>
                     <TD
-                      className={`text-right tabular-nums font-semibold ${settled ? "text-neutral-300 dark:text-neutral-600" : "text-amber-700 dark:text-amber-400"}`}
+                      className={`text-right tabular-nums font-medium ${inv.bal.cancelled ? "text-neutral-400 line-through" : "text-neutral-900 dark:text-neutral-100"}`}
                     >
-                      {settled ? "—" : formatCurrency(inv.balance)}
+                      {formatCurrency(inv.grossAmount)}
+                      {inv.bal.credited > 0 && (
+                        <span className="block text-xs font-normal text-neutral-500 dark:text-neutral-400">−{formatCurrency(inv.bal.credited)} credited</span>
+                      )}
                     </TD>
-                    {canDelete && (
-                      <TD>
-                        <div className="flex items-center justify-end">
-                          <DeleteButton url={`/api/invoices/${inv.id}`} label={inv.invoiceNumber} />
-                        </div>
-                      </TD>
-                    )}
+                    <TD className="text-right tabular-nums text-emerald-600 dark:text-emerald-400">{inv.bal.cancelled ? "—" : formatCurrency(inv.paid)}</TD>
+                    <TD
+                      className={`text-right tabular-nums font-semibold ${
+                        inv.bal.toRefund > 0
+                          ? "text-red-600 dark:text-red-400"
+                          : settled
+                            ? "text-neutral-500 dark:text-neutral-400"
+                            : "text-amber-700 dark:text-amber-400"
+                      }`}
+                    >
+                      {inv.bal.toRefund > 0 ? `−${formatCurrency(inv.bal.toRefund)}` : settled ? "—" : formatCurrency(inv.balance)}
+                    </TD>
                   </TR>
                 );
               })}
               {visible.length === 0 && (
                 <tr>
-                  <td colSpan={9} className="px-4 py-10 text-center text-sm text-neutral-500">
+                  <td colSpan={8} className="px-4 py-10 text-center text-sm text-neutral-500">
                     No invoices match these filters.
                   </td>
                 </tr>

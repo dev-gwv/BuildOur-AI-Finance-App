@@ -1,8 +1,8 @@
 import Link from "next/link";
-import { Download, FileText, Info, Landmark, Percent, Receipt, Scale } from "lucide-react";
+import { Ban, Download, FileText, Info, Landmark, Lock, Percent, Receipt, Scale, Undo2 } from "lucide-react";
 import { requirePageUser } from "@/server/session";
 import { getScope } from "@/server/scope";
-import { GST_PERIODS, monthLabel, parseGstPeriod, type GstLine, type GstTotals } from "@/lib/gstReport";
+import { GST_PERIODS, monthLabel, parseGstPeriod, type GstCreditLine, type GstLine, type GstTotals } from "@/lib/gstReport";
 import { gstBusinesses, loadGstReport, resolveGstBusinessIds } from "@/lib/gstReportData";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Card, CardBody, CardHeader, CardTitle } from "@/components/ui/Card";
@@ -84,7 +84,9 @@ function InvoiceTable({
                   <TD className="font-mono text-xs">{l.customerGstin ?? "—"}</TD>
                   <TD>{l.placeOfSupply}</TD>
                   <TD className="text-right tabular-nums">{formatCurrency(l.taxable)}</TD>
-                  <TD className="text-right tabular-nums">{l.gstPercent}%</TD>
+                  <TD className="whitespace-nowrap text-right tabular-nums">
+                    {[...new Set(l.hsn.map((h) => h.gstPercent))].map((r) => `${r}%`).join(" · ") || `${l.gstPercent}%`}
+                  </TD>
                   <TD className="text-right tabular-nums">{l.cgst ? formatCurrency(l.cgst) : "—"}</TD>
                   <TD className="text-right tabular-nums">{l.sgst ? formatCurrency(l.sgst) : "—"}</TD>
                   <TD className="text-right tabular-nums">{l.igst ? formatCurrency(l.igst) : "—"}</TD>
@@ -197,16 +199,22 @@ export default async function GstReportPage({
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard
           label="Taxable turnover"
-          value={formatCurrencyWhole(report.output.taxable)}
+          value={formatCurrencyWhole(report.netOutput.taxable)}
           icon={FileText}
-          hint={`${report.output.count} invoice${report.output.count === 1 ? "" : "s"}`}
+          hint={`${report.output.count} invoice${report.output.count === 1 ? "" : "s"}${
+            report.credits.length ? ` · less ${report.credits.length} credit note${report.credits.length === 1 ? "" : "s"}` : ""
+          }`}
         />
         <StatCard
           label="Output GST"
-          value={formatCurrencyWhole(report.output.tax)}
+          value={formatCurrencyWhole(report.netOutput.tax)}
           icon={Percent}
           tone="warning"
-          hint={`IGST ${formatCurrencyWhole(report.output.igst)} · CGST+SGST ${formatCurrencyWhole(report.output.cgst + report.output.sgst)}`}
+          hint={
+            report.credits.length
+              ? `${formatCurrencyWhole(report.output.tax)} on invoices − ${formatCurrencyWhole(report.creditTotals.tax)} credited`
+              : `IGST ${formatCurrencyWhole(report.output.igst)} · CGST+SGST ${formatCurrencyWhole(report.output.cgst + report.output.sgst)}`
+          }
         />
         <StatCard
           label="Input tax credit"
@@ -233,7 +241,20 @@ export default async function GstReportPage({
         </p>
       </div>
 
-      {report.lines.length === 0 ? (
+      {report.locks.some((l) => l.through) && (
+        <div className="flex items-start gap-3 rounded-xl border border-neutral-200/80 bg-white px-4 py-3 text-sm text-neutral-700 dark:border-white/[0.07] dark:bg-neutral-900/70 dark:text-neutral-300">
+          <Lock className="mt-0.5 h-4 w-4 shrink-0 text-neutral-500" />
+          <p>
+            {report.locks
+              .filter((l) => l.through)
+              .map((l) => `${l.business}: GST filed through ${formatDate(l.through!)}`)
+              .join(" · ")}
+            . Invoices, credit notes and costs dated on or before that are locked; correct them with a credit note dated today.
+          </p>
+        </div>
+      )}
+
+      {report.lines.length === 0 && report.credits.length === 0 ? (
         <EmptyState
           icon={Landmark}
           title="No tax invoices in this period"
@@ -264,8 +285,18 @@ export default async function GstReportPage({
                     <FragmentRows key={m.month} label={monthLabel(m.month)} m={m} />
                   ))}
                   <TR className="bg-neutral-50/70 dark:bg-white/[0.02]">
-                    <TotalsRow label="Total" t={report.output} strong />
+                    <TotalsRow label="Invoices" t={report.output} strong />
                   </TR>
+                  {report.credits.length > 0 && (
+                    <>
+                      <TR className="bg-neutral-50/70 dark:bg-white/[0.02]">
+                        <TotalsRow label="Less credit notes" t={negate(report.creditTotals)} />
+                      </TR>
+                      <TR className="bg-neutral-50/70 dark:bg-white/[0.02]">
+                        <TotalsRow label="Net output" t={report.netOutput} strong />
+                      </TR>
+                    </>
+                  )}
                 </TBody>
               </Table>
             </div>
@@ -283,7 +314,99 @@ export default async function GstReportPage({
             subtitle={`Customers without a GSTIN, reported in aggregate (table 7) · tax ${formatCurrency(report.b2c.tax)}`}
             showBusiness={showBusiness}
           />
+
+          <CreditNoteTable credits={report.credits} showBusiness={showBusiness} cdnrTax={report.cdnr.tax} cdnurTax={report.cdnur.tax} />
+
+          <Card className="overflow-hidden">
+            <CardHeader>
+              <CardTitle title="HSN / SAC summary" subtitle="GSTR-1 table 12 · per code and rate, net of credit notes" />
+            </CardHeader>
+            {report.hsn.length === 0 ? (
+              <CardBody>
+                <p className="text-sm text-neutral-500">None in this period.</p>
+              </CardBody>
+            ) : (
+              <div className="overflow-x-auto">
+                <Table className="min-w-[760px]">
+                  <THead>
+                    <tr>
+                      <TH>HSN / SAC</TH>
+                      <TH className="text-right">Rate</TH>
+                      <TH className="text-right">Qty</TH>
+                      <TH className="text-right">Taxable</TH>
+                      <TH className="text-right">CGST</TH>
+                      <TH className="text-right">SGST</TH>
+                      <TH className="text-right">IGST</TH>
+                      <TH className="text-right">Total value</TH>
+                    </tr>
+                  </THead>
+                  <TBody>
+                    {report.hsn.map((h) => (
+                      <TR key={`${h.hsnSac}|${h.gstPercent}`}>
+                        <TD className="font-mono text-xs text-neutral-900 dark:text-neutral-100">{h.hsnSac || "—"}</TD>
+                        <TD className="text-right tabular-nums">{h.gstPercent}%</TD>
+                        <TD className="text-right tabular-nums">{h.qty}</TD>
+                        <TD className="text-right tabular-nums">{formatCurrency(h.taxable)}</TD>
+                        <TD className="text-right tabular-nums">{h.cgst ? formatCurrency(h.cgst) : "—"}</TD>
+                        <TD className="text-right tabular-nums">{h.sgst ? formatCurrency(h.sgst) : "—"}</TD>
+                        <TD className="text-right tabular-nums">{h.igst ? formatCurrency(h.igst) : "—"}</TD>
+                        <TD className="text-right font-medium tabular-nums text-neutral-900 dark:text-neutral-100">{formatCurrency(h.total)}</TD>
+                      </TR>
+                    ))}
+                  </TBody>
+                </Table>
+              </div>
+            )}
+          </Card>
         </>
+      )}
+
+      {report.cancelled.length > 0 && (
+        <Card className="overflow-hidden">
+          <CardHeader>
+            <CardTitle
+              title={
+                <span className="flex items-center gap-2">
+                  <Ban className="h-4 w-4 text-neutral-400" />
+                  Cancelled, not reported · {report.cancelled.length}
+                </span>
+              }
+              subtitle="These numbers were issued and then cancelled. They stay in the series with nothing reported against them."
+            />
+          </CardHeader>
+          <div className="overflow-x-auto">
+            <Table className="min-w-[640px]">
+              <THead>
+                <tr>
+                  <TH>Invoice</TH>
+                  <TH>Date</TH>
+                  <TH>Customer</TH>
+                  <TH>Reason</TH>
+                  <TH className="text-right">Was</TH>
+                </tr>
+              </THead>
+              <TBody>
+                {report.cancelled.map((c) => (
+                  <TR key={c.id}>
+                    <TD>
+                      <Link
+                        href={`/invoices/${c.id}`}
+                        className="whitespace-nowrap font-medium text-neutral-900 line-through decoration-neutral-400 hover:text-brand-600 dark:text-neutral-100"
+                      >
+                        {c.invoiceNumber}
+                      </Link>
+                      {showBusiness && <span className="block text-xs text-neutral-400">{c.business}</span>}
+                    </TD>
+                    <TD className="whitespace-nowrap">{formatDate(c.invoiceDate)}</TD>
+                    <TD className="max-w-48 truncate">{c.customerName}</TD>
+                    <TD className="max-w-64 truncate">{c.cancelReason ?? "—"}</TD>
+                    <TD className="text-right tabular-nums text-neutral-500">{formatCurrency(c.grossAmount)}</TD>
+                  </TR>
+                ))}
+              </TBody>
+            </Table>
+          </div>
+        </Card>
       )}
 
       <Card className="overflow-hidden">
@@ -354,11 +477,22 @@ export default async function GstReportPage({
   );
 }
 
-function FragmentRows({ label, m }: { label: string; m: { b2b: GstTotals; b2c: GstTotals; all: GstTotals } }) {
+/** Credit notes shown as negatives in the monthly table. */
+function negate(t: GstTotals): GstTotals {
+  return { ...t, taxable: -t.taxable, cgst: -t.cgst, sgst: -t.sgst, igst: -t.igst, tax: -t.tax, value: -t.value };
+}
+
+function FragmentRows({
+  label,
+  m,
+}: {
+  label: string;
+  m: { b2b: GstTotals; b2c: GstTotals; all: GstTotals; credits: GstTotals; net: GstTotals };
+}) {
   return (
     <>
       <TR>
-        <TotalsRow label={label} t={m.all} strong />
+        <TotalsRow label={label} t={m.credits.count ? m.net : m.all} strong />
       </TR>
       {m.b2b.count > 0 && m.b2c.count > 0 && (
         <>
@@ -370,6 +504,91 @@ function FragmentRows({ label, m }: { label: string; m: { b2b: GstTotals; b2c: G
           </TR>
         </>
       )}
+      {m.credits.count > 0 && (
+        <TR>
+          <TotalsRow label={`Credit notes (${m.credits.count})`} t={negate(m.credits)} sub />
+        </TR>
+      )}
     </>
+  );
+}
+
+function CreditNoteTable({
+  credits,
+  showBusiness,
+  cdnrTax,
+  cdnurTax,
+}: {
+  credits: GstCreditLine[];
+  showBusiness: boolean;
+  cdnrTax: number;
+  cdnurTax: number;
+}) {
+  return (
+    <Card className="overflow-hidden">
+      <CardHeader>
+        <CardTitle
+          title={
+            <span className="flex items-center gap-2">
+              <Undo2 className="h-4 w-4 text-neutral-400" />
+              Credit notes · {credits.length}
+            </span>
+          }
+          subtitle={`GSTR-1 table 9B · CDNR (registered) tax ${formatCurrency(cdnrTax)} · CDNUR (unregistered) tax ${formatCurrency(cdnurTax)} · reduces output tax`}
+        />
+      </CardHeader>
+      {credits.length === 0 ? (
+        <CardBody>
+          <p className="text-sm text-neutral-500">None in this period.</p>
+        </CardBody>
+      ) : (
+        <div className="overflow-x-auto">
+          <Table className="min-w-[1080px]">
+            <THead>
+              <tr>
+                <TH>Credit note</TH>
+                <TH>Date</TH>
+                <TH>Against</TH>
+                <TH>Customer</TH>
+                <TH>Type</TH>
+                <TH className="text-right">Taxable</TH>
+                <TH className="text-right">Rate</TH>
+                <TH className="text-right">CGST</TH>
+                <TH className="text-right">SGST</TH>
+                <TH className="text-right">IGST</TH>
+                <TH className="text-right">Value</TH>
+              </tr>
+            </THead>
+            <TBody>
+              {credits.map((c) => (
+                <TR key={c.id}>
+                  <TD>
+                    <span className="whitespace-nowrap font-medium text-neutral-900 dark:text-neutral-100">{c.number}</span>
+                    <span className="block max-w-48 truncate text-xs text-neutral-400">{c.reason}</span>
+                    {showBusiness && <span className="block text-xs text-neutral-400">{c.business}</span>}
+                  </TD>
+                  <TD className="whitespace-nowrap">{formatDate(c.noteDate)}</TD>
+                  <TD className="whitespace-nowrap">
+                    {c.invoiceNumber}
+                    <span className="block text-xs text-neutral-400">{formatDate(c.invoiceDate)}</span>
+                  </TD>
+                  <TD className="max-w-48 truncate">
+                    {c.customerName}
+                    {c.customerGstin && <span className="block font-mono text-xs text-neutral-400">{c.customerGstin}</span>}
+                  </TD>
+                  <TD>{c.b2b ? <Badge tone="brand">CDNR</Badge> : <Badge>CDNUR</Badge>}</TD>
+                  <TD className="text-right tabular-nums">{formatCurrency(c.taxable)}</TD>
+                  <TD className="text-right tabular-nums">{c.gstPercent}%</TD>
+                  <TD className="text-right tabular-nums">{c.cgst ? formatCurrency(c.cgst) : "—"}</TD>
+                  <TD className="text-right tabular-nums">{c.sgst ? formatCurrency(c.sgst) : "—"}</TD>
+                  <TD className="text-right tabular-nums">{c.igst ? formatCurrency(c.igst) : "—"}</TD>
+                  <TD className="text-right font-medium tabular-nums text-red-600 dark:text-red-400">−{formatCurrency(c.value)}</TD>
+                </TR>
+              ))}
+            </TBody>
+          </Table>
+        </div>
+      )}
+    </Card>
   );
 }

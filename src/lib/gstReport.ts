@@ -1,5 +1,6 @@
 import { todayISO } from "./dates";
 import { calculateInvoiceBreakup } from "./invoiceCalc";
+import { computeInvoice, type HsnRow, type LineInput } from "./invoiceLines";
 import { isInterStateSupply } from "./gstState";
 
 // Output GST, laid out the way GSTR-1 asks for it: per invoice, then per month
@@ -62,6 +63,8 @@ export interface GstInvoiceInput {
   qty: number;
   /** Name of the business that raised it, for the detail tables. */
   business: string;
+  /** Its line items; tax is worked out per line at each line's rate. Absent = one line from the fields above. */
+  lines?: LineInput[];
 }
 
 export interface GstLine extends GstInvoiceInput {
@@ -78,6 +81,8 @@ export interface GstLine extends GstInvoiceInput {
   /** Paise lost to rounding the back-calculation, so the parts still add up to the value. */
   adjustment: number;
   value: number;
+  /** Per HSN/SAC code and rate, for GSTR-1 Table 12. */
+  hsn: HsnRow[];
 }
 
 export interface GstTotals {
@@ -100,27 +105,32 @@ export function monthOf(date: Date): string {
 export function gstLine(inv: GstInvoiceInput): GstLine {
   const gstin = inv.customerGstin?.trim() || null;
   const interState = isInterStateSupply(gstin, inv.placeOfSupply);
-  const b = calculateInvoiceBreakup({ grossAmount: inv.grossAmount, gstPercent: inv.gstPercent, qty: inv.qty, isInterState: interState });
-  const tax = round2(b.cgstAmount + b.sgstAmount + b.igstAmount);
+  const lines: LineInput[] = inv.lines?.length
+    ? inv.lines
+    : [{ description: "", hsnSac: "", qty: inv.qty, grossAmount: inv.grossAmount, gstPercent: inv.gstPercent }];
+  const t = computeInvoice(lines, { isInterState: interState });
   return {
     ...inv,
     customerGstin: gstin,
     month: monthOf(inv.invoiceDate),
     b2b: Boolean(gstin),
     interState,
-    taxable: b.subTotal,
-    cgst: b.cgstAmount,
-    sgst: b.sgstAmount,
-    igst: b.igstAmount,
-    tax,
-    adjustment: b.adjustment,
-    value: inv.grossAmount,
+    taxable: t.subTotal,
+    cgst: t.cgst,
+    sgst: t.sgst,
+    igst: t.igst,
+    tax: round2(t.cgst + t.sgst + t.igst),
+    adjustment: t.adjustment,
+    value: t.total,
+    hsn: t.hsnSummary,
   };
 }
 
 export const emptyTotals = (): GstTotals => ({ count: 0, taxable: 0, cgst: 0, sgst: 0, igst: 0, tax: 0, value: 0 });
 
-export function sumLines(lines: GstLine[]): GstTotals {
+type Summable = Pick<GstLine, "taxable" | "cgst" | "sgst" | "igst" | "tax" | "value">;
+
+export function sumLines(lines: Summable[]): GstTotals {
   const t = lines.reduce<GstTotals>(
     (acc, l) => ({
       count: acc.count + 1,
@@ -144,23 +154,119 @@ export function sumLines(lines: GstLine[]): GstTotals {
   };
 }
 
+// --- Credit notes (GSTR-1 CDNR for B2B, CDNUR for B2C) -----------------------
+
+export interface GstCreditNoteInput {
+  id: string;
+  number: string;
+  noteDate: Date;
+  reason: string;
+  grossAmount: number;
+  gstPercent: number;
+  invoiceNumber: string;
+  invoiceDate: Date;
+  customerName: string;
+  customerGstin: string | null;
+  placeOfSupply: string;
+  business: string;
+  /** HSN/SAC of the invoice's main line, for the HSN summary. */
+  hsnSac: string;
+}
+
+/** A credit note's tax, split on the same supply type as its invoice. Positive figures; they reduce output tax. */
+export interface GstCreditLine extends GstCreditNoteInput {
+  month: string;
+  b2b: boolean;
+  interState: boolean;
+  taxable: number;
+  cgst: number;
+  sgst: number;
+  igst: number;
+  tax: number;
+  value: number;
+}
+
+export function gstCreditLine(cn: GstCreditNoteInput): GstCreditLine {
+  const gstin = cn.customerGstin?.trim() || null;
+  const interState = isInterStateSupply(gstin, cn.placeOfSupply);
+  const b = calculateInvoiceBreakup({ grossAmount: cn.grossAmount, gstPercent: cn.gstPercent, qty: 1, isInterState: interState });
+  return {
+    ...cn,
+    customerGstin: gstin,
+    month: monthOf(cn.noteDate),
+    b2b: Boolean(gstin),
+    interState,
+    taxable: b.subTotal,
+    cgst: b.cgstAmount,
+    sgst: b.sgstAmount,
+    igst: b.igstAmount,
+    tax: round2(b.cgstAmount + b.sgstAmount + b.igstAmount),
+    value: cn.grossAmount,
+  };
+}
+
+/** Output less credit notes: what's actually payable as output tax. */
+export function netOfCredits(output: GstTotals, credits: GstTotals): GstTotals {
+  return {
+    count: output.count,
+    taxable: round2(output.taxable - credits.taxable),
+    cgst: round2(output.cgst - credits.cgst),
+    sgst: round2(output.sgst - credits.sgst),
+    igst: round2(output.igst - credits.igst),
+    tax: round2(output.tax - credits.tax),
+    value: round2(output.value - credits.value),
+  };
+}
+
+/**
+ * GSTR-1 Table 12: taxable value and tax per HSN/SAC and rate, net of credit
+ * notes (each attributed to its invoice's main HSN, at the note's rate).
+ */
+export function hsnSummary(lines: GstLine[], credits: GstCreditLine[] = []): HsnRow[] {
+  const rows = new Map<string, HsnRow>();
+  const add = (r: HsnRow, sign: 1 | -1) => {
+    const key = `${r.hsnSac}|${r.gstPercent}`;
+    const row = rows.get(key) ?? { hsnSac: r.hsnSac, gstPercent: r.gstPercent, qty: 0, taxable: 0, cgst: 0, sgst: 0, igst: 0, total: 0 };
+    row.qty = round2(row.qty + sign * r.qty);
+    row.taxable = round2(row.taxable + sign * r.taxable);
+    row.cgst = round2(row.cgst + sign * r.cgst);
+    row.sgst = round2(row.sgst + sign * r.sgst);
+    row.igst = round2(row.igst + sign * r.igst);
+    row.total = round2(row.total + sign * r.total);
+    rows.set(key, row);
+  };
+  for (const l of lines) for (const h of l.hsn) add(h, 1);
+  for (const c of credits) {
+    add({ hsnSac: c.hsnSac, gstPercent: c.gstPercent, qty: 0, taxable: c.taxable, cgst: c.cgst, sgst: c.sgst, igst: c.igst, total: c.value }, -1);
+  }
+  return [...rows.values()].sort((a, b) => a.hsnSac.localeCompare(b.hsnSac) || a.gstPercent - b.gstPercent);
+}
+
 export interface GstMonth {
   month: string;
   b2b: GstTotals;
   b2c: GstTotals;
   all: GstTotals;
+  /** Credit notes dated in the month (they reduce its output tax). */
+  credits: GstTotals;
+  /** Output less credit notes. */
+  net: GstTotals;
 }
 
-/** Month-by-month totals, oldest first, each split B2B / B2C. */
-export function monthlySummary(lines: GstLine[]): GstMonth[] {
-  const months = [...new Set(lines.map((l) => l.month))].sort();
+/** Month-by-month totals, oldest first, each split B2B / B2C, with that month's credit notes. */
+export function monthlySummary(lines: GstLine[], creditLines: GstCreditLine[] = []): GstMonth[] {
+  const months = [...new Set([...lines.map((l) => l.month), ...creditLines.map((c) => c.month)])].sort();
   return months.map((month) => {
     const inMonth = lines.filter((l) => l.month === month);
+    const all = sumLines(inMonth);
+    const credits = sumLines(creditLines.filter((c) => c.month === month));
     return {
       month,
       b2b: sumLines(inMonth.filter((l) => l.b2b)),
       b2c: sumLines(inMonth.filter((l) => !l.b2b)),
-      all: sumLines(inMonth),
+      all,
+      credits,
+      net: netOfCredits(all, credits),
     };
   });
 }
@@ -186,5 +292,5 @@ export function netGstPayable(output: GstTotals, input: InputGst): number {
 
 export function monthLabel(month: string): string {
   const [y, m] = month.split("-").map(Number);
-  return new Date(y, m - 1, 1).toLocaleDateString("en-IN", { month: "short", year: "numeric" });
+  return new Date(Date.UTC(y, m - 1, 1)).toLocaleDateString("en-IN", { month: "short", year: "numeric", timeZone: "UTC" });
 }

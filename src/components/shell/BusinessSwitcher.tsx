@@ -81,12 +81,12 @@ export function BusinessSwitcher({
         </span>
         <span className="min-w-0 flex-1">
           <span className="block truncate text-[13px] font-semibold text-white">{current?.name ?? "All businesses"}</span>
-          <span className="block truncate text-[11px] text-neutral-500">
+          <span className="block truncate text-[11px] text-zinc-400">
             {current ? ENTITY_LABEL[current.entity] ?? current.entity : `${businesses.length} businesses side by side`}
           </span>
         </span>
         {anyReview && isAdmin && <span className="h-1.5 w-1.5 rounded-full bg-amber-400" title="A business needs review" />}
-        {!single && <ChevronsUpDown className="h-4 w-4 shrink-0 text-neutral-500 group-hover:text-neutral-300" />}
+        {!single && <ChevronsUpDown className="h-4 w-4 shrink-0 text-zinc-400 group-hover:text-zinc-200" />}
       </button>
 
       {open && (
@@ -119,7 +119,7 @@ export function BusinessSwitcher({
               <Link
                 href="/settings/businesses"
                 onClick={() => setOpen(false)}
-                className="flex items-center gap-2 rounded-lg px-2.5 py-2 text-xs font-medium text-neutral-400 hover:bg-white/[0.06] hover:text-white"
+                className="flex items-center gap-2 rounded-lg px-2.5 py-2 text-xs font-medium text-zinc-400 hover:bg-white/[0.06] hover:text-white"
               >
                 <Settings2 className="h-3.5 w-3.5" />
                 Manage businesses →
@@ -164,7 +164,7 @@ function SwitcherItem({
             </span>
           )}
         </span>
-        <span className="block truncate text-[11px] text-neutral-500">{hint}</span>
+        <span className="block truncate text-[11px] text-zinc-400">{hint}</span>
       </span>
       {active && <Check className="h-4 w-4 shrink-0 text-brand-300" />}
     </a>

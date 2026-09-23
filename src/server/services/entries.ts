@@ -6,6 +6,7 @@ import { UnsupportedUpload, deleteUpload, saveUpload } from "@/lib/storage";
 import { syncExpense, unsyncExpense } from "@/lib/sheet";
 import type { Prisma } from "@/generated/prisma/client";
 import { accessibleBusinessIds, accessWhere, assertBusinessAccess, requireEntryAccess } from "../access";
+import { assertPeriodOpen } from "../gstLock";
 import { audit, diff } from "../audit";
 import { badRequest } from "../errors";
 import type { SessionUser } from "../session";
@@ -52,17 +53,25 @@ export const entryFilterSchema = z.object({
 
 const SCREENSHOT_TYPES = ["application/pdf", "image/png", "image/jpeg", "image/webp", "image/heic", "image/heif"];
 
-async function storeScreenshot(file: FormDataEntryValue | null): Promise<string | null> {
-  if (!(file instanceof File) || file.size === 0) return null;
+const PROOF_NOT_SAVED = "Saved — but the proof file couldn't be stored right now. Edit the entry to attach it again.";
+
+/**
+ * Stores an entry's proof. A wrong file is the user's to fix (400); storage
+ * being unavailable isn't, so the entry is still saved, with a warning,
+ * rather than lost — the same rule as invoices and payments.
+ */
+async function storeScreenshot(file: FormDataEntryValue | null): Promise<{ path: string | null; warning: string | null }> {
+  if (!(file instanceof File) || file.size === 0) return { path: null, warning: null };
   // No declared type is no excuse: the file is checked either way (and storage
   // checks its actual contents too).
   if (!SCREENSHOT_TYPES.includes(file.type)) throw badRequest("Proof must be an image or a PDF");
   if (file.size > 4 * 1024 * 1024) throw badRequest("Proof must be under 4 MB");
   try {
-    return await saveUpload(file);
+    return { path: await saveUpload(file), warning: null };
   } catch (e) {
     if (e instanceof UnsupportedUpload) throw badRequest(e.message);
-    throw e;
+    console.error("Couldn't store an entry's proof:", e);
+    return { path: null, warning: PROOF_NOT_SAVED };
   }
 }
 
@@ -188,8 +197,10 @@ export async function getEntry(user: SessionUser, entryId: string) {
 export async function createEntry(user: SessionUser, input: z.infer<typeof entrySchema>, form: FormData, req: Request) {
   await guardWrite(user);
   await assertBusinessAccess(user, input.businessId);
+  // Money out carries input GST claimed in a return: a filed period is closed.
+  if (input.direction === "OUT") await assertPeriodOpen(input.businessId, [input.date], "That date");
   const { categoryName, ...data } = await computeEntry(input);
-  const screenshotPath = await storeScreenshot(form.get("screenshot"));
+  const { path: screenshotPath, warning } = await storeScreenshot(form.get("screenshot"));
 
   const entry = await prisma.expense.create({ data: { ...data, screenshotPath, createdById: user.id } });
 
@@ -205,7 +216,7 @@ export async function createEntry(user: SessionUser, input: z.infer<typeof entry
 
   // Keeps the business's sheet (and so its P&L) current without re-keying.
   after(() => syncExpense(entry.id));
-  return entry;
+  return { entry, warning };
 }
 
 const LABELS = {
@@ -224,13 +235,16 @@ export async function updateEntry(user: SessionUser, entryId: string, input: z.i
   const existing = await requireEntryAccess(user, entryId);
   // Moving an entry to another business needs access to that one too.
   if (input.businessId !== existing.businessId) await assertBusinessAccess(user, input.businessId);
+  // A money-out entry can't be changed in, moved into, or moved out of a filed GST period.
+  if (existing.direction === "OUT") await assertPeriodOpen(existing.businessId, [existing.date], "This cost");
+  if (input.direction === "OUT") await assertPeriodOpen(input.businessId, [input.date], "That date");
 
   // With no category sent and the business unchanged, the entry keeps its own.
   const { categoryName, ...data } = await computeEntry(
     input,
     input.businessId === existing.businessId ? existing.categoryId : null
   );
-  const newScreenshot = await storeScreenshot(form.get("screenshot"));
+  const { path: newScreenshot, warning } = await storeScreenshot(form.get("screenshot"));
 
   const entry = await prisma.expense.update({
     where: { id: entryId },
@@ -267,12 +281,13 @@ export async function updateEntry(user: SessionUser, entryId: string, input: z.i
 
   // Upserted in place; a changed business or direction clears the old row first.
   after(() => syncExpense(entryId, { businessId: existing.businessId, direction: existing.direction }));
-  return entry;
+  return { entry, warning };
 }
 
 export async function deleteEntry(user: SessionUser, entryId: string, req: Request) {
   await guardWrite(user);
   const entry = await requireEntryAccess(user, entryId);
+  if (entry.direction === "OUT") await assertPeriodOpen(entry.businessId, [entry.date], "This cost");
 
   await prisma.expense.delete({ where: { id: entryId } });
   if (entry.screenshotPath) await deleteUpload(entry.screenshotPath).catch(() => {});

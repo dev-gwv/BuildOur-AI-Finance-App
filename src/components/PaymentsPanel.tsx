@@ -6,6 +6,7 @@ import { useEffect, useRef, useState, type ChangeEvent, type DragEvent, type For
 import Link from "next/link";
 import {
   BadgeIndianRupee,
+  Camera,
   FileText,
   Image as ImageIcon,
   ListChecks,
@@ -15,6 +16,7 @@ import {
   Plus,
   ScanLine,
   ShieldCheck,
+  Undo2,
   X,
 } from "lucide-react";
 import { readPaymentScreenshot } from "@/lib/clientUpload";
@@ -22,6 +24,10 @@ import { PAYMENT_METHODS, parsePaymentScreenshotText } from "@/lib/parsePaymentS
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { Card, CardBody, CardHeader } from "@/components/ui/Card";
+import { Modal } from "@/components/ui/Modal";
+import { useFieldErrors } from "@/components/ui/Field";
+import { RefundCard } from "@/components/invoices/RefundCard";
+import { invoiceBalance } from "@/lib/invoiceLines";
 import { BajajDisbursementCard } from "@/components/invoices/BajajDisbursementCard";
 import { DeleteButton } from "@/components/DeleteButton";
 import { useToast } from "@/components/ui/Toast";
@@ -48,7 +54,15 @@ export type PaymentRow = {
   gatewayRef?: string | null;
   feeAmount?: number;
   feeGstAmount?: number;
+  /** "REFUND" = money handed back after a credit note (shown as negative). */
+  kind?: string | null;
+  /** TDS the customer deducted: settles the invoice but never reaches the bank. */
+  tdsAmount?: number | null;
+  tdsSection?: string | null;
 };
+
+/** Sections a B2B customer most often deducts TDS under. Must match TDS_SECTIONS in src/lib/paymentInput.ts. */
+const TDS_SECTIONS = ["194J", "194C", "194Q", "194H", "194I", "Other"];
 
 /** A payment as the Razorpay integration returns it (rupees). */
 type RazorpayPick = {
@@ -83,10 +97,16 @@ export function PaymentsPanel({
   payments,
   razorpayRates = { feePercent: 2, feeGstPercent: 18 },
   bajaj,
+  creditNotes = [],
+  status = "ISSUED",
 }: {
   invoiceId: string;
   total: number;
   payments: PaymentRow[];
+  /** Credit notes against the invoice: they reduce what's owed. */
+  creditNotes?: { grossAmount: number }[];
+  /** "CANCELLED" invoices take no money. */
+  status?: string;
   /** Razorpay's commission and the GST on it, from Invoice Settings. */
   razorpayRates?: { feePercent: number; feeGstPercent: number };
   /** Set on a Bajaj Finance sale: what Bajaj finances, and its DO. */
@@ -113,6 +133,9 @@ export function PaymentsPanel({
   /** null = follow the configured rate; a string = typed over by the user. */
   const [feeInput, setFeeInput] = useState<string | null>(null);
   const [feeGstInput, setFeeGstInput] = useState<string | null>(null);
+  const [tds, setTds] = useState("");
+  const [tdsSection, setTdsSection] = useState("194J");
+  const { errors, apply: applyErrors, clear: clearError } = useFieldErrors<"amount" | "paidOn" | "tdsAmount" | "feeAmount">();
 
   // Razorpay API (opt-in under Settings → Integrations). When connected, a
   // pay_ id is checked against Razorpay and its exact fee replaces the estimate.
@@ -126,22 +149,29 @@ export function PaymentsPanel({
   const [recentError, setRecentError] = useState<string | null>(null);
   const feesExact = verify.state === "ok" && !overrideFees;
 
-  const paid =payments.reduce((sum, p) => sum + p.amount, 0);
-  const outstanding = Math.round((total - paid) * 100) / 100;
-  const settled = outstanding <= 0;
-  const progress = total > 0 ? Math.min(100, Math.round((paid / total) * 100)) : 0;
+  // One balance rule for every screen: credit notes, refunds, TDS, cancellation.
+  const bal = invoiceBalance({ grossAmount: total, status, creditNotes, payments });
+  const cancelled = bal.cancelled;
+  const receipts = payments.filter((p) => p.kind !== "REFUND");
+  const paid = round2(bal.received - bal.refunded);
+  const outstanding = bal.balance;
+  const settled = bal.settled;
+  const progress = bal.net > 0 ? Math.min(100, Math.round((paid / bal.net) * 100)) : cancelled ? 0 : 100;
   // Editing a payment frees up its own amount again.
   const limit = round2(outstanding + (editing?.amount ?? 0));
 
   // A payment with no platform typed but a gateway set came through that gateway.
-  const byPlatform = totalsByPlatform(payments.map((p) => ({ amount: p.amount, method: p.method || p.gateway || null })));
-  const totalFees = round2(payments.reduce((sum, p) => sum + feesOf(p), 0));
+  const byPlatform = totalsByPlatform(receipts.map((p) => ({ amount: p.amount, method: p.method || p.gateway || null })));
+  const totalFees = round2(receipts.reduce((sum, p) => sum + feesOf(p), 0));
 
   // Live Razorpay breakdown. The fee follows the configured rate until typed
   // over (UPI through Razorpay is often 0%); its GST follows the fee until
   // that's typed over too.
   const amountValue = Number(amount) || 0;
-  const autoFee = calculateGatewayFee(amountValue, razorpayRates.feePercent, razorpayRates.feeGstPercent);
+  const tdsValue = Math.max(0, Number(tds) || 0);
+  // TDS never reaches the bank, so a gateway's cut is worked out on the cash.
+  const cashValue = round2(Math.max(0, amountValue - tdsValue));
+  const autoFee = calculateGatewayFee(cashValue, razorpayRates.feePercent, razorpayRates.feeGstPercent);
   const feeValue = feeInput === null ? autoFee.feeAmount : Math.max(0, Number(feeInput) || 0);
   const feeGstValue =
     feeGstInput !== null
@@ -149,8 +179,8 @@ export function PaymentsPanel({
       : feeInput === null
         ? autoFee.feeGstAmount
         : round2(feeValue * (razorpayRates.feeGstPercent / 100));
-  const landsInBank = round2(amountValue - feeValue - feeGstValue);
-  const effectiveFeePercent = amountValue > 0 ? round2((feeValue / amountValue) * 100) : razorpayRates.feePercent;
+  const landsInBank = round2(cashValue - feeValue - feeGstValue);
+  const effectiveFeePercent = cashValue > 0 ? round2((feeValue / cashValue) * 100) : razorpayRates.feePercent;
 
   // Object URLs leak until revoked, and one is created per screenshot tried.
   useEffect(() => {
@@ -237,8 +267,8 @@ export function PaymentsPanel({
     if (file) void acceptProof(file);
   }
 
-  // Screenshots are usually on the clipboard rather than saved to disk, so
-  // Ctrl+V is the shortest path from phone screenshot to recorded payment.
+  // On a computer a screenshot is usually on the clipboard, so pasting is the
+  // shortest path to a recorded payment (the hint only shows with a mouse).
   useEffect(() => {
     if (!open) return;
     function onPaste(e: ClipboardEvent) {
@@ -361,12 +391,17 @@ export function PaymentsPanel({
     setEditing(null);
     clearProof();
     resetGateway();
+    setTds("");
+    clearError();
   }
 
   function openNew() {
     clearProof();
     resetGateway();
+    clearError();
     setEditing(null);
+    setTds("");
+    setTdsSection("194J");
     setAmount(String(Math.max(outstanding, 0)));
     setOpen(true);
   }
@@ -374,8 +409,11 @@ export function PaymentsPanel({
   function openEdit(p: PaymentRow) {
     clearProof();
     resetGateway();
+    clearError();
     setEditing(p);
     setAmount(String(p.amount));
+    setTds(p.tdsAmount ? String(p.tdsAmount) : "");
+    setTdsSection(p.tdsSection ?? "194J");
     if (p.gateway) {
       setViaRazorpay(true);
       setGatewayRef(p.gatewayRef ?? "");
@@ -409,11 +447,15 @@ export function PaymentsPanel({
       body.set("gatewayRef", viaRazorpay ? gatewayRef.trim() : "");
       body.set("feeAmount", viaRazorpay ? String(feeValue) : "0");
       body.set("feeGstAmount", viaRazorpay ? String(feeGstValue) : "0");
+      body.set("tdsAmount", tdsValue > 0 ? String(tdsValue) : "0");
+      body.set("tdsSection", tdsValue > 0 ? tdsSection : "");
       const res = editing
         ? await fetch(`/api/payments/${editing.id}`, { method: "PATCH", body })
         : await fetch(`/api/invoices/${invoiceId}/payments`, { method: "POST", body });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
+        // Field problems show under the field; the message says what to do.
+        applyErrors(err.fields);
         toast.error(err.error ?? (editing ? "Couldn't update that payment" : "Couldn't record that payment"));
         return;
       }
@@ -437,10 +479,16 @@ export function PaymentsPanel({
           Payments
         </h2>
         <div className="flex items-center gap-3">
-          <Badge tone={settled ? "success" : "warning"} dot>
-            {settled ? "Fully paid" : `${formatCurrency(outstanding)} outstanding`}
+          <Badge tone={cancelled ? "danger" : bal.toRefund > 0 ? "warning" : settled ? "success" : "warning"} dot>
+            {cancelled
+              ? "Cancelled"
+              : bal.toRefund > 0
+                ? `${formatCurrency(bal.toRefund)} to refund`
+                : settled
+                  ? "Fully paid"
+                  : `${formatCurrency(outstanding)} outstanding`}
           </Badge>
-          {!settled && (
+          {!settled && !cancelled && (
             <Button size="sm" onClick={() => (open && !editing ? closeForm() : openNew())}>
               <Plus className="h-3.5 w-3.5" />
               Record payment
@@ -450,7 +498,13 @@ export function PaymentsPanel({
       </CardHeader>
 
       <CardBody className="space-y-5">
-        {bajaj && (
+        {cancelled && (
+          <p className="rounded-xl bg-red-50 px-3 py-2.5 text-sm text-red-800 dark:bg-red-500/10 dark:text-red-300">
+            This invoice is cancelled, so it no longer takes payments. Payments already recorded stay listed below.
+          </p>
+        )}
+        {bal.toRefund > 0 && !cancelled && <RefundCard invoiceId={invoiceId} toRefund={bal.toRefund} />}
+        {bajaj && !cancelled && (
           <BajajDisbursementCard
             invoiceId={invoiceId}
             doId={bajaj.doId}
@@ -463,19 +517,28 @@ export function PaymentsPanel({
           {/* Phones: one row per figure, label left, amount right. */}
           <dl className="grid grid-cols-1 gap-2 text-sm sm:grid-cols-3 sm:gap-3">
             <div className="flex items-baseline justify-between gap-3 sm:block">
-              <dt className="text-xs text-neutral-500 dark:text-neutral-400">Invoice total</dt>
+              <dt className="text-xs text-neutral-600 dark:text-neutral-400">
+                {bal.credited > 0 ? "Total after credit notes" : "Invoice total"}
+              </dt>
               <dd className="mt-0.5 text-base font-semibold tabular-nums text-neutral-900 dark:text-neutral-100">
-                {formatCurrency(total)}
+                {formatCurrency(bal.net)}
+                {bal.credited > 0 && (
+                  <span className="ml-1.5 text-xs font-normal text-neutral-600 dark:text-neutral-400">
+                    ({formatCurrency(total)} − {formatCurrency(bal.credited)})
+                  </span>
+                )}
               </dd>
             </div>
             <div className="flex items-baseline justify-between gap-3 sm:block">
-              <dt className="text-xs text-neutral-500 dark:text-neutral-400">Received</dt>
-              <dd className="mt-0.5 text-base font-semibold tabular-nums text-emerald-600 dark:text-emerald-400">
+              <dt className="text-xs text-neutral-600 dark:text-neutral-400">
+                {bal.refunded > 0 ? "Received, less refunds" : bal.tds > 0 ? "Received (incl. TDS)" : "Received"}
+              </dt>
+              <dd className="mt-0.5 text-base font-semibold tabular-nums text-emerald-700 dark:text-emerald-400">
                 {formatCurrency(paid)}
               </dd>
             </div>
             <div className="flex items-baseline justify-between gap-3 sm:block">
-              <dt className="text-xs text-neutral-500 dark:text-neutral-400">Balance due</dt>
+              <dt className="text-xs text-neutral-600 dark:text-neutral-400">Balance due</dt>
               <dd className="mt-0.5 text-base font-semibold tabular-nums text-neutral-900 dark:text-neutral-100">
                 {formatCurrency(Math.max(outstanding, 0))}
               </dd>
@@ -497,11 +560,19 @@ export function PaymentsPanel({
             />
           </div>
           {/* With nothing received yet, the empty list below already says so. */}
-          {payments.length > 0 && (
-            <p className="text-xs text-neutral-500 dark:text-neutral-400">
-              {settled
-                ? "Settled in full."
-                : `${progress}% received across ${payments.length} payment${payments.length === 1 ? "" : "s"}.`}
+          {receipts.length > 0 && (
+            <p className="text-xs text-neutral-600 dark:text-neutral-400">
+              {cancelled
+                ? "Cancelled."
+                : settled
+                  ? "Settled in full."
+                  : `${progress}% received across ${receipts.length} payment${receipts.length === 1 ? "" : "s"}.`}
+            </p>
+          )}
+          {bal.tds > 0 && (
+            <p className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-neutral-100 px-3 py-2 text-xs text-neutral-700 dark:bg-white/[0.05] dark:text-neutral-300">
+              <span>TDS deducted by the customer (claim it against Form 26AS)</span>
+              <span className="font-semibold tabular-nums">{formatCurrency(bal.tds)}</span>
             </p>
           )}
           {byPlatform.length > 0 && (
@@ -523,7 +594,7 @@ export function PaymentsPanel({
             <p className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-amber-50/70 px-3 py-2 text-xs text-amber-800 dark:bg-amber-500/10 dark:text-amber-300">
               <span>{bajaj && payments.some((p) => p.method === BAJAJ_DISBURSEMENT_METHOD) ? "Kept by Bajaj Finance & gateways" : "Gateway fees (commission + GST)"}</span>
               <span className="font-semibold tabular-nums">
-                −{formatCurrency(totalFees)} · {formatCurrency(round2(paid - totalFees))} landed in the bank
+                −{formatCurrency(totalFees)} · {formatCurrency(round2(bal.received - bal.tds - totalFees))} landed in the bank
               </span>
             </p>
           )}
@@ -600,10 +671,19 @@ export function PaymentsPanel({
                         ? "Drop a new screenshot to replace the proof (optional)"
                         : "Drop the payment screenshot here"}
                   </span>
-                  <span className="text-xs text-neutral-500 dark:text-neutral-400">
-                    or click to browse, or press Ctrl+V to paste it
+                  <span className="text-xs text-neutral-600 dark:text-neutral-400">
+                    <span className="[@media(pointer:coarse)]:hidden">or click to browse, or paste it (Ctrl+V)</span>
+                    <span className="hidden [@media(pointer:coarse)]:inline">Tap to choose a screenshot or PDF</span>
                   </span>
                   <input type="file" accept="image/*,.pdf" className="hidden" onChange={onProofChange} />
+                </label>
+              )}
+              {!proof && (
+                // Phones: a receipt on paper is easier to photograph than to scan.
+                <label className="mt-2 hidden cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-neutral-200 bg-white px-3 py-2.5 text-sm font-medium text-neutral-800 [@media(pointer:coarse)]:flex dark:border-white/10 dark:bg-neutral-900 dark:text-neutral-200">
+                  <Camera className="h-4 w-4" />
+                  Take a photo instead
+                  <input type="file" accept="image/*" capture="environment" className="hidden" onChange={onProofChange} />
                 </label>
               )}
               <p className="mt-1.5 flex items-center gap-1.5 text-xs text-neutral-500 dark:text-neutral-400">
@@ -617,8 +697,13 @@ export function PaymentsPanel({
                     <ListChecks className="h-3.5 w-3.5" />
                     Pick from Razorpay
                   </Button>
-                  {pickerOpen && (
-                    <div className="absolute left-0 top-full z-20 mt-2 max-h-80 w-full max-w-md overflow-y-auto rounded-xl border border-neutral-200/80 bg-white p-1 shadow-pop dark:border-white/10 dark:bg-neutral-900">
+                  <Modal
+                    open={pickerOpen}
+                    onClose={() => setPickerOpen(false)}
+                    title="Pick a Razorpay payment"
+                    description="Captured payments from the last 14 days. Picking one fills in the exact amount, date and fee."
+                  >
+                    <div className="-mx-2">
                       {recentError ? (
                         <p className="px-3 py-3 text-xs text-red-600 dark:text-red-400">{recentError}</p>
                       ) : recent === null ? (
@@ -657,7 +742,7 @@ export function PaymentsPanel({
                         })
                       )}
                     </div>
-                  )}
+                  </Modal>
                 </div>
               )}
               {overpaidBy !== null && (
@@ -670,7 +755,7 @@ export function PaymentsPanel({
 
             <div className="grid gap-3 sm:grid-cols-2">
               <div>
-                <label className={labelClass}>Amount the customer paid (₹)</label>
+                <label className={labelClass}>{tdsValue > 0 ? "Amount settled, incl. TDS (₹)" : "Amount the customer paid (₹)"}</label>
                 <input
                   name="amount"
                   type="number"
@@ -680,12 +765,15 @@ export function PaymentsPanel({
                   value={amount}
                   onChange={(e) => {
                     setAmount(e.target.value);
+                    clearError("amount");
                     const n = Number(e.target.value);
                     setOverpaidBy(n > limit ? n - limit : null);
                   }}
                   required
-                  className={fieldClass}
+                  aria-invalid={errors.amount ? true : undefined}
+                  className={`${fieldClass} ${errors.amount ? "border-red-400 focus:border-red-500 focus:ring-red-500/15" : ""}`}
                 />
+                {errors.amount && <p className="mt-1 text-xs font-medium text-red-600 dark:text-red-400">{errors.amount}</p>}
               </div>
               <div>
                 <label className={labelClass}>Received on</label>
@@ -694,8 +782,11 @@ export function PaymentsPanel({
                   type="date"
                   defaultValue={editing ? new Date(editing.paidOn).toISOString().slice(0, 10) : todayISO()}
                   required
-                  className={fieldClass}
+                  onChange={() => clearError("paidOn")}
+                  aria-invalid={errors.paidOn ? true : undefined}
+                  className={`${fieldClass} ${errors.paidOn ? "border-red-400" : ""}`}
                 />
+                {errors.paidOn && <p className="mt-1 text-xs font-medium text-red-600 dark:text-red-400">{errors.paidOn}</p>}
               </div>
             </div>
             <div className="grid gap-3 sm:grid-cols-2">
@@ -724,6 +815,60 @@ export function PaymentsPanel({
                 />
               </div>
             </div>
+
+            <details
+              open={tdsValue > 0 || undefined}
+              className="group rounded-lg border border-neutral-200 bg-white p-3 dark:border-white/[0.06] dark:bg-neutral-900"
+            >
+              <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-sm font-medium text-neutral-900 marker:content-none dark:text-neutral-100">
+                <span>
+                  TDS deducted by the customer
+                  <span className="ml-1.5 text-xs font-normal text-neutral-600 dark:text-neutral-400">
+                    {tdsValue > 0 ? `${formatCurrency(tdsValue)} under ${tdsSection}` : "optional, for B2B customers"}
+                  </span>
+                </span>
+                <span className="text-xs text-brand-700 group-open:hidden dark:text-brand-300">Add</span>
+              </summary>
+              <div className="mt-3 grid gap-3 border-t border-neutral-100 pt-3 sm:grid-cols-2 dark:border-white/[0.06]">
+                <div>
+                  <label className={labelClass} htmlFor="pay-tds">TDS amount (₹)</label>
+                  <input
+                    id="pay-tds"
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={tds}
+                    onChange={(e) => {
+                      setTds(e.target.value);
+                      clearError("tdsAmount");
+                    }}
+                    placeholder="0.00"
+                    aria-invalid={errors.tdsAmount ? true : undefined}
+                    className={`${fieldClass} ${errors.tdsAmount ? "border-red-400" : ""}`}
+                  />
+                  {errors.tdsAmount && <p className="mt-1 text-xs font-medium text-red-600 dark:text-red-400">{errors.tdsAmount}</p>}
+                </div>
+                <div>
+                  <label className={labelClass} htmlFor="pay-tds-section">Section</label>
+                  <select
+                    id="pay-tds-section"
+                    value={tdsSection}
+                    onChange={(e) => setTdsSection(e.target.value)}
+                    className={fieldClass}
+                  >
+                    {TDS_SECTIONS.map((sec) => (
+                      <option key={sec} value={sec}>
+                        {sec === "Other" ? "Other" : `Section ${sec}`}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <p className="text-xs text-neutral-600 sm:col-span-2 dark:text-neutral-400">
+                  The customer paid the tax to the government for you, so it still settles the invoice. Enter the amount above as the
+                  total settled (cash + TDS){tdsValue > 0 ? ` — ${formatCurrency(cashValue)} reached the bank` : ""}.
+                </p>
+              </div>
+            </details>
 
             <div className="rounded-lg border border-neutral-200 bg-white p-3 dark:border-white/[0.06] dark:bg-neutral-900">
               <div className="flex items-center justify-between gap-3">
@@ -847,9 +992,9 @@ export function PaymentsPanel({
                   )}
                   <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs sm:grid-cols-4">
                     <div>
-                      <dt className="text-neutral-500 dark:text-neutral-400">Customer paid</dt>
+                      <dt className="text-neutral-600 dark:text-neutral-400">{tdsValue > 0 ? "Paid via Razorpay" : "Customer paid"}</dt>
                       <dd className="font-semibold tabular-nums text-neutral-900 dark:text-neutral-100">
-                        {formatCurrency(amountValue)}
+                        {formatCurrency(cashValue)}
                       </dd>
                     </div>
                     <div>
@@ -913,24 +1058,35 @@ export function PaymentsPanel({
         )}
 
         {payments.length === 0 ? (
-          <p className="text-sm text-neutral-500 dark:text-neutral-400">
-            No payments recorded yet — the full amount is outstanding.
+          <p className="text-sm text-neutral-600 dark:text-neutral-400">
+            {cancelled ? "No payments were recorded before it was cancelled." : "No payments recorded yet — the full amount is outstanding."}
           </p>
         ) : (
           <ul className="divide-y divide-neutral-100 text-sm dark:divide-white/[0.05]">
             {payments.map((p) => {
               const fee = feesOf(p);
+              const refund = p.kind === "REFUND";
+              const tdsOn = p.tdsAmount ?? 0;
               return (
                 <li key={p.id} className="flex items-center justify-between gap-3 py-3">
                   <div className="flex min-w-0 items-center gap-3">
-                    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-emerald-50 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-400">
-                      <BadgeIndianRupee className="h-4 w-4" />
+                    <span
+                      className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full ${
+                        refund
+                          ? "bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400"
+                          : "bg-emerald-50 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-400"
+                      }`}
+                    >
+                      {refund ? <Undo2 className="h-4 w-4" /> : <BadgeIndianRupee className="h-4 w-4" />}
                     </span>
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                        <span className="font-semibold tabular-nums text-neutral-900 dark:text-neutral-100">
-                          {formatCurrency(p.amount)}
+                        <span
+                          className={`font-semibold tabular-nums ${refund ? "text-amber-700 dark:text-amber-400" : "text-neutral-900 dark:text-neutral-100"}`}
+                        >
+                          {refund ? `−${formatCurrency(p.amount)}` : formatCurrency(p.amount)}
                         </span>
+                        {refund && <Badge tone="warning">Refund</Badge>}
                         {p.method && <Badge tone="brand">{p.method}</Badge>}
                         {p.gateway && p.gateway !== p.method && <Badge>via {p.gateway}</Badge>}
                       </div>
@@ -939,13 +1095,21 @@ export function PaymentsPanel({
                         {p.note && ` · ${p.note}`}
                         {p.gatewayRef && ` · ${p.gatewayRef}`}
                       </p>
-                      {fee > 0 && (
-                        <p className="mt-0.5 text-xs tabular-nums text-neutral-500 dark:text-neutral-400">
-                          <span className="text-amber-700 dark:text-amber-400">
-                            −{formatCurrency(fee)} {p.gateway ?? "gateway"}
-                          </span>
-                          {" · "}
-                          {formatCurrency(round2(p.amount - fee))} received
+                      {(fee > 0 || tdsOn > 0) && (
+                        <p className="mt-0.5 text-xs tabular-nums text-neutral-600 dark:text-neutral-400">
+                          {tdsOn > 0 && (
+                            <span>
+                              TDS {p.tdsSection ?? ""} {formatCurrency(tdsOn)}
+                              {" · "}
+                            </span>
+                          )}
+                          {fee > 0 && (
+                            <span className="text-amber-700 dark:text-amber-400">
+                              −{formatCurrency(fee)} {p.gateway ?? "gateway"}
+                              {" · "}
+                            </span>
+                          )}
+                          {formatCurrency(round2(p.amount - tdsOn - fee))} reached the bank
                         </p>
                       )}
                     </div>
@@ -957,20 +1121,24 @@ export function PaymentsPanel({
                         target="_blank"
                         rel="noopener noreferrer"
                         title="View the payment screenshot"
-                        className="rounded-md p-1.5 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700 dark:hover:bg-neutral-800"
+                        aria-label="View the payment screenshot"
+                        className="flex h-10 w-10 items-center justify-center rounded-md text-neutral-500 hover:bg-neutral-100 hover:text-neutral-800 sm:h-8 sm:w-8 dark:hover:bg-neutral-800"
                       >
                         <Paperclip className="h-3.5 w-3.5" />
                       </Link>
                     )}
-                    <button
-                      type="button"
-                      onClick={() => openEdit(p)}
-                      title="Edit this payment"
-                      className="rounded-md p-1.5 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700 dark:hover:bg-neutral-800"
-                    >
-                      <Pencil className="h-3.5 w-3.5" />
-                    </button>
-                    <DeleteButton url={`/api/payments/${p.id}`} label="this payment" />
+                    {!refund && (
+                      <button
+                        type="button"
+                        onClick={() => openEdit(p)}
+                        title="Edit this payment"
+                        aria-label="Edit this payment"
+                        className="flex h-10 w-10 items-center justify-center rounded-md text-neutral-500 hover:bg-neutral-100 hover:text-neutral-800 sm:h-8 sm:w-8 dark:hover:bg-neutral-800"
+                      >
+                        <Pencil className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                    <DeleteButton url={`/api/payments/${p.id}`} label={refund ? "this refund" : "this payment"} />
                   </div>
                 </li>
               );

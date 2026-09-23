@@ -3,7 +3,8 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { UnsupportedUpload, deleteUpload, saveUpload } from "@/lib/storage";
 import { syncPayment, unsyncPayment } from "@/lib/sheet";
-import { readPaymentForm, verifyRazorpayPayment } from "@/lib/paymentInput";
+import { readPaymentForm, readRefundForm, verifyRazorpayPayment } from "@/lib/paymentInput";
+import { invoiceBalance } from "@/lib/invoiceLines";
 import { requireInvoiceAccess, requirePaymentAccess } from "../access";
 import { audit, diff } from "../audit";
 import { badRequest, conflict } from "../errors";
@@ -36,6 +37,27 @@ async function storeProof(proof: FormDataEntryValue | null): Promise<{ path: str
   }
 }
 
+/**
+ * The invoice's balance by the one rule every screen uses (credit notes,
+ * refunds, TDS, cancellation), optionally leaving out one payment - the one
+ * being edited, whose old amount is about to be replaced.
+ */
+async function balanceOf(invoiceId: string, excludePaymentId?: string) {
+  const invoice = await prisma.invoice.findUniqueOrThrow({
+    where: { id: invoiceId },
+    include: {
+      payments: { select: { id: true, amount: true, kind: true, tdsAmount: true, method: true } },
+      creditNotes: { select: { grossAmount: true } },
+    },
+  });
+  const payments = invoice.payments.filter((p) => p.id !== excludePaymentId);
+  return { invoice, payments, balance: invoiceBalance({ ...invoice, payments }) };
+}
+
+function assertNotCancelled(invoice: { status: string; invoiceNumber: string }) {
+  if (invoice.status === "CANCELLED") throw conflict(`${invoice.invoiceNumber} is cancelled, so no money can be recorded against it`);
+}
+
 const LABELS = {
   amount: "amount",
   paidOn: "date",
@@ -45,6 +67,8 @@ const LABELS = {
   gatewayRef: "gateway ref",
   feeAmount: "fee",
   feeGstAmount: "fee GST",
+  tdsAmount: "TDS",
+  tdsSection: "TDS section",
 } as const;
 
 export async function recordPayment(user: SessionUser, invoiceId: string, form: FormData, req: Request) {
@@ -52,13 +76,12 @@ export async function recordPayment(user: SessionUser, invoiceId: string, form: 
   await requireInvoiceAccess(user, invoiceId);
   const input = await verifyRazorpayPayment(await readPaymentForm(form));
 
-  const invoice = await prisma.invoice.findUniqueOrThrow({
-    where: { id: invoiceId },
-    include: { payments: { select: { amount: true } } },
-  });
-  // The customer's full payment settles the invoice; a gateway's cut comes out
-  // of what the business receives, not out of what the customer owes.
-  const outstanding = round2(invoice.grossAmount - invoice.payments.reduce((s, p) => s + p.amount, 0));
+  const { invoice, balance } = await balanceOf(invoiceId);
+  assertNotCancelled(invoice);
+  // The customer's full payment settles the invoice; a gateway's cut and any
+  // TDS come out of what the business receives, not out of what's owed.
+  const outstanding = balance.balance;
+  if (outstanding <= 0) throw badRequest(`${invoice.invoiceNumber} has nothing left to pay`);
   if (input.amount > outstanding + 0.005) {
     throw badRequest(`That's more than the ${rupees(outstanding)} still outstanding`, { amount: `At most ${rupees(outstanding)}` });
   }
@@ -74,7 +97,7 @@ export async function recordPayment(user: SessionUser, invoiceId: string, form: 
     entityId: payment.id,
     summary: `Recorded ${rupees(payment.amount)} on ${invoice.invoiceNumber}${payment.method ? ` via ${payment.method}` : ""}${
       payment.feeAmount + payment.feeGstAmount > 0 ? ` (fees ${rupees(payment.feeAmount + payment.feeGstAmount)})` : ""
-    }`,
+    }${payment.tdsAmount > 0 ? ` (TDS ${payment.tdsSection ?? ""} ${rupees(payment.tdsAmount)})` : ""}`,
     req,
   });
 
@@ -86,15 +109,18 @@ export async function recordPayment(user: SessionUser, invoiceId: string, form: 
 export async function updatePayment(user: SessionUser, paymentId: string, form: FormData, req: Request) {
   await guardWrite(user);
   const access = await requirePaymentAccess(user, paymentId);
-  const input = await verifyRazorpayPayment(await readPaymentForm(form), paymentId);
-
   const existing = await prisma.payment.findUniqueOrThrow({
     where: { id: paymentId },
-    include: { invoice: { select: { grossAmount: true, invoiceNumber: true, payments: { select: { id: true, amount: true } } } } },
+    include: { invoice: { select: { invoiceNumber: true } } },
   });
+  if (existing.kind === "REFUND") {
+    throw badRequest("A refund can't be edited. Delete it and record it again.");
+  }
+  const input = await verifyRazorpayPayment(await readPaymentForm(form), paymentId);
+
   // Measured against the other payments only: this one's old amount is being replaced.
-  const others = existing.invoice.payments.filter((p) => p.id !== paymentId).reduce((s, p) => s + p.amount, 0);
-  const available = round2(existing.invoice.grossAmount - others);
+  const { balance } = await balanceOf(existing.invoiceId, paymentId);
+  const available = balance.balance;
   if (input.amount > available + 0.005) {
     throw badRequest(`That's more than the ${rupees(available)} this invoice has left to pay`, { amount: `At most ${rupees(available)}` });
   }
@@ -171,16 +197,14 @@ export async function recordBajajDisbursement(
   await guardWrite(user);
   await requireInvoiceAccess(user, invoiceId);
 
-  const invoice = await prisma.invoice.findUniqueOrThrow({
-    where: { id: invoiceId },
-    include: { payments: { select: { amount: true, method: true } } },
-  });
+  const { invoice, payments, balance } = await balanceOf(invoiceId);
+  assertNotCancelled(invoice);
   if (invoice.saleType !== "BAJAJ") throw badRequest("This isn't a Bajaj Finance sale");
-  if (invoice.payments.some((p) => p.method === BAJAJ_DISBURSEMENT)) {
+  if (payments.some((p) => p.method === BAJAJ_DISBURSEMENT)) {
     throw conflict("Bajaj's disbursement is already recorded on this invoice — edit that payment instead");
   }
 
-  const outstanding = round2(invoice.grossAmount - invoice.payments.reduce((s, p) => s + p.amount, 0));
+  const outstanding = balance.balance;
   const settles = round2(Math.min(invoice.financedAmount ?? outstanding, outstanding));
   if (settles <= 0) throw badRequest("Nothing is left for Bajaj to pay on this invoice");
   if (input.credited > settles + 0.005) {
@@ -213,6 +237,36 @@ export async function recordBajajDisbursement(
     req,
   });
 
+  after(() => syncPayment(payment.id));
+  return { payment };
+}
+
+/**
+ * Records money handed back to the customer. Only possible once a credit note
+ * has left the invoice overpaid, and never more than that overpayment.
+ */
+export async function recordRefund(user: SessionUser, invoiceId: string, form: FormData, req: Request) {
+  await guardWrite(user);
+  await requireInvoiceAccess(user, invoiceId);
+  const input = readRefundForm(form);
+  const { invoice, balance } = await balanceOf(invoiceId);
+  if (balance.toRefund <= 0) throw badRequest(`Nothing is owed back to the customer on ${invoice.invoiceNumber}`);
+  if (input.amount > balance.toRefund + 0.005) {
+    throw badRequest(`That's more than the ${rupees(balance.toRefund)} to refund`, { amount: `At most ${rupees(balance.toRefund)}` });
+  }
+
+  const payment = await prisma.payment.create({
+    data: { invoiceId, kind: "REFUND", amount: input.amount, paidOn: input.paidOn, method: input.method, note: input.note },
+  });
+  await audit({
+    user,
+    businessId: invoice.businessId,
+    action: "payment.refund",
+    entityType: "payment",
+    entityId: payment.id,
+    summary: `Refunded ${rupees(payment.amount)} on ${invoice.invoiceNumber}${payment.method ? ` via ${payment.method}` : ""}`,
+    req,
+  });
   after(() => syncPayment(payment.id));
   return { payment };
 }

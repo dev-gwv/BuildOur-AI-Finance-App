@@ -16,6 +16,7 @@ import {
   LogOut,
   Menu,
   Percent,
+  ReceiptIndianRupee,
   Plug,
   Plus,
   RefreshCw,
@@ -48,6 +49,7 @@ const NAV_GROUPS: NavGroup[] = [
       { href: "/money", label: "Money in & out", icon: Wallet },
       { href: "/reports", label: "Reports", icon: FileBarChart },
       { href: "/reports/gst", label: "GST report", icon: Percent },
+      { href: "/reports/tds", label: "TDS", icon: ReceiptIndianRupee },
     ],
   },
   {
@@ -77,6 +79,7 @@ const SEGMENT_LABELS: Record<string, string> = {
   money: "Money in & out",
   reports: "Reports",
   gst: "GST report",
+  tds: "TDS",
   settings: "Settings",
   businesses: "Businesses",
   team: "Team",
@@ -150,7 +153,7 @@ export function AppShell({
       <nav className="flex-1 space-y-5 overflow-y-auto px-3 py-3">
         {groups.map((group) => (
           <div key={group.label}>
-            <p className="mb-1.5 px-3 text-[10px] font-semibold uppercase tracking-[0.12em] text-neutral-600">
+            <p className="mb-1.5 px-3 text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-400">
               {group.label}
             </p>
             <div className="space-y-0.5">
@@ -177,7 +180,7 @@ export function AppShell({
           <div className="absolute inset-y-0 left-0 w-72 animate-fade-up shadow-2xl">
             <button
               onClick={() => setMobileOpen(false)}
-              className="absolute right-3 top-3.5 z-10 rounded-md p-1.5 text-neutral-400 hover:bg-white/10 hover:text-white"
+              className="absolute right-2 top-2 z-10 flex h-10 w-10 items-center justify-center rounded-lg text-zinc-400 hover:bg-white/10 hover:text-white"
               aria-label="Close menu"
             >
               <X className="h-5 w-5" />
@@ -191,27 +194,25 @@ export function AppShell({
         <header className="sticky top-0 z-20 flex h-14 items-center gap-3 border-b border-neutral-200/70 bg-canvas/80 px-4 backdrop-blur-xl sm:px-6 lg:px-8 dark:border-white/[0.06] dark:bg-canvas-dark/80 print:hidden">
           <button
             onClick={() => setMobileOpen(true)}
-            className="relative -ml-1 rounded-md p-1.5 text-neutral-600 hover:bg-neutral-200/60 lg:hidden dark:text-neutral-300 dark:hover:bg-white/10"
+            className="relative -ml-2 flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-neutral-700 hover:bg-neutral-200/60 lg:hidden dark:text-neutral-300 dark:hover:bg-white/10"
             aria-label={`Open menu — ${current?.name ?? "All businesses"}`}
           >
             <Menu className="h-5 w-5" />
-            {/* On phones the scope pill is hidden, so the business colour rides on the menu button. */}
-            <span
-              className="absolute right-0.5 top-0.5 h-2.5 w-2.5 rounded-full ring-2 ring-canvas sm:hidden dark:ring-canvas-dark"
-              style={{ background: current?.color ?? "conic-gradient(#6a6cf0, #0ea5e9, #e11d48, #6a6cf0)" }}
-            />
           </button>
-          <ScopePill current={current} />
-          <Breadcrumbs pathname={pathname} />
+          <ScopePill current={current} onOpenMenu={() => setMobileOpen(true)} />
+          <div className="hidden min-w-0 sm:flex">
+            <Breadcrumbs pathname={pathname} />
+          </div>
           <div className="ml-auto flex items-center gap-2">
             <Link
               href="/dashboard"
               title={alertCount ? `${alertCount} thing${alertCount === 1 ? "" : "s"} need attention` : "All clear"}
-              className="relative rounded-lg p-1.5 text-neutral-500 hover:bg-neutral-200/60 hover:text-neutral-900 dark:text-neutral-400 dark:hover:bg-white/10 dark:hover:text-white"
+              aria-label={alertCount ? `${alertCount} thing${alertCount === 1 ? "" : "s"} need attention` : "Alerts: all clear"}
+              className="relative flex h-10 w-10 items-center justify-center rounded-lg text-neutral-600 hover:bg-neutral-200/60 hover:text-neutral-900 dark:text-neutral-400 dark:hover:bg-white/10 dark:hover:text-white"
             >
               <Bell className="h-4.5 w-4.5" />
               {alertCount > 0 && (
-                <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-semibold leading-none text-white ring-2 ring-canvas dark:ring-canvas-dark">
+                <span className="absolute right-1 top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-600 px-1 text-[10px] font-semibold leading-none text-white ring-2 ring-canvas dark:ring-canvas-dark">
                   {alertCount > 99 ? "99+" : alertCount}
                 </span>
               )}
@@ -228,19 +229,39 @@ export function AppShell({
   );
 }
 
-/** Always-visible reminder of which business the page is showing. */
-function ScopePill({ current }: { current: ShellBusiness | null }) {
-  return (
+/**
+ * Always-visible reminder of which business the page is showing. On phones
+ * it's a button that opens the menu, where the switcher is; from sm up it's a
+ * label (the switcher is in the sidebar or one tap away).
+ */
+function ScopePill({ current, onOpenMenu }: { current: ShellBusiness | null; onOpenMenu: () => void }) {
+  const dot = (
     <span
-      className="hidden shrink-0 items-center gap-1.5 rounded-md border border-neutral-200/80 bg-white px-2 py-0.5 text-xs font-medium text-neutral-700 sm:inline-flex dark:border-white/10 dark:bg-white/[0.04] dark:text-neutral-300"
-      title="The business every page is showing — change it in the sidebar"
-    >
+      className="h-2 w-2 shrink-0 rounded-full"
+      style={{ background: current?.color ?? "conic-gradient(#6a6cf0, #0ea5e9, #e11d48, #6a6cf0)" }}
+    />
+  );
+  const label = current?.name ?? "All businesses";
+  return (
+    <>
+      <button
+        type="button"
+        onClick={onOpenMenu}
+        className="flex h-9 min-w-0 max-w-[55vw] items-center gap-1.5 rounded-lg border border-neutral-200/80 bg-white px-2.5 text-xs font-medium text-neutral-800 sm:hidden dark:border-white/10 dark:bg-white/[0.04] dark:text-neutral-200"
+        aria-label={`Business: ${label}. Change business`}
+      >
+        {dot}
+        <span className="truncate">{label}</span>
+        <ChevronDown className="h-3.5 w-3.5 shrink-0 text-neutral-500" />
+      </button>
       <span
-        className="h-2 w-2 rounded-full"
-        style={{ background: current?.color ?? "conic-gradient(#6a6cf0, #0ea5e9, #e11d48, #6a6cf0)" }}
-      />
-      {current?.name ?? "All businesses"}
-    </span>
+        className="hidden shrink-0 items-center gap-1.5 rounded-md border border-neutral-200/80 bg-white px-2 py-0.5 text-xs font-medium text-neutral-700 sm:inline-flex dark:border-white/10 dark:bg-white/[0.04] dark:text-neutral-300"
+        title="The business every page is showing — change it in the sidebar"
+      >
+        {dot}
+        {label}
+      </span>
+    </>
   );
 }
 
@@ -297,7 +318,7 @@ function QuickCreate() {
     <div ref={ref} className="relative">
       <button
         onClick={() => setOpen(!open)}
-        className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-neutral-900 px-3 text-xs font-medium text-white shadow-sm ring-1 ring-inset ring-white/10 hover:bg-neutral-800 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
+        className="inline-flex h-10 items-center gap-1.5 rounded-lg bg-neutral-900 px-3 text-xs font-medium sm:h-8 text-white shadow-sm ring-1 ring-inset ring-white/10 hover:bg-neutral-800 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
         aria-expanded={open}
       >
         <Plus className="h-3.5 w-3.5" />
@@ -334,12 +355,12 @@ function NavLink({
     <Link
       href={href}
       onClick={onClick}
-      className={`group relative flex items-center gap-2.5 rounded-lg px-3 py-2 text-[13px] font-medium transition-colors ${
-        active ? "bg-white/[0.08] text-white" : "text-neutral-400 hover:bg-white/[0.04] hover:text-neutral-100"
+      className={`group relative flex min-h-10 items-center gap-2.5 rounded-lg px-3 py-2 text-[13px] font-medium transition-colors lg:min-h-0 ${
+        active ? "bg-white/[0.08] text-white" : "text-zinc-300 hover:bg-white/[0.04] hover:text-white"
       }`}
     >
       {active && <span className="absolute inset-y-1.5 left-0 w-0.5 rounded-full bg-brand-400" />}
-      <Icon className={`h-4 w-4 ${active ? "text-white" : "text-neutral-500 group-hover:text-neutral-300"}`} />
+      <Icon className={`h-4 w-4 ${active ? "text-white" : "text-zinc-400 group-hover:text-zinc-200"}`} />
       <span className="flex-1 truncate">{label}</span>
     </Link>
   );
@@ -360,14 +381,14 @@ function UserMenu({ name, role, onNavigate }: { name: string; role: string; onNa
             }}
             className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-neutral-200 hover:bg-white/[0.06]"
           >
-            <UserRound className="h-4 w-4 text-neutral-400" />
+            <UserRound className="h-4 w-4 text-zinc-400" />
             Account &amp; password
           </Link>
           <button
             onClick={() => signOut({ redirectTo: "/login" })}
             className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-neutral-200 hover:bg-white/[0.06]"
           >
-            <LogOut className="h-4 w-4 text-neutral-400" />
+            <LogOut className="h-4 w-4 text-zinc-400" />
             Sign out
           </button>
         </div>
@@ -375,16 +396,16 @@ function UserMenu({ name, role, onNavigate }: { name: string; role: string; onNa
       <button
         onClick={() => setOpen(!open)}
         aria-expanded={open}
-        className="flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left hover:bg-white/[0.04]"
+        className="flex min-h-11 w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left hover:bg-white/[0.04]"
       >
         <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-neutral-600 to-neutral-800 text-xs font-semibold text-white ring-1 ring-white/10">
           {initials(name)}
         </span>
         <span className="min-w-0 flex-1">
           <span className="block truncate text-sm font-medium text-white">{name}</span>
-          <span className="block text-[11px] capitalize text-neutral-500">{role.toLowerCase()}</span>
+          <span className="block text-[11px] capitalize text-zinc-400">{role.toLowerCase()}</span>
         </span>
-        <ChevronDown className={`h-4 w-4 text-neutral-500 transition-transform ${open ? "rotate-180" : ""}`} />
+        <ChevronDown className={`h-4 w-4 text-zinc-400 transition-transform ${open ? "rotate-180" : ""}`} />
       </button>
     </div>
   );

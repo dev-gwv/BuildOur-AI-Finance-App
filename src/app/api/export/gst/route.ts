@@ -7,14 +7,10 @@ import { monthLabel, parseGstPeriod, type GstLine } from "@/lib/gstReport";
 import { loadGstReport, resolveGstBusinessIds } from "@/lib/gstReportData";
 
 const MONEY = "#,##0.00";
-// Stored dates are calendar days at midnight UTC, so ISO gives the right day.
+// Stored dates and the period's range are calendar days at midnight UTC, so ISO gives the right day.
 const day = (d: Date) => d.toISOString().slice(0, 10);
-// The period's range is built from local calendar dates (1 April...), which ISO
-// would shift back a day east of UTC — format those from their local parts.
-const localDay = (d: Date) =>
-  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 
-/** The GST report as a workbook for the CA: summary, B2B, B2C and input GST. */
+/** The GST report as a workbook for the CA: summary, B2B, B2C, credit notes, HSN summary, input GST. */
 export const GET = withApiErrors(async (req: NextRequest) => {
   const user = await requireUser();
   const { searchParams } = new URL(req.url);
@@ -39,12 +35,27 @@ export const GET = withApiErrors(async (req: NextRequest) => {
     { header: "Invoice value", key: "value", width: 16, style: { numFmt: MONEY } },
   ];
   summary.getRow(1).font = { bold: true };
+  const negative = (t: typeof report.output) => ({
+    ...t,
+    taxable: -t.taxable,
+    cgst: -t.cgst,
+    sgst: -t.sgst,
+    igst: -t.igst,
+    tax: -t.tax,
+    value: -t.value,
+  });
   for (const m of report.months) {
-    summary.addRow({ period: monthLabel(m.month), type: "B2B", ...m.b2b });
-    summary.addRow({ period: monthLabel(m.month), type: "B2C", ...m.b2c });
+    if (m.b2b.count) summary.addRow({ period: monthLabel(m.month), type: "B2B", ...m.b2b });
+    if (m.b2c.count) summary.addRow({ period: monthLabel(m.month), type: "B2C", ...m.b2c });
+    if (m.credits.count) summary.addRow({ period: monthLabel(m.month), type: "CN", ...negative(m.credits) });
   }
   summary.addRow({});
-  summary.addRow({ period: "TOTAL OUTPUT", ...report.output }).font = { bold: true };
+  summary.addRow({ period: "TOTAL INVOICES", ...report.output }).font = { bold: true };
+  if (report.credits.length) {
+    summary.addRow({ period: "Less credit notes (CDNR)", type: "B2B", ...negative(report.cdnr) });
+    summary.addRow({ period: "Less credit notes (CDNUR)", type: "B2C", ...negative(report.cdnur) });
+    summary.addRow({ period: "NET OUTPUT", ...report.netOutput }).font = { bold: true };
+  }
   summary.addRow({});
   summary.addRow({ period: "Input GST on costs", tax: report.input.costs });
   summary.addRow({ period: "Input GST on gateway fees", tax: report.input.gatewayFees });
@@ -62,7 +73,7 @@ export const GET = withApiErrors(async (req: NextRequest) => {
     { header: "Place of supply", key: "placeOfSupply", width: 20 },
     { header: "Business", key: "business", width: 20 },
     { header: "Taxable value", key: "taxable", width: 14, style: { numFmt: MONEY } },
-    { header: "Rate %", key: "gstPercent", width: 8 },
+    { header: "Rate %", key: "rates", width: 10 },
     { header: "CGST", key: "cgst", width: 12, style: { numFmt: MONEY } },
     { header: "SGST", key: "sgst", width: 12, style: { numFmt: MONEY } },
     { header: "IGST", key: "igst", width: 12, style: { numFmt: MONEY } },
@@ -73,11 +84,72 @@ export const GET = withApiErrors(async (req: NextRequest) => {
     sheet.columns = invoiceColumns;
     sheet.getRow(1).font = { bold: true };
     for (const l of lines) {
-      sheet.addRow({ ...l, date: day(l.invoiceDate), customerGstin: l.customerGstin ?? "" });
+      sheet.addRow({
+        ...l,
+        date: day(l.invoiceDate),
+        customerGstin: l.customerGstin ?? "",
+        rates: [...new Set(l.hsn.map((h) => h.gstPercent))].join(" / ") || String(l.gstPercent),
+      });
     }
   };
   addInvoices("B2B", report.lines.filter((l) => l.b2b));
   addInvoices("B2C", report.lines.filter((l) => !l.b2b));
+
+  const credits = workbook.addWorksheet("Credit notes");
+  credits.columns = [
+    { header: "Credit note no.", key: "number", width: 18 },
+    { header: "Date", key: "date", width: 12 },
+    { header: "Type", key: "type", width: 8 },
+    { header: "Original invoice", key: "invoiceNumber", width: 18 },
+    { header: "Invoice date", key: "invoiceDate", width: 12 },
+    { header: "Customer", key: "customerName", width: 28 },
+    { header: "GSTIN", key: "customerGstin", width: 18 },
+    { header: "Place of supply", key: "placeOfSupply", width: 20 },
+    { header: "Reason", key: "reason", width: 26 },
+    { header: "Taxable value", key: "taxable", width: 14, style: { numFmt: MONEY } },
+    { header: "Rate %", key: "gstPercent", width: 8 },
+    { header: "CGST", key: "cgst", width: 12, style: { numFmt: MONEY } },
+    { header: "SGST", key: "sgst", width: 12, style: { numFmt: MONEY } },
+    { header: "IGST", key: "igst", width: 12, style: { numFmt: MONEY } },
+    { header: "Note value", key: "value", width: 14, style: { numFmt: MONEY } },
+  ];
+  credits.getRow(1).font = { bold: true };
+  for (const c of report.credits) {
+    credits.addRow({
+      ...c,
+      date: day(c.noteDate),
+      type: c.b2b ? "CDNR" : "CDNUR",
+      invoiceDate: day(c.invoiceDate),
+      customerGstin: c.customerGstin ?? "",
+    });
+  }
+
+  const hsn = workbook.addWorksheet("HSN summary");
+  hsn.columns = [
+    { header: "HSN / SAC", key: "hsnSac", width: 14 },
+    { header: "Rate %", key: "gstPercent", width: 8 },
+    { header: "Quantity", key: "qty", width: 10 },
+    { header: "Taxable value", key: "taxable", width: 16, style: { numFmt: MONEY } },
+    { header: "CGST", key: "cgst", width: 12, style: { numFmt: MONEY } },
+    { header: "SGST", key: "sgst", width: 12, style: { numFmt: MONEY } },
+    { header: "IGST", key: "igst", width: 12, style: { numFmt: MONEY } },
+    { header: "Total value", key: "total", width: 16, style: { numFmt: MONEY } },
+  ];
+  hsn.getRow(1).font = { bold: true };
+  for (const h of report.hsn) hsn.addRow(h);
+
+  if (report.cancelled.length) {
+    const cancelled = workbook.addWorksheet("Cancelled");
+    cancelled.columns = [
+      { header: "Invoice no.", key: "invoiceNumber", width: 18 },
+      { header: "Date", key: "date", width: 12 },
+      { header: "Customer", key: "customerName", width: 28 },
+      { header: "Reason", key: "cancelReason", width: 32 },
+      { header: "Was", key: "grossAmount", width: 14, style: { numFmt: MONEY } },
+    ];
+    cancelled.getRow(1).font = { bold: true };
+    for (const c of report.cancelled) cancelled.addRow({ ...c, date: day(c.invoiceDate) });
+  }
 
   const input = workbook.addWorksheet("Input GST");
   input.columns = [
@@ -109,8 +181,8 @@ export const GET = withApiErrors(async (req: NextRequest) => {
 
   const buffer = await workbook.xlsx.writeBuffer();
   const label = businessIds.length === 1 ? (scope.businesses.find((b) => b.id === businessIds[0])?.slug ?? "business") : "grateful";
-  const lastDay = new Date(report.range.end.getFullYear(), report.range.end.getMonth(), report.range.end.getDate() - 1);
-  const name = `gst-${label}-${localDay(report.range.start)}-to-${localDay(lastDay)}.xlsx`;
+  const lastDay = new Date(report.range.end.getTime() - 86_400_000);
+  const name = `gst-${label}-${day(report.range.start)}-to-${day(lastDay)}.xlsx`;
   return new NextResponse(buffer as ArrayBuffer, {
     headers: {
       "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

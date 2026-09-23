@@ -20,7 +20,7 @@ export function proxy(request: NextRequest) {
 }
 
 export const config = {
-  // Everything except the login page, auth endpoints, API routes (which answer
-  // 401 themselves), and static assets.
-  matcher: ["/((?!login|api|_next/static|_next/image|favicon.ico|.*\\.(?:png|jpg|jpeg|svg|webp|ico)$).*)"],
+  // Everything except the signed-out pages (sign-in, password reset), API
+  // routes (which answer 401 themselves), and static assets.
+  matcher: ["/((?!login|forgot-password|reset-password|api|_next/static|_next/image|favicon.ico|.*\\.(?:png|jpg|jpeg|svg|webp|ico)$).*)"],
 };

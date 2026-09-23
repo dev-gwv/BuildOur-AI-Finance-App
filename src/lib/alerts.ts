@@ -1,6 +1,6 @@
 import { startOfTodayIST } from "@/lib/dates";
 import { prisma } from "./prisma";
-import { Prisma } from "@/generated/prisma/client";
+import { invoiceBalance } from "./invoiceLines";
 
 /**
  * Which businesses an alert query covers: "ALL" (an admin on "All businesses")
@@ -13,40 +13,71 @@ function businessFilter(scope: AlertScope) {
   return scope === "ALL" ? {} : { businessId: { in: scope } };
 }
 
-function sqlBusinessFilter(scope: AlertScope) {
-  if (scope === "ALL") return Prisma.empty;
-  if (scope.length === 0) return Prisma.sql`AND FALSE`;
-  return Prisma.sql`AND i."businessId" IN (${Prisma.join(scope)})`;
+/** Must match BAJAJ_DISBURSEMENT in src/server/services/invoices.ts. */
+const BAJAJ_DISBURSEMENT = "Bajaj Finance disbursement";
+
+/** What the balance rule and the overdue checks need about each open invoice. */
+const openInvoiceSelect = {
+  grossAmount: true,
+  status: true,
+  saleType: true,
+  financedAmount: true,
+  dueDate: true,
+  creditNotes: { select: { grossAmount: true } },
+  payments: { select: { amount: true, kind: true, tdsAmount: true, method: true } },
+} as const;
+
+type OpenInvoice = {
+  grossAmount: number;
+  status: string;
+  saleType: string;
+  financedAmount: number | null;
+  dueDate: Date;
+  creditNotes: { grossAmount: number }[];
+  payments: { amount: number; kind: string; tdsAmount: number; method: string | null }[];
+};
+
+/** A Bajaj sale Bajaj hasn't paid out yet: waiting on Bajaj, not on the customer. */
+function isAwaitingBajaj(inv: OpenInvoice): boolean {
+  return inv.saleType === "BAJAJ" && !inv.payments.some((p) => p.method === BAJAJ_DISBURSEMENT);
 }
 
 /**
- * How many things need attention, for the badge on every page. Two cheap
- * queries; a failure here must never take the whole app down, so it degrades
- * to zero. Pass the user's accessible business ids (or "ALL" for an admin).
+ * Overdue = past its due date with something still to collect (after credit
+ * notes and refunds), not cancelled, and not merely waiting on Bajaj.
+ */
+function overdueBalances(invoices: OpenInvoice[]): number[] {
+  return invoices
+    .filter((inv) => !isAwaitingBajaj(inv))
+    .map((inv) => invoiceBalance(inv))
+    .filter((b) => !b.cancelled && !b.settled)
+    .map((b) => b.balance);
+}
+
+async function pastDueInvoices(scope: AlertScope): Promise<OpenInvoice[]> {
+  return prisma.invoice.findMany({
+    where: { dueDate: { lt: startOfToday() }, status: { not: "CANCELLED" }, ...businessFilter(scope) },
+    select: openInvoiceSelect,
+  });
+}
+
+/**
+ * How many things need attention, for the badge on every page. A failure here
+ * must never take the whole app down, so it degrades to zero. Pass the user's
+ * accessible business ids (or "ALL" for an admin).
  */
 export async function alertCount(scope: AlertScope = "ALL"): Promise<number> {
   try {
-    const [failures, overdue] = await Promise.all([
+    const [failures, pastDue] = await Promise.all([
       prisma.sheetSyncFailure.count({ where: { resolvedAt: null, ...businessFilter(scope) } }),
-      prisma.$queryRaw<{ count: bigint }[]>`
-        SELECT COUNT(*)::bigint AS count
-        FROM "Invoice" i
-        WHERE i."dueDate" < date_trunc('day', NOW())
-          AND i."grossAmount" - COALESCE((SELECT SUM(p."amount") FROM "Payment" p WHERE p."invoiceId" = i."id"), 0) > 0.5
-          -- A Bajaj sale still waiting on Bajaj's payout isn't overdue from the customer.
-          AND NOT (i."saleType" = 'BAJAJ' AND NOT EXISTS (
-            SELECT 1 FROM "Payment" p WHERE p."invoiceId" = i."id" AND p."method" = ${BAJAJ_DISBURSEMENT}))
-          ${sqlBusinessFilter(scope)}`,
+      pastDueInvoices(scope),
     ]);
-    return failures + Number(overdue[0]?.count ?? 0);
+    return failures + overdueBalances(pastDue).length;
   } catch (error) {
     console.error("Couldn't count alerts:", error);
     return 0;
   }
 }
-
-/** Must match BAJAJ_DISBURSEMENT in src/server/services/invoices.ts. */
-const BAJAJ_DISBURSEMENT = "Bajaj Finance disbursement";
 
 /**
  * Bajaj Finance sales raised but not yet paid out by Bajaj: how many, and how
@@ -54,14 +85,19 @@ const BAJAJ_DISBURSEMENT = "Bajaj Finance disbursement";
  */
 export async function awaitingBajaj(scope: AlertScope): Promise<{ count: number; amount: number }> {
   const invoices = await prisma.invoice.findMany({
-    where: { saleType: "BAJAJ", payments: { none: { method: BAJAJ_DISBURSEMENT } }, ...businessFilter(scope) },
-    select: { grossAmount: true, financedAmount: true, payments: { select: { amount: true } } },
+    where: {
+      saleType: "BAJAJ",
+      status: { not: "CANCELLED" },
+      payments: { none: { method: BAJAJ_DISBURSEMENT } },
+      ...businessFilter(scope),
+    },
+    select: openInvoiceSelect,
   });
   let count = 0;
   let amount = 0;
   for (const inv of invoices) {
-    const balance = inv.grossAmount - inv.payments.reduce((s, p) => s + p.amount, 0);
-    if (balance <= 0.5) continue;
+    const { balance, settled } = invoiceBalance(inv);
+    if (settled) continue;
     count += 1;
     amount += Math.min(inv.financedAmount ?? balance, balance);
   }
@@ -74,15 +110,7 @@ export interface OverdueSummary {
 }
 
 export async function overdueInvoices(scope: AlertScope): Promise<OverdueSummary> {
-  const invoices = await prisma.invoice.findMany({
-    where: { dueDate: { lt: startOfToday() }, ...businessFilter(scope) },
-    select: { grossAmount: true, saleType: true, payments: { select: { amount: true, method: true } } },
-  });
-  const open = invoices
-    // Waiting on Bajaj's payout is tracked separately (awaitingBajaj), not as overdue.
-    .filter((inv) => !(inv.saleType === "BAJAJ" && !inv.payments.some((p) => p.method === BAJAJ_DISBURSEMENT)))
-    .map((inv) => inv.grossAmount - inv.payments.reduce((s, p) => s + p.amount, 0))
-    .filter((balance) => balance > 0.5);
+  const open = overdueBalances(await pastDueInvoices(scope));
   return {
     count: open.length,
     amount: Math.round(open.reduce((s, b) => s + b, 0) * 100) / 100,

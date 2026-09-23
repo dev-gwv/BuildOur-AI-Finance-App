@@ -44,7 +44,7 @@ export default async function BusinessesPage() {
               {toReview.length === 1 ? "1 business was" : `${toReview.length} businesses were`} set up automatically when the app
               was upgraded.
             </p>
-            <p className="mt-0.5 text-amber-800/80 dark:text-amber-200/70">
+            <p className="mt-0.5 text-amber-900 dark:text-amber-200">
               Check each one&apos;s legal entity, invoice series and sheet, then mark it as reviewed:{" "}
               {toReview.map((b, i) => (
                 <span key={b.id}>

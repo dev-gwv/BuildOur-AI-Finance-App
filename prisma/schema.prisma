@@ -27,22 +27,23 @@ enum InvoiceBrand {
 }
 
 model User {
-  id             String           @id @default(cuid())
+  id             String               @id @default(cuid())
   name           String
-  email          String           @unique
+  email          String               @unique
   passwordHash   String
-  role           Role             @default(MEMBER)
+  role           Role                 @default(MEMBER)
   /// A deactivated user can't sign in, and their open sessions stop working.
-  active         Boolean          @default(true)
+  active         Boolean              @default(true)
   /// Bumped on password change, deactivation or role change: sessions issued
   /// before it are rejected at their next check (see src/lib/auth.ts).
-  sessionVersion Int              @default(0)
+  sessionVersion Int                  @default(0)
   lastLoginAt    DateTime?
-  createdAt      DateTime         @default(now())
+  createdAt      DateTime             @default(now())
   businesses     BusinessMember[]
   expenses       Expense[]
   invoices       Invoice[]
   auditLogs      AuditLog[]
+  resetTokens    PasswordResetToken[]
 }
 
 /// A business the group runs: IPC Finance, IWC Finance, The Mulberry Weddings.
@@ -59,8 +60,18 @@ model Business {
   /// Accent colour used across the UI to tell businesses apart.
   color             String           @default("#6a6cf0")
   /// Its own invoice series: prefix + a counter bumped atomically on issue.
+  /// May contain {FY} (e.g. "IPC/{FY}/"), which becomes "26-27" and gives
+  /// each financial year its own series starting at 1.
   invoicePrefix     String           @default("INV-")
+  /// Next number when the prefix has no {FY} (one running series).
   invoiceNextNumber Int              @default(1)
+  /// Digits the number is padded to (GST allows 16 characters in total).
+  invoiceDigits     Int              @default(6)
+  /// Credit notes have their own series; {FY} works the same way.
+  creditNotePrefix  String           @default("CN/{FY}/")
+  /// GST returns are filed through this date: invoices, credit notes and
+  /// entries dated on or before it can't be added, changed or removed.
+  gstLockedThrough  DateTime?
   defaultGstPercent Float            @default(18)
   /// Its Google Sheet (Apps Script web app). The secret is stored encrypted.
   sheetUrl          String?
@@ -75,6 +86,8 @@ model Business {
   categories        Category[]
   expenses          Expense[]
   invoices          Invoice[]
+  creditNotes       CreditNote[]
+  counters          InvoiceCounter[]
 
   @@map("Company")
 }
@@ -159,6 +172,11 @@ model Invoice {
   downPayment     Float?
   financedAmount  Float?
   invoiceNumber   String       @unique
+  /// "ISSUED" or "CANCELLED". A cancelled invoice keeps its number (GST
+  /// numbering can't have gaps) but counts for nothing.
+  status          String       @default("ISSUED")
+  cancelledAt     DateTime?
+  cancelReason    String?
   invoiceDate     DateTime
   dueDate         DateTime
   customerName    String
@@ -180,11 +198,17 @@ model Invoice {
    */
   customerGstin   String?
   placeOfSupply   String
+  /// Summary of the line items, kept for lists, emails and search: the first
+  /// line's description/HSN/rate, and the total of all lines. The lines are
+  /// the source of truth (InvoiceLine).
   itemDescription String
   hsnSac          String
   qty             Float        @default(1)
+  /// Total of all lines, GST included.
   grossAmount     Float
   gstPercent      Float        @default(18)
+  /// The exact PDF last emailed to the customer (stored file name).
+  emailedPdfPath  String?
   notes           String?
   terms           String?
   doId            String?
@@ -193,9 +217,11 @@ model Invoice {
   createdById     String
   createdAt       DateTime     @default(now())
 
-  business  Business  @relation(fields: [businessId], references: [id])
-  createdBy User      @relation(fields: [createdById], references: [id])
-  payments  Payment[]
+  business    Business      @relation(fields: [businessId], references: [id])
+  createdBy   User          @relation(fields: [createdById], references: [id])
+  payments    Payment[]
+  lines       InvoiceLine[]
+  creditNotes CreditNote[]
 
   @@index([createdAt])
   @@index([businessId, invoiceDate])
@@ -221,6 +247,14 @@ model Payment {
   gatewayRef   String?
   feeAmount    Float    @default(0)
   feeGstAmount Float    @default(0)
+  /// "RECEIPT" (money in) or "REFUND" (money returned to the customer after
+  /// a credit note). Amounts are always positive; the kind gives the sign.
+  kind         String   @default("RECEIPT")
+  /// Tax a B2B customer deducted at source and paid to the government for us.
+  /// Part of `amount` (it settles the invoice) but never reaches the bank.
+  tdsAmount    Float    @default(0)
+  /// e.g. "194J", "194C", "194Q".
+  tdsSection   String?
   createdAt    DateTime @default(now())
 
   invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
@@ -327,4 +361,70 @@ model RateLimit {
   key         String   @id
   count       Int
   windowStart DateTime
+}
+
+/// One line of an invoice. Amounts are GST-inclusive, like the rest of the
+/// app; tax is backed out per line at the line's own rate.
+model InvoiceLine {
+  id          String @id @default(cuid())
+  invoiceId   String
+  position    Int
+  description String
+  hsnSac      String
+  qty         Float  @default(1)
+  /// This line's total, GST included.
+  grossAmount Float
+  gstPercent  Float
+
+  invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@index([invoiceId])
+}
+
+/// Reduces an issued invoice: a mistake, a discount given later, or goods
+/// returned. Reported in GSTR-1 (CDNR for B2B, CDNUR for B2C).
+model CreditNote {
+  id          String   @id @default(cuid())
+  businessId  String
+  invoiceId   String
+  number      String   @unique
+  noteDate    DateTime
+  reason      String
+  /// Amount credited, GST included.
+  grossAmount Float
+  gstPercent  Float
+  createdById String
+  createdAt   DateTime @default(now())
+
+  business Business @relation(fields: [businessId], references: [id])
+  invoice  Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@index([businessId, noteDate])
+  @@index([invoiceId])
+}
+
+/// Next number per series, for prefixes that restart each financial year
+/// ("IPC/26-27/", "CN/26-27/"). Bumped in the same transaction that uses it.
+model InvoiceCounter {
+  businessId String
+  /// The prefix with {FY} filled in, e.g. "IPC/26-27/".
+  series     String
+  next       Int
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@id([businessId, series])
+}
+
+/// A one-time password reset link. Only a hash of the token is stored.
+model PasswordResetToken {
+  tokenHash String    @id
+  userId    String
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }

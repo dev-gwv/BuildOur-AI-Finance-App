@@ -6,7 +6,8 @@ import { audit, diff } from "../audit";
 import { businessSummarySelect, seqInSeries, sheetSource, sheetTarget, slugify } from "../businesses";
 import { badRequest, conflict, notFound } from "../errors";
 import type { SessionUser } from "../session";
-import { id, percent, requiredText } from "../validation";
+import { id, isoDate, percent, requiredText } from "../validation";
+import { MAX_INVOICE_NUMBER_LENGTH, hasFyToken, longestNumberFor } from "@/lib/invoiceNumbering";
 import { guardWrite } from "./common";
 
 const slug = z
@@ -15,7 +16,15 @@ const slug = z
   .toLowerCase()
   .regex(/^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$/, "Use lowercase letters, numbers and dashes (e.g. ipc)");
 const color = z.string().trim().regex(/^#[0-9a-fA-F]{6}$/, "Pick a colour like #6a6cf0");
-const prefix = z.string().trim().min(1, "A prefix is required").max(16).regex(/^[A-Za-z0-9/_-]+$/, "Letters, numbers, - / _ only");
+/** Letters, numbers, - / _ and the {FY} token (the financial year, e.g. 26-27). */
+const prefix = z
+  .string()
+  .trim()
+  .min(1, "A prefix is required")
+  .max(16)
+  .transform((v) => v.toUpperCase())
+  .refine((v) => /^[A-Z0-9/_{}-]+$/.test(v) && !/[{}]/.test(v.replace(/\{FY\}/g, "")), "Letters, numbers, - / _ and {FY} only");
+const digits = z.coerce.number().int("A whole number").min(3, "At least 3 digits").max(8, "At most 8 digits");
 const nextNumber = z.coerce.number().int("A whole number").min(1, "At least 1").max(99_999_999);
 
 export const createBusinessSchema = z.object({
@@ -25,6 +34,8 @@ export const createBusinessSchema = z.object({
   color: color.optional(),
   invoicePrefix: prefix,
   invoiceNextNumber: nextNumber,
+  invoiceDigits: digits.optional(),
+  creditNotePrefix: prefix.optional(),
   defaultGstPercent: percent("Default GST %").optional(),
 });
 
@@ -35,7 +46,11 @@ export const updateBusinessSchema = z.object({
   color: color.optional(),
   invoicePrefix: prefix.optional(),
   invoiceNextNumber: nextNumber.optional(),
+  invoiceDigits: digits.optional(),
+  creditNotePrefix: prefix.optional(),
   defaultGstPercent: percent("Default GST %").optional(),
+  /** GST filed through this date (YYYY-MM-DD); "" removes the lock. */
+  gstLockedThrough: z.union([z.literal(""), isoDate("GST filed through")]).optional(),
   sheetUrl: z
     .string()
     .trim()
@@ -48,6 +63,20 @@ export const updateBusinessSchema = z.object({
   /** Confirms an automatically set-up business. */
   reviewed: z.literal(true).optional(),
 });
+
+/** GST caps a document number at 16 characters: check the longest each series can produce. */
+function assertNumberLengths(invoicePrefix: string, creditNotePrefix: string, invoiceDigits: number) {
+  const fields: Record<string, string> = {};
+  if (longestNumberFor(invoicePrefix, invoiceDigits) > MAX_INVOICE_NUMBER_LENGTH) {
+    fields.invoicePrefix = `Prefix + ${invoiceDigits} digits must fit in ${MAX_INVOICE_NUMBER_LENGTH} characters`;
+  }
+  if (longestNumberFor(creditNotePrefix, Math.min(invoiceDigits, 6)) > MAX_INVOICE_NUMBER_LENGTH) {
+    fields.creditNotePrefix = `Must fit in ${MAX_INVOICE_NUMBER_LENGTH} characters with the number`;
+  }
+  if (Object.keys(fields).length) {
+    throw badRequest(`GST allows at most ${MAX_INVOICE_NUMBER_LENGTH} characters in an invoice or credit note number`, fields);
+  }
+}
 
 export const categorySchema = z.object({ name: requiredText("Category name", 60) });
 export const gatewaySchema = z.object({ name: requiredText("Gateway name", 60), chargePercent: percent("Charge %") });
@@ -96,6 +125,7 @@ export async function createBusiness(admin: SessionUser, input: z.infer<typeof c
     throw conflict(`The short name "${input.slug}" is taken`);
   }
   const businessSlug = input.slug ?? (await uniqueSlug(slugify(input.name)));
+  assertNumberLengths(input.invoicePrefix, input.creditNotePrefix ?? "CN/{FY}/", input.invoiceDigits ?? 6);
 
   const business = await prisma.business.create({
     data: {
@@ -105,6 +135,8 @@ export async function createBusiness(admin: SessionUser, input: z.infer<typeof c
       color: input.color ?? "#6a6cf0",
       invoicePrefix: input.invoicePrefix,
       invoiceNextNumber: input.invoiceNextNumber,
+      ...(input.invoiceDigits !== undefined ? { invoiceDigits: input.invoiceDigits } : {}),
+      ...(input.creditNotePrefix !== undefined ? { creditNotePrefix: input.creditNotePrefix } : {}),
       defaultGstPercent: input.defaultGstPercent ?? (input.entity === "MULBERRY" ? 0 : 18),
     },
     select: businessSummarySelect,
@@ -128,6 +160,9 @@ const LABELS = {
   color: "colour",
   invoicePrefix: "prefix",
   invoiceNextNumber: "next number",
+  invoiceDigits: "number digits",
+  creditNotePrefix: "credit note prefix",
+  gstLockedThrough: "GST filed through",
   defaultGstPercent: "default GST %",
   sheetUrl: "sheet URL",
 } as const;
@@ -142,10 +177,14 @@ export async function updateBusiness(admin: SessionUser, businessId: string, inp
     if (clash) throw conflict(`The short name "${input.slug}" is taken`);
   }
 
-  // The counter can't go back below a number already issued in the series, or
-  // the next invoice would collide with an existing one.
   const prefixAfter = input.invoicePrefix ?? existing.invoicePrefix;
-  if (input.invoiceNextNumber !== undefined || input.invoicePrefix !== undefined) {
+  assertNumberLengths(prefixAfter, input.creditNotePrefix ?? existing.creditNotePrefix, input.invoiceDigits ?? existing.invoiceDigits);
+
+  // The counter can't go back below a number already issued in the series, or
+  // the next invoice would collide with an existing one. A {FY} series keeps
+  // its own counter per year (and skips numbers already taken), so the
+  // single "next number" doesn't apply to it.
+  if (!hasFyToken(prefixAfter) && (input.invoiceNextNumber !== undefined || input.invoicePrefix !== undefined)) {
     const next = input.invoiceNextNumber ?? existing.invoiceNextNumber;
     const issued = await prisma.invoice.findMany({
       where: { businessId, invoiceNumber: { startsWith: prefixAfter } },
@@ -168,6 +207,9 @@ export async function updateBusiness(admin: SessionUser, businessId: string, inp
     ...(input.color !== undefined ? { color: input.color } : {}),
     ...(input.invoicePrefix !== undefined ? { invoicePrefix: input.invoicePrefix } : {}),
     ...(input.invoiceNextNumber !== undefined ? { invoiceNextNumber: input.invoiceNextNumber } : {}),
+    ...(input.invoiceDigits !== undefined ? { invoiceDigits: input.invoiceDigits } : {}),
+    ...(input.creditNotePrefix !== undefined ? { creditNotePrefix: input.creditNotePrefix } : {}),
+    ...(input.gstLockedThrough !== undefined ? { gstLockedThrough: input.gstLockedThrough === "" ? null : input.gstLockedThrough } : {}),
     ...(input.defaultGstPercent !== undefined ? { defaultGstPercent: input.defaultGstPercent } : {}),
     ...(clearSheet
       ? { sheetUrl: null, sheetSecretEnc: null }
@@ -190,6 +232,11 @@ export async function updateBusiness(admin: SessionUser, businessId: string, inp
     clearSheet ? "sheet disconnected" : null,
     input.archived !== undefined && Boolean(existing.archivedAt) !== input.archived ? (input.archived ? "archived" : "restored") : null,
     input.reviewed && existing.needsReview ? "settings confirmed" : null,
+    // Re-opening a filed period is allowed (admins fix mistakes) but worth flagging in the log.
+    input.gstLockedThrough !== undefined && existing.gstLockedThrough &&
+    (input.gstLockedThrough === "" || input.gstLockedThrough.getTime() < existing.gstLockedThrough.getTime())
+      ? "RE-OPENED a filed GST period"
+      : null,
   ].filter(Boolean);
   await audit({
     user: admin,

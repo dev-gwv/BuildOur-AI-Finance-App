@@ -28,8 +28,13 @@ const ICON_STYLES: Record<ToastKind, string> = {
   info: "text-brand-500",
 };
 
-/** Errors stay up longer: they usually need reading, and sometimes acting on. */
-const DURATION: Record<ToastKind, number> = { success: 4500, info: 5000, error: 7000 };
+/**
+ * Success and info fade on their own; an error stays until it's dismissed —
+ * "already recorded on INV-001122" must not vanish before it's read.
+ */
+const DURATION: Record<ToastKind, number | null> = { success: 4500, info: 6000, error: null };
+/** More than this and the oldest go, so a burst can't cover the screen. */
+const MAX_VISIBLE = 3;
 
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
@@ -41,8 +46,9 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   const push = useCallback(
     (kind: ToastKind, message: string) => {
       const id = Date.now() + Math.random();
-      setToasts((prev) => [...prev, { id, kind, message }]);
-      setTimeout(() => dismiss(id), DURATION[kind]);
+      setToasts((prev) => [...prev.filter((t) => t.message !== message), { id, kind, message }].slice(-MAX_VISIBLE));
+      const ms = DURATION[kind];
+      if (ms) setTimeout(() => dismiss(id), ms);
     },
     [dismiss]
   );
@@ -73,7 +79,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
               <span className="flex-1 leading-5">{toast.message}</span>
               <button
                 onClick={() => dismiss(toast.id)}
-                className="-mr-1 shrink-0 rounded-md p-0.5 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700 focus-visible:outline-2 focus-visible:outline-brand-500 dark:hover:bg-white/10 dark:hover:text-white"
+                className="-my-1.5 -mr-2 flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-neutral-500 hover:bg-neutral-100 hover:text-neutral-800 focus-visible:outline-2 focus-visible:outline-brand-500 dark:text-neutral-400 dark:hover:bg-white/10 dark:hover:text-white"
                 aria-label="Dismiss"
               >
                 <X className="h-4 w-4" />

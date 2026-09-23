@@ -29,7 +29,8 @@ export const PATCH = withApiErrors(async (req: NextRequest, { params }: Params) 
     if (current) form.set("businessId", current.businessId);
   }
   const data = parseInput(entrySchema, formToObject(form));
-  return NextResponse.json({ entry: await updateEntry(user, id, data, form, req) });
+  const { entry, warning } = await updateEntry(user, id, data, form, req);
+  return NextResponse.json({ entry, warning });
 });
 
 export const DELETE = withApiErrors(async (req: NextRequest, { params }: Params) => {

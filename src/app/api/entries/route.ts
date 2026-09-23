@@ -21,5 +21,6 @@ export const GET = withApiErrors(async (req: NextRequest) => {
 export const POST = withApiErrors(async (req: NextRequest) => {
   const user = await requireUser();
   const { data, form } = await parseForm(req, entrySchema);
-  return NextResponse.json({ entry: await createEntry(user, data, form, req) }, { status: 201 });
+  const { entry, warning } = await createEntry(user, data, form, req);
+  return NextResponse.json({ entry, warning }, { status: 201 });
 });

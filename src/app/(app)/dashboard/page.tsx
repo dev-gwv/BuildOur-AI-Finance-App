@@ -1,3 +1,4 @@
+import { invoiceBalance } from "@/lib/invoiceLines";
 import { startOfTodayIST, todayISO } from "@/lib/dates";
 import Link from "next/link";
 import {
@@ -132,7 +133,8 @@ export default async function DashboardPage({
   // Everything below is limited to the business picked in the switcher, or to
   // every business the user can access when "All businesses" is selected.
   const inScope = scopeWhere(scope);
-  const invoiceWhere: Prisma.InvoiceWhereInput = inScope;
+  // Every invoice figure is about issued invoices; a cancelled one counts for nothing.
+  const invoiceWhere: Prisma.InvoiceWhereInput = { ...inScope, status: { not: "CANCELLED" } };
   const entryWhere: Prisma.ExpenseWhereInput = inScope;
   const businessById = new Map(scope.businesses.map((b) => [b.id, b]));
   const colorOf = (businessId: string) => businessById.get(businessId)?.color ?? "#a3a3a3";
@@ -222,6 +224,8 @@ export default async function DashboardPage({
 
   const expenseSums = { grossAmount: true, gatewayChargeAmount: true } as const;
   const paymentSums = { amount: true, feeAmount: true, feeGstAmount: true } as const;
+  // Refunds are stored as positive amounts with kind REFUND: money going back out.
+  const signed = (p: { amount: number; kind: string }) => (p.kind === "REFUND" ? -p.amount : p.amount);
 
   const [
     invoicedNow,
@@ -236,6 +240,8 @@ export default async function DashboardPage({
     ledgerByBusiness,
     recentInvoices,
     recentPayments,
+    creditedNow,
+    creditedByBusiness,
   ] = await Promise.all([
     prisma.invoice.aggregate({
       where: { ...invoiceWhere, invoiceDate: within(current) },
@@ -252,10 +258,10 @@ export default async function DashboardPage({
       : null,
     prisma.payment.findMany({
       where: { invoice: invoiceWhere, paidOn: within(current) },
-      select: { amount: true, method: true, feeAmount: true, feeGstAmount: true, invoice: { select: { businessId: true } } },
+      select: { amount: true, kind: true, method: true, feeAmount: true, feeGstAmount: true, invoice: { select: { businessId: true } } },
     }),
     previous
-      ? prisma.payment.aggregate({ where: { invoice: invoiceWhere, paidOn: within(previous) }, _sum: paymentSums })
+      ? prisma.payment.groupBy({ by: ["kind"], where: { invoice: invoiceWhere, paidOn: within(previous) }, _sum: paymentSums })
       : null,
     // Dues are a balance, not a flow: every invoice ever raised that isn't settled.
     prisma.invoice.findMany({
@@ -268,15 +274,18 @@ export default async function DashboardPage({
         invoiceDate: true,
         dueDate: true,
         grossAmount: true,
+        status: true,
         saleType: true,
         financedAmount: true,
-        payments: { select: { amount: true, method: true } },
+        creditNotes: { select: { grossAmount: true } },
+        payments: { select: { amount: true, method: true, kind: true, tdsAmount: true } },
       },
     }),
     prisma.payment.findMany({
       where: { invoice: invoiceWhere, ...(chartFrom ? { paidOn: { gte: chartFrom, lt: chartEnd } } : {}) },
       select: {
         amount: true,
+        kind: true,
         feeAmount: true,
         feeGstAmount: true,
         paidOn: true,
@@ -325,20 +334,35 @@ export default async function DashboardPage({
       select: {
         id: true,
         amount: true,
+        kind: true,
         method: true,
         paidOn: true,
         createdAt: true,
         invoice: { select: { id: true, businessId: true, customerName: true, invoiceNumber: true } },
       },
     }),
+    // Credit notes issued in the period reduce what was invoiced in it.
+    prisma.creditNote.aggregate({
+      where: { ...inScope, noteDate: within(current), invoice: { status: { not: "CANCELLED" } } },
+      _sum: { grossAmount: true },
+      _count: true,
+    }),
+    showBusinesses
+      ? prisma.creditNote.groupBy({
+          by: ["businessId"],
+          where: { ...inScope, noteDate: within(current), invoice: { status: { not: "CANCELLED" } } },
+          _sum: { grossAmount: true },
+        })
+      : null,
   ]);
 
   // --- Headline figures ---
   // Profit is cash, GST included (it's what the sheets add up):
   //   invoice collections − gateway fees on them (+ the GST on those fees)
   //   + ledger money in − its gateway charges − ledger money out.
-  const invoicedTotal = invoicedNow._sum.grossAmount ?? 0;
-  const receivedTotal = paymentsNow.reduce((s, p) => s + p.amount, 0);
+  const creditedTotal = creditedNow._sum.grossAmount ?? 0;
+  const invoicedTotal = (invoicedNow._sum.grossAmount ?? 0) - creditedTotal;
+  const receivedTotal = paymentsNow.reduce((s, p) => s + signed(p), 0);
   const paymentFees = paymentsNow.reduce((s, p) => s + p.feeAmount + p.feeGstAmount, 0);
 
   const ledgerIn = expenses.filter((e) => e.direction !== "OUT");
@@ -351,11 +375,13 @@ export default async function DashboardPage({
 
   const prevIn = ledgerPrev?.find((g) => g.direction !== "OUT")?._sum;
   const prevOutGross = ledgerPrev?.find((g) => g.direction === "OUT")?._sum.grossAmount ?? 0;
-  const prevReceived = paymentsPrev?._sum.amount ?? 0;
+  const prevReceipts = paymentsPrev?.find((g) => g.kind !== "REFUND")?._sum;
+  const prevRefunds = paymentsPrev?.find((g) => g.kind === "REFUND")?._sum;
+  const prevReceived = (prevReceipts?.amount ?? 0) - (prevRefunds?.amount ?? 0);
   const prevProfit = previous
     ? prevReceived -
-      (paymentsPrev?._sum.feeAmount ?? 0) -
-      (paymentsPrev?._sum.feeGstAmount ?? 0) +
+      (prevReceipts?.feeAmount ?? 0) -
+      (prevReceipts?.feeGstAmount ?? 0) +
       (prevIn?.grossAmount ?? 0) -
       (prevIn?.gatewayChargeAmount ?? 0) -
       prevOutGross
@@ -363,13 +389,13 @@ export default async function DashboardPage({
 
   const open = openInvoices
     .map((inv) => {
-      const paid = inv.payments.reduce((s, p) => s + p.amount, 0);
-      const balance = Math.round((inv.grossAmount - paid) * 100) / 100;
+      // The one balance rule: invoice − credit notes − (receipts − refunds).
+      const { balance, settled } = invoiceBalance(inv);
       // A Bajaj sale Bajaj hasn't paid out on is waiting on Bajaj, not on the customer.
       const awaiting = inv.saleType === "BAJAJ" && !inv.payments.some((p) => p.method === "Bajaj Finance disbursement");
-      return { ...inv, balance, awaiting };
+      return { ...inv, balance, settled, awaiting };
     })
-    .filter((inv) => inv.balance > 0.5)
+    .filter((inv) => !inv.settled)
     .sort((a, b) => b.balance - a.balance);
   const outstandingTotal = open.reduce((s, i) => s + i.balance, 0);
   const today = startOfToday(now);
@@ -386,10 +412,10 @@ export default async function DashboardPage({
   for (const p of chartPayments) {
     const key = monthKey(p.paidOn);
     const bucket = buckets.get(key) ?? {};
-    bucket[p.invoice.businessId] = (bucket[p.invoice.businessId] ?? 0) + p.amount;
+    bucket[p.invoice.businessId] = (bucket[p.invoice.businessId] ?? 0) + signed(p);
     buckets.set(key, bucket);
     const f = flows.get(key) ?? { in: 0, out: 0, fees: 0 };
-    f.in += p.amount;
+    f.in += signed(p);
     f.fees += p.feeAmount + p.feeGstAmount;
     flows.set(key, f);
   }
@@ -436,14 +462,15 @@ export default async function DashboardPage({
     ? scope.businesses.map((b) => {
         const inv = invoicedByBusiness?.find((g) => g.businessId === b.id);
         const pays = paymentsNow.filter((p) => p.invoice.businessId === b.id);
-        const received = pays.reduce((s, p) => s + p.amount, 0);
+        const received = pays.reduce((s, p) => s + signed(p), 0);
+        const credited = creditedByBusiness?.find((g) => g.businessId === b.id)?._sum.grossAmount ?? 0;
         const fees = pays.reduce((s, p) => s + p.feeAmount + p.feeGstAmount, 0);
         const lIn = ledgerByBusiness?.find((g) => g.businessId === b.id && g.direction !== "OUT")?._sum;
         const lOut = ledgerByBusiness?.find((g) => g.businessId === b.id && g.direction === "OUT")?._sum.grossAmount ?? 0;
         return {
           business: b,
           invoices: inv?._count ?? 0,
-          invoiced: inv?._sum.grossAmount ?? 0,
+          invoiced: (inv?._sum.grossAmount ?? 0) - credited,
           received,
           outstanding: open.filter((o) => o.businessId === b.id).reduce((sum, o) => sum + o.balance, 0),
           moneyOut: lOut,
@@ -453,7 +480,7 @@ export default async function DashboardPage({
     : [];
 
   // --- Where money came in, and what the ledger holds ---
-  const platforms = totalsByPlatform(paymentsNow).map(([name, value]) => ({ name, value }));
+  const platforms = totalsByPlatform(paymentsNow.filter((p) => p.kind !== "REFUND")).map(([name, value]) => ({ name, value }));
   const byCategory = (rows: typeof expenses, value: (e: (typeof expenses)[number]) => number) => {
     const map = new Map<string, number>();
     for (const e of rows) map.set(e.category.name, (map.get(e.category.name) ?? 0) + value(e));
@@ -488,9 +515,9 @@ export default async function DashboardPage({
       at: p.createdAt,
       shownAt: p.paidOn,
       kind: "payment" as const,
-      title: `Received${p.method ? ` via ${p.method}` : ""}`,
+      title: p.kind === "REFUND" ? "Refunded" : `Received${p.method ? ` via ${p.method}` : ""}`,
       subtitle: `${p.invoice.customerName} · ${p.invoice.invoiceNumber}`,
-      amount: p.amount,
+      amount: signed(p),
       href: `/invoices/${p.invoice.id}`,
       businessId: p.invoice.businessId,
     })),
@@ -905,10 +932,16 @@ export default async function DashboardPage({
                           {a.title}
                         </span>
                         <span
-                          className={`shrink-0 tabular-nums ${a.kind === "payment" ? "font-medium text-emerald-600 dark:text-emerald-400" : "text-neutral-600 dark:text-neutral-300"}`}
+                          className={`shrink-0 tabular-nums ${
+                            a.kind !== "payment"
+                              ? "text-neutral-600 dark:text-neutral-300"
+                              : a.amount < 0
+                                ? "font-medium text-red-600 dark:text-red-400"
+                                : "font-medium text-emerald-600 dark:text-emerald-400"
+                          }`}
                         >
-                          {a.kind === "payment" ? "+" : ""}
-                          {formatCompactINR(a.amount)}
+                          {a.kind === "payment" ? (a.amount < 0 ? "−" : "+") : ""}
+                          {formatCompactINR(Math.abs(a.amount))}
                         </span>
                       </p>
                       <p className="truncate text-xs text-neutral-500 dark:text-neutral-400">

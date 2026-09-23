@@ -1,5 +1,16 @@
 import { prisma } from "./prisma";
-import { gstLine, gstPeriodRange, inputGst, monthlySummary, netGstPayable, sumLines, type GstPeriodKey } from "./gstReport";
+import {
+  gstCreditLine,
+  gstLine,
+  gstPeriodRange,
+  hsnSummary,
+  inputGst,
+  monthlySummary,
+  netGstPayable,
+  netOfCredits,
+  sumLines,
+  type GstPeriodKey,
+} from "./gstReport";
 import type { Scope } from "@/server/scope";
 import type { BusinessSummary } from "@/server/businesses";
 
@@ -35,10 +46,10 @@ export async function loadGstReport({ businessIds, period }: { businessIds: stri
   const within = { gte: range.start, lt: range.end };
   const inBusinesses = { businessId: { in: businessIds } };
 
-  const [invoices, costs, fees] = await Promise.all([
+  const [invoices, cancelled, creditNotes, costs, fees, locks] = await Promise.all([
     prisma.invoice.findMany({
       // brand is the entity snapshot at issue — the GSTIN the tax was charged under.
-      where: { ...inBusinesses, brand: "GRATEFUL", invoiceDate: within },
+      where: { ...inBusinesses, brand: "GRATEFUL", status: { not: "CANCELLED" }, invoiceDate: within },
       orderBy: { invoiceDate: "asc" },
       select: {
         id: true,
@@ -51,6 +62,37 @@ export async function loadGstReport({ businessIds, period }: { businessIds: stri
         gstPercent: true,
         qty: true,
         business: { select: { name: true } },
+        lines: { orderBy: { position: "asc" }, select: { description: true, hsnSac: true, qty: true, grossAmount: true, gstPercent: true } },
+      },
+    }),
+    // Cancelled invoices keep their numbers but aren't reported; listed so the gap is explained.
+    prisma.invoice.findMany({
+      where: { ...inBusinesses, brand: "GRATEFUL", status: "CANCELLED", invoiceDate: within },
+      orderBy: { invoiceDate: "asc" },
+      select: { id: true, invoiceNumber: true, invoiceDate: true, customerName: true, grossAmount: true, cancelReason: true, business: { select: { name: true } } },
+    }),
+    prisma.creditNote.findMany({
+      where: { ...inBusinesses, noteDate: within, invoice: { brand: "GRATEFUL" } },
+      orderBy: { noteDate: "asc" },
+      select: {
+        id: true,
+        number: true,
+        noteDate: true,
+        reason: true,
+        grossAmount: true,
+        gstPercent: true,
+        business: { select: { name: true } },
+        invoice: {
+          select: {
+            invoiceNumber: true,
+            invoiceDate: true,
+            customerName: true,
+            customerGstin: true,
+            placeOfSupply: true,
+            hsnSac: true,
+            lines: { orderBy: { grossAmount: "desc" }, take: 1, select: { hsnSac: true } },
+          },
+        },
       },
     }),
     prisma.expense.findMany({
@@ -79,10 +121,30 @@ export async function loadGstReport({ businessIds, period }: { businessIds: stri
         invoice: { select: { invoiceNumber: true, customerName: true } },
       },
     }),
+    prisma.business.findMany({ where: { id: { in: businessIds } }, select: { name: true, gstLockedThrough: true } }),
   ]);
 
-  const lines = invoices.map(({ business, ...inv }) => gstLine({ ...inv, business: business.name }));
+  const lines = invoices.map(({ business, lines: items, ...inv }) => gstLine({ ...inv, business: business.name, lines: items }));
+  const credits = creditNotes.map((cn) =>
+    gstCreditLine({
+      id: cn.id,
+      number: cn.number,
+      noteDate: cn.noteDate,
+      reason: cn.reason,
+      grossAmount: cn.grossAmount,
+      gstPercent: cn.gstPercent,
+      invoiceNumber: cn.invoice.invoiceNumber,
+      invoiceDate: cn.invoice.invoiceDate,
+      customerName: cn.invoice.customerName,
+      customerGstin: cn.invoice.customerGstin,
+      placeOfSupply: cn.invoice.placeOfSupply,
+      business: cn.business.name,
+      hsnSac: cn.invoice.lines[0]?.hsnSac ?? cn.invoice.hsnSac,
+    })
+  );
   const output = sumLines(lines);
+  const creditTotals = sumLines(credits);
+  const netOutput = netOfCredits(output, creditTotals);
   const input = inputGst(
     costs.map((c) => c.gstAmount),
     fees.map((f) => f.feeGstAmount)
@@ -91,14 +153,25 @@ export async function loadGstReport({ businessIds, period }: { businessIds: stri
   return {
     range,
     lines,
-    months: monthlySummary(lines),
+    months: monthlySummary(lines, credits),
     output,
     b2b: sumLines(lines.filter((l) => l.b2b)),
     b2c: sumLines(lines.filter((l) => !l.b2b)),
+    /** Credit notes to registered customers (CDNR) and to consumers (CDNUR). */
+    credits,
+    cdnr: sumLines(credits.filter((c) => c.b2b)),
+    cdnur: sumLines(credits.filter((c) => !c.b2b)),
+    creditTotals,
+    netOutput,
+    hsn: hsnSummary(lines, credits),
+    cancelled: cancelled.map(({ business, ...c }) => ({ ...c, business: business.name })),
+    /** Per business, the date its GST is filed (locked) through, if any. */
+    locks: locks.map((l) => ({ business: l.name, through: l.gstLockedThrough })),
     costs,
     fees,
     input,
-    netPayable: netGstPayable(output, input),
+    // Payable on output net of credit notes, less input credit.
+    netPayable: netGstPayable(netOutput, input),
   };
 }
 

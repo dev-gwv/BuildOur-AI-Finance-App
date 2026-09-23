@@ -97,6 +97,41 @@
   }
 }
 
+/*
+ * Text contrast (WCAG AA, 4.5:1 for body text). Tailwind's stock greys are
+ * too faint for secondary text: neutral-400 is 2.6:1 on white. These tune the
+ * shades the app uses for hints, captions and secondary figures so they pass
+ * on every surface — separately for light and dark, because the same class
+ * (e.g. `dark:text-neutral-500`) sits on a very different background in each.
+ * Unlayered, so they win over the theme layer.
+ */
+:root {
+  --color-neutral-400: #6b6b73;
+  --color-neutral-500: #5e5e66;
+  /* Money-in green used as text: 3.6:1 → 5.0:1. */
+  --color-emerald-600: #047857;
+}
+
+@media screen and (prefers-color-scheme: dark) {
+  :root {
+    --color-neutral-400: #a8a8b0;
+    --color-neutral-500: #9a9aa3;
+    --color-neutral-600: #8e8e97;
+    --color-emerald-600: oklch(59.6% 0.145 163.225);
+  }
+}
+
+/*
+ * Surfaces that are always white, whatever the theme (the invoice document,
+ * which prints): keep the light-mode greys inside them.
+ */
+[data-light-surface] {
+  --color-neutral-400: #6b6b73;
+  --color-neutral-500: #5e5e66;
+  --color-neutral-600: oklch(43.9% 0 0);
+  --color-emerald-600: #047857;
+}
+
 /* Keyboard focus is always visible; mouse clicks don't leave rings behind. */
 :focus-visible {
   outline-color: var(--color-brand-500);

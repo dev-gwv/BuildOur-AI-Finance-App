@@ -39,7 +39,7 @@ export async function AlertsBanner({ scope, isAdmin }: { scope: AlertScope; isAd
     syncFailures(scope),
     overdueInvoices(scope),
     prisma.invoice.findMany({
-      where: { revisedAt: { not: null }, emailSentAt: { not: null }, ...businessWhere },
+      where: { revisedAt: { not: null }, emailSentAt: { not: null }, status: { not: "CANCELLED" }, ...businessWhere },
       select: { revisedAt: true, emailSentAt: true },
     }),
     // Setup is an admin's job, so only admins are nudged about it.

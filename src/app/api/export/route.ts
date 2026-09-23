@@ -1,3 +1,4 @@
+import { invoiceBalance } from "@/lib/invoiceLines";
 import { NextRequest, NextResponse } from "next/server";
 import ExcelJS from "exceljs";
 import { prisma } from "@/lib/prisma";
@@ -54,7 +55,11 @@ export const GET = withApiErrors(async (req: NextRequest) => {
     prisma.invoice.findMany({
       where: { ...scope, ...(range ? { invoiceDate: range } : {}) },
       orderBy: { invoiceDate: "asc" },
-      include: { payments: { select: { amount: true } }, business: { select: { name: true } } },
+      include: {
+        payments: { select: { amount: true, kind: true, tdsAmount: true } },
+        creditNotes: { select: { grossAmount: true } },
+        business: { select: { name: true } },
+      },
     }),
     prisma.payment.findMany({
       where: { invoice: scope, ...(range ? { paidOn: range } : {}) },
@@ -158,23 +163,31 @@ export const GET = withApiErrors(async (req: NextRequest) => {
     { header: "Customer", key: "customer", width: 28 },
     { header: "GSTIN", key: "gstin", width: 18 },
     { header: "Business", key: "business", width: 20 },
+    { header: "Status", key: "status", width: 12 },
     { header: "Amount", key: "amount", width: 14 },
+    { header: "Credited", key: "credited", width: 14 },
     { header: "Collected", key: "collected", width: 14 },
+    { header: "Refunded", key: "refunded", width: 14 },
+    { header: "of which TDS", key: "tds", width: 14 },
     { header: "Balance", key: "balance", width: 14 },
   ];
   styleHeader(invoicesSheet);
-  moneyColumns(invoicesSheet, ["amount", "collected", "balance"]);
+  moneyColumns(invoicesSheet, ["amount", "credited", "collected", "refunded", "tds", "balance"]);
   for (const inv of invoices) {
-    const collected = inv.payments.reduce((s, p) => s + p.amount, 0);
+    const b = invoiceBalance(inv);
     invoicesSheet.addRow({
       number: inv.invoiceNumber,
       date: inv.invoiceDate.toISOString().slice(0, 10),
       customer: inv.customerName,
       gstin: inv.customerGstin ?? "",
       business: inv.business.name,
+      status: b.cancelled ? "Cancelled" : b.toRefund > 0 ? "To refund" : b.settled ? "Paid" : "Open",
       amount: inv.grossAmount,
-      collected,
-      balance: Math.round((inv.grossAmount - collected) * 100) / 100,
+      credited: b.credited,
+      collected: b.received,
+      refunded: b.refunded,
+      tds: b.tds,
+      balance: b.cancelled ? 0 : b.toRefund > 0 ? -b.toRefund : b.balance,
     });
   }
 
@@ -187,14 +200,18 @@ export const GET = withApiErrors(async (req: NextRequest) => {
     { header: "Business", key: "business", width: 20 },
     { header: "Method", key: "method", width: 16 },
     { header: "Gateway", key: "gateway", width: 14 },
+    { header: "Type", key: "kind", width: 10 },
     { header: "Amount", key: "amount", width: 14 },
+    { header: "TDS deducted", key: "tds", width: 14 },
     { header: "Gateway fees (incl. GST)", key: "fees", width: 20 },
     { header: "Net received", key: "net", width: 14 },
   ];
   styleHeader(paymentsSheet);
-  moneyColumns(paymentsSheet, ["amount", "fees", "net"]);
+  moneyColumns(paymentsSheet, ["amount", "tds", "fees", "net"]);
   for (const p of payments) {
     const fees = p.feeAmount + p.feeGstAmount;
+    // A refund is money going back out: shown negative so the column sums to cash.
+    const sign = p.kind === "REFUND" ? -1 : 1;
     paymentsSheet.addRow({
       date: p.paidOn.toISOString().slice(0, 10),
       invoice: p.invoice.invoiceNumber,
@@ -202,9 +219,11 @@ export const GET = withApiErrors(async (req: NextRequest) => {
       business: p.invoice.business.name,
       method: p.method ?? "",
       gateway: p.gateway ?? "",
-      amount: p.amount,
+      kind: p.kind === "REFUND" ? "Refund" : "Receipt",
+      amount: sign * p.amount,
+      tds: p.tdsAmount,
       fees,
-      net: Math.round((p.amount - fees) * 100) / 100,
+      net: Math.round((sign * p.amount - fees - p.tdsAmount) * 100) / 100,
     });
   }
 

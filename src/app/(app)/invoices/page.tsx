@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { Plus } from "lucide-react";
 import { prisma } from "@/lib/prisma";
-import { isAdmin, requirePageUser } from "@/server/session";
+import { requirePageUser } from "@/server/session";
 import { getScope, scopeWhere } from "@/server/scope";
 import { InvoiceList, listedInvoiceSelect, parseStatusFilter } from "@/components/InvoiceList";
 import { LIST_PERIODS, parseListPeriod, periodFilter } from "@/components/invoices/listPeriods";
@@ -74,7 +74,6 @@ export default async function InvoicesPage({
         filters={{ status, q, period }}
         periods={LIST_PERIODS}
         showBusiness={!scope.current}
-        canDelete={isAdmin(user)}
         newHref="/invoices/new"
       />
     </div>

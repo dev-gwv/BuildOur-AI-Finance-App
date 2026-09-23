@@ -1,11 +1,12 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { AlertTriangle, ArrowLeft, Building2, CreditCard, Sheet, Tag, Users } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Building2, CreditCard, Landmark, Sheet, Tag, Users } from "lucide-react";
 import { prisma } from "@/lib/prisma";
 import { requirePageAdmin } from "@/server/session";
 import { sheetSource } from "@/server/businesses";
 import { BusinessProfileForm } from "@/components/settings/BusinessProfileForm";
 import { SheetConnectionForm } from "@/components/settings/SheetConnectionForm";
+import { GstLockForm } from "@/components/settings/GstLockForm";
 import { CategoriesEditor, GatewaysEditor } from "@/components/settings/CatalogEditors";
 import { MembersEditor } from "@/components/settings/MembersEditor";
 import { ArchiveButton, MarkReviewedButton } from "@/components/settings/BusinessActions";
@@ -39,7 +40,7 @@ function Section({
         <CardTitle
           title={
             <span className="flex items-center gap-2">
-              <Icon className="h-4 w-4 text-neutral-400" />
+              <Icon className="h-4 w-4 text-neutral-500" />
               {title}
             </span>
           }
@@ -80,7 +81,7 @@ export default async function BusinessSettingsPage({ params }: { params: Promise
     <div className="space-y-6">
       <Link
         href="/settings/businesses"
-        className="inline-flex items-center gap-1 text-sm text-neutral-500 hover:text-neutral-900 dark:hover:text-white"
+        className="inline-flex min-h-10 items-center gap-1 text-sm text-neutral-600 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-white"
       >
         <ArrowLeft className="h-3.5 w-3.5" />
         All businesses
@@ -120,7 +121,8 @@ export default async function BusinessSettingsPage({ params }: { params: Promise
 
       <nav className="flex flex-wrap gap-1.5 text-xs font-medium">
         {[
-          ["profile", "Profile & series"],
+          ["profile", "Profile & numbering"],
+          ...(business.entity === "GRATEFUL" ? [["gst", "GST filing lock"]] : []),
           ["sheet", "Google Sheet"],
           ["categories", "Categories"],
           ["gateways", "Gateways"],
@@ -129,14 +131,14 @@ export default async function BusinessSettingsPage({ params }: { params: Promise
           <a
             key={anchor}
             href={`#${anchor}`}
-            className="rounded-lg border border-neutral-200/80 bg-white px-2.5 py-1.5 text-neutral-600 shadow-card hover:text-neutral-900 dark:border-white/10 dark:bg-white/[0.03] dark:text-neutral-300"
+            className="flex min-h-9 items-center rounded-lg border border-neutral-200/80 bg-white px-3 text-neutral-700 shadow-card hover:text-neutral-900 dark:border-white/10 dark:bg-white/[0.03] dark:text-neutral-300"
           >
             {label}
           </a>
         ))}
       </nav>
 
-      <Section id="profile" icon={Building2} title="Profile & invoice series" subtitle="Who it is, who bills for it, how its invoices are numbered">
+      <Section id="profile" icon={Building2} title="Profile & numbering" subtitle="Who it is, who bills for it, how its invoices and credit notes are numbered">
         <BusinessProfileForm
           entities={ENTITY_OPTIONS}
           hasInvoices={business._count.invoices > 0}
@@ -148,10 +150,22 @@ export default async function BusinessSettingsPage({ params }: { params: Promise
             color: business.color,
             invoicePrefix: business.invoicePrefix,
             invoiceNextNumber: business.invoiceNextNumber,
+            invoiceDigits: business.invoiceDigits,
+            creditNotePrefix: business.creditNotePrefix,
             defaultGstPercent: business.defaultGstPercent,
           }}
         />
       </Section>
+
+      {/* Only a GST-registered seller files returns. */}
+      {business.entity === "GRATEFUL" && (
+        <Section id="gst" icon={Landmark} title="GST filing lock" subtitle="Freeze months whose GST return is already filed">
+          <GstLockForm
+            businessId={business.id}
+            lockedThrough={business.gstLockedThrough ? business.gstLockedThrough.toISOString().slice(0, 10) : null}
+          />
+        </Section>
+      )}
 
       <Section id="sheet" icon={Sheet} title="Google Sheet" subtitle="Payments and entries are written here as they're saved">
         <SheetConnectionForm

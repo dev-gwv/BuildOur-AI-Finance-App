@@ -3,7 +3,7 @@ import { ArrowRight, Building2, FileBadge, Landmark } from "lucide-react";
 import { prisma } from "@/lib/prisma";
 import { requirePageUser } from "@/server/session";
 import { getScope } from "@/server/scope";
-import { previewInvoiceNumber } from "@/server/businesses";
+import { nextInvoiceNumberPreview } from "@/server/businesses";
 import { BRANDS } from "@/lib/brands";
 import { InvoiceForm } from "@/components/InvoiceForm";
 import { MulberryInvoiceForm } from "@/components/MulberryInvoiceForm";
@@ -28,6 +28,10 @@ export default async function NewInvoicePage({ searchParams }: { searchParams: P
   const business = scope.current;
 
   if (!business) {
+    // Each card shows the number it would issue — per financial year where the series restarts.
+    const nextNumbers = Object.fromEntries(
+      await Promise.all(scope.businesses.map(async (b) => [b.id, await nextInvoiceNumberPreview(b)] as const))
+    );
     return (
       <div className="space-y-6">
         <PageHeader
@@ -58,7 +62,7 @@ export default async function NewInvoicePage({ searchParams }: { searchParams: P
                   <p className="mt-4 font-semibold text-neutral-900 dark:text-white">{b.name}</p>
                   <p className="mt-0.5 text-sm text-neutral-500 dark:text-neutral-400">Billed as {BRANDS[b.entity].name}</p>
                   <div className="mt-3 flex flex-wrap gap-1.5">
-                    <Badge>Next: {previewInvoiceNumber(b)}</Badge>
+                    <Badge>Next: {nextNumbers[b.id]}</Badge>
                     <Badge tone={b.entity === "MULBERRY" ? "neutral" : "brand"}>
                       {b.entity === "MULBERRY" ? "From a quotation" : "Bajaj sale or direct sale"}
                     </Badge>
@@ -72,7 +76,7 @@ export default async function NewInvoicePage({ searchParams }: { searchParams: P
     );
   }
 
-  const suggestedNumber = previewInvoiceNumber(business);
+  const suggestedNumber = await nextInvoiceNumberPreview(business);
 
   if (business.entity === "MULBERRY") {
     return (

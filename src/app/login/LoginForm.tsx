@@ -1,12 +1,15 @@
 "use client";
 
+import Link from "next/link";
 import { useActionState, useState } from "react";
-import { AlertCircle, TrendingUp, Wallet } from "lucide-react";
+import { AlertCircle } from "lucide-react";
 import { loginAction } from "@/lib/actions/auth";
 import { Button } from "@/components/ui/Button";
+import { Field, Input } from "@/components/ui/Field";
+import { AuthError, AuthShell } from "./AuthShell";
 
 /** The sign-in form. `next` is where to go afterwards (validated again on the server). */
-export function LoginForm({ next }: { next?: string }) {
+export function LoginForm({ next, notice }: { next?: string; notice?: string }) {
   const [error, formAction, pending] = useActionState(loginAction, undefined);
   // Held in state because React resets a form's fields after its action runs:
   // without this a wrong password would also wipe the email, and the retry
@@ -14,134 +17,66 @@ export function LoginForm({ next }: { next?: string }) {
   const [email, setEmail] = useState("");
 
   return (
-    <div className="grid min-h-screen lg:grid-cols-2">
-      <div className="relative hidden flex-col justify-between overflow-hidden bg-[#0c0c0f] p-12 text-white lg:flex">
-        <div
-          className="pointer-events-none absolute inset-0"
-          style={{
-            backgroundImage:
-              "radial-gradient(60% 50% at 15% 10%, rgba(106,108,240,0.35), transparent 70%), radial-gradient(50% 40% at 90% 80%, rgba(16,185,129,0.18), transparent 70%)",
-          }}
-        />
-        <div
-          className="pointer-events-none absolute inset-0 opacity-[0.07]"
-          style={{
-            backgroundImage:
-              "linear-gradient(rgba(255,255,255,0.6) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.6) 1px, transparent 1px)",
-            backgroundSize: "48px 48px",
-            maskImage: "radial-gradient(ellipse at center, black 30%, transparent 75%)",
-          }}
-        />
-        <div className="relative flex items-center gap-2.5 text-base font-semibold">
-          <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-brand-400 to-brand-700 shadow-lg shadow-brand-900/40 ring-1 ring-white/20">
-            <Wallet className="h-4.5 w-4.5" />
-          </span>
-          Grateful Finance
+    <AuthShell title="Welcome back" subtitle="Sign in to your finance workspace.">
+      {notice && (
+        <p role="status" className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-300">
+          {notice}
+        </p>
+      )}
+      <form action={formAction} className="space-y-4">
+        {next && <input type="hidden" name="next" value={next} />}
+        <Field label="Email">
+          <Input
+            id="email"
+            name="email"
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            required
+            autoComplete="email"
+            inputMode="email"
+            placeholder="you@company.com"
+          />
+        </Field>
+
+        <div>
+          <div className="mb-1.5 flex items-baseline justify-between">
+            <label htmlFor="password" className="text-sm font-medium text-neutral-800 dark:text-neutral-200">
+              Password
+            </label>
+            <Link
+              href={email ? `/forgot-password?email=${encodeURIComponent(email)}` : "/forgot-password"}
+              className="text-xs font-medium text-brand-700 hover:underline dark:text-brand-300"
+            >
+              Forgot password?
+            </Link>
+          </div>
+          <Input
+            id="password"
+            name="password"
+            type="password"
+            required
+            autoFocus={Boolean(error)}
+            autoComplete="current-password"
+            placeholder="••••••••"
+            invalid={Boolean(error)}
+            aria-describedby={error ? "login-error" : undefined}
+          />
         </div>
 
-        <div className="relative space-y-10">
-          <div className="max-w-md space-y-4">
-            <h2 className="text-4xl font-semibold leading-[1.1] tracking-tight">
-              Every rupee, every venture, <span className="text-brand-300">one place.</span>
-            </h2>
-            <p className="text-[15px] leading-relaxed text-neutral-400">
-              Raise tax invoices from a Bajaj DO or GST certificate, record payments from a screenshot, and
-              keep IPC, IWC and Mulberry&apos;s sheets in step — automatically.
-            </p>
+        {error && (
+          <div id="login-error">
+            <AuthError>
+              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+              {error}
+            </AuthError>
           </div>
-          <div className="grid max-w-md grid-cols-3 gap-3">
-            {[
-              { k: "IPC", c: "bg-brand-400" },
-              { k: "IWC", c: "bg-sky-400" },
-              { k: "Mulberry", c: "bg-rose-400" },
-            ].map((x) => (
-              <div key={x.k} className="rounded-xl border border-white/10 bg-white/[0.04] p-3 backdrop-blur">
-                <span className="flex items-center gap-1.5 text-xs text-neutral-400">
-                  <span className={`h-1.5 w-1.5 rounded-full ${x.c}`} />
-                  {x.k}
-                </span>
-                <span className="mt-2 block h-1.5 w-full overflow-hidden rounded-full bg-white/10">
-                  <span className={`block h-full w-2/3 rounded-full ${x.c}`} />
-                </span>
-              </div>
-            ))}
-          </div>
-          <div className="flex items-center gap-2 text-sm text-emerald-300">
-            <TrendingUp className="h-4 w-4" />
-            Live collections, dues and GST — per venture
-          </div>
-        </div>
-        <p className="relative text-xs text-neutral-600">© {new Date().getFullYear()} Grateful World Ventures (OPC) Pvt. Ltd.</p>
-      </div>
+        )}
 
-      <div className="flex items-center justify-center px-4 py-12">
-        <div className="w-full max-w-sm">
-          <div className="mb-8 flex items-center gap-2 text-lg font-semibold text-neutral-900 lg:hidden dark:text-neutral-100">
-            <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-brand-600 text-white">
-              <Wallet className="h-5 w-5" />
-            </span>
-            Grateful Finance
-          </div>
-
-          <h1 className="text-2xl font-semibold tracking-tight text-neutral-950 dark:text-white">Welcome back</h1>
-          <p className="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
-            Sign in to your finance workspace.
-          </p>
-
-          <form action={formAction} className="mt-6 space-y-4">
-            {next && <input type="hidden" name="next" value={next} />}
-            <div>
-              <label
-                htmlFor="email"
-                className="block text-sm font-medium text-neutral-700 dark:text-neutral-300"
-              >
-                Email
-              </label>
-              <input
-                id="email"
-                name="email"
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                required
-                autoComplete="email"
-                placeholder="you@company.com"
-                className="mt-1.5 h-10 w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 shadow-xs text-sm outline-none focus:border-brand-500 focus:ring-4 focus:ring-brand-500/15 dark:border-white/10 dark:bg-neutral-950/60"
-              />
-            </div>
-
-            <div>
-              <label
-                htmlFor="password"
-                className="block text-sm font-medium text-neutral-700 dark:text-neutral-300"
-              >
-                Password
-              </label>
-              <input
-                id="password"
-                name="password"
-                type="password"
-                required
-                autoFocus={Boolean(error)}
-                autoComplete="current-password"
-                placeholder="••••••••"
-                className="mt-1.5 h-10 w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 shadow-xs text-sm outline-none focus:border-brand-500 focus:ring-4 focus:ring-brand-500/15 dark:border-white/10 dark:bg-neutral-950/60"
-              />
-            </div>
-
-            {error && (
-              <div className="flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-400">
-                <AlertCircle className="h-4 w-4 shrink-0" />
-                {error}
-              </div>
-            )}
-
-            <Button type="submit" loading={pending} className="h-10 w-full">
-              {pending ? "Signing in..." : "Sign in"}
-            </Button>
-          </form>
-        </div>
-      </div>
-    </div>
+        <Button type="submit" loading={pending} className="h-11 w-full">
+          {pending ? "Signing in…" : "Sign in"}
+        </Button>
+      </form>
+    </AuthShell>
   );
 }

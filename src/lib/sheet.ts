@@ -1,6 +1,7 @@
 import { prisma } from "./prisma";
 import { sheetTarget } from "@/server/businesses";
 import { expenseSheetBody, paymentReceiptRow, type SheetBody } from "./sheetRows";
+import { computeInvoice } from "./invoiceLines";
 
 export type { SheetBody };
 
@@ -81,15 +82,40 @@ const paymentSelect = {
   gateway: true,
   feeAmount: true,
   feeGstAmount: true,
-  invoice: { select: { businessId: true, brand: true, customerName: true, invoiceNumber: true, gstPercent: true } },
+  kind: true,
+  tdsAmount: true,
+  tdsSection: true,
+  invoice: {
+    select: {
+      businessId: true,
+      brand: true,
+      customerName: true,
+      invoiceNumber: true,
+      gstPercent: true,
+      lines: { select: { grossAmount: true, gstPercent: true, hsnSac: true, description: true, qty: true } },
+    },
+  },
 } as const;
+
+/** The invoice fields a sheet row needs, with the taxable share worked out from its lines. */
+function sheetInvoice(inv: {
+  brand: string;
+  customerName: string;
+  invoiceNumber: string;
+  gstPercent: number;
+  lines: { grossAmount: number; gstPercent: number; hsnSac: string; description: string; qty: number }[];
+}) {
+  if (!inv.lines.length) return inv;
+  const totals = computeInvoice(inv.lines, { isInterState: false, gstRegistered: inv.brand === "GRATEFUL" });
+  return { ...inv, taxableRatio: totals.total > 0 ? totals.subTotal / totals.total : null };
+}
 
 /** Writes (or rewrites) a payment's row in its invoice's workbook. */
 export async function syncPayment(paymentId: string): Promise<void> {
   try {
     const payment = await prisma.payment.findUnique({ where: { id: paymentId }, select: paymentSelect });
     if (!payment) return;
-    await postToSheet(payment.invoice.businessId, { action: "upsert", ...paymentReceiptRow(payment, payment.invoice) });
+    await postToSheet(payment.invoice.businessId, { action: "upsert", ...paymentReceiptRow(payment, sheetInvoice(payment.invoice)) });
   } catch (e) {
     console.error(`Sheet sync for payment ${paymentId} failed before sending:`, e);
   }
@@ -100,7 +126,7 @@ export async function syncInvoicePayments(invoiceId: string): Promise<void> {
   try {
     const payments = await prisma.payment.findMany({ where: { invoiceId }, select: paymentSelect });
     for (const p of payments) {
-      await postToSheet(p.invoice.businessId, { action: "upsert", ...paymentReceiptRow(p, p.invoice) });
+      await postToSheet(p.invoice.businessId, { action: "upsert", ...paymentReceiptRow(p, sheetInvoice(p.invoice)) });
     }
   } catch (e) {
     console.error(`Sheet sync for invoice ${invoiceId} failed before sending:`, e);

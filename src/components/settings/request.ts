@@ -1,5 +1,7 @@
 "use client";
 
+import { controlClass } from "@/components/ui/Field";
+
 /**
  * One way for settings forms to call the API: JSON in, JSON out, and the
  * server's own message (plus per-field messages) back on failure, so every
@@ -34,10 +36,10 @@ export async function request<T = unknown>(
   }
 }
 
-export const inputClass =
-  "mt-1.5 h-9 w-full rounded-lg border border-neutral-200 bg-white px-3 text-sm shadow-xs outline-none focus:border-brand-500 focus:ring-4 focus:ring-brand-500/15 dark:border-white/10 dark:bg-neutral-950/60";
-export const labelClass = "block text-sm font-medium text-neutral-700 dark:text-neutral-300";
-export const hintClass = "mt-1 text-xs text-neutral-500 dark:text-neutral-400";
+/** The shared control look (see components/ui/Field) for forms not yet on <Field>. */
+export const inputClass = `mt-1.5 ${controlClass(false, "h-11 sm:h-10")}`;
+export const labelClass = "block text-sm font-medium text-neutral-800 dark:text-neutral-200";
+export const hintClass = "mt-1.5 text-xs text-neutral-600 dark:text-neutral-400";
 
 /** Field-level error line under an input. */
 export function fieldError(fields: Record<string, string> | undefined, name: string) {

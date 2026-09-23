@@ -39,24 +39,61 @@ type PaymentForSheet = {
   gateway: string | null;
   feeAmount: number;
   feeGstAmount: number;
+  /** "REFUND" rows are money going back out: written as negative amounts. */
+  kind?: string | null;
+  tdsAmount?: number | null;
+  tdsSection?: string | null;
 };
-type InvoiceForSheet = { brand: string; customerName: string; invoiceNumber: string; gstPercent: number };
+type InvoiceForSheet = {
+  brand: string;
+  customerName: string;
+  invoiceNumber: string;
+  gstPercent: number;
+  /**
+   * Share of the invoice that's taxable value (sub total / total), from its
+   * line items. With several GST rates on one invoice a single rate can't back
+   * the tax out; when given, this is used instead of gstPercent.
+   */
+  taxableRatio?: number | null;
+};
 
 export function paymentReceiptRow(payment: PaymentForSheet, invoice: InvoiceForSheet): ReceiptRow {
-  const fees = payment.feeAmount + payment.feeGstAmount;
-  const settled = payment.amount - fees;
   // Only Grateful's ventures charge GST; Mulberry's "excluding" is just net of charges.
-  const gst = invoice.brand === "GRATEFUL" ? invoice.gstPercent : 0;
+  const exGst = (n: number) =>
+    invoice.brand !== "GRATEFUL"
+      ? n
+      : invoice.taxableRatio && invoice.taxableRatio > 0
+        ? n * invoice.taxableRatio
+        : n / (1 + invoice.gstPercent / 100);
+
+  if (payment.kind === "REFUND") {
+    // Money handed back after a credit note: the month's receipts go down.
+    return {
+      id: payment.id,
+      date: isoDate(payment.paidOn),
+      client: invoice.customerName,
+      amount: -payment.amount,
+      amountExGst: -round2(exGst(payment.amount)),
+      remarks: ["Refund", payment.method, payment.note, invoice.invoiceNumber].filter(Boolean).join(" · "),
+    };
+  }
+
+  const fees = payment.feeAmount + payment.feeGstAmount;
+  const tds = payment.tdsAmount ?? 0;
+  // TDS is still income (paid to the government on our behalf), so only the
+  // gateway's cut is taken off before the tax is backed out.
+  const settled = payment.amount - fees;
   return {
     id: payment.id,
     date: isoDate(payment.paidOn),
     client: invoice.customerName,
     amount: payment.amount,
-    amountExGst: round2(settled / (1 + gst / 100)),
+    amountExGst: round2(exGst(settled)),
     remarks: [
       payment.method,
       payment.gateway && payment.gateway !== payment.method ? `via ${payment.gateway}` : null,
       fees > 0 ? `${payment.gateway ?? "gateway"} fee ₹${round2(fees).toLocaleString("en-IN")}` : null,
+      tds > 0 ? `TDS ${payment.tdsSection ?? ""} ₹${round2(tds).toLocaleString("en-IN")}`.replace("  ", " ") : null,
       payment.note,
       invoice.invoiceNumber,
     ]

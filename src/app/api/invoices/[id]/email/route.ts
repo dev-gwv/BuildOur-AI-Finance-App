@@ -10,6 +10,10 @@ import { invoiceEmailHtml, invoiceEmailText } from "@/lib/invoiceEmail";
 import { isMailConfigured, sendMail } from "@/lib/mailer";
 import { renderTemplate, templateVars } from "@/lib/emailTemplate";
 import { templateFor } from "@/lib/templateStore";
+import { invoiceBalance } from "@/lib/invoiceLines";
+import { saveGeneratedPdf } from "@/lib/pdfStorage";
+import { deleteUpload } from "@/lib/storage";
+import { loadInvoicePdfData, pdfFileName, renderInvoicePdf } from "@/components/pdf/renderInvoicePdf";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -23,11 +27,14 @@ export const GET = withApiErrors(async (_req: NextRequest, { params }: Params) =
 
   const invoice = await prisma.invoice.findUnique({
     where: { id },
-    include: { payments: { select: { amount: true } } },
+    include: {
+      payments: { select: { amount: true, kind: true, tdsAmount: true } },
+      creditNotes: { select: { grossAmount: true } },
+    },
   });
   if (!invoice) throw new ApiError(404, "Invoice not found");
 
-  const amountPaid = invoice.payments.reduce((sum, p) => sum + p.amount, 0);
+  const balance = invoiceBalance(invoice);
   const template = await templateFor(invoice.brand);
   const vars = templateVars({
     brand: invoice.brand,
@@ -36,7 +43,7 @@ export const GET = withApiErrors(async (_req: NextRequest, { params }: Params) =
     invoiceDate: invoice.invoiceDate,
     dueDate: invoice.dueDate,
     total: invoice.grossAmount,
-    balanceDue: invoice.grossAmount - amountPaid,
+    balanceDue: balance.balance,
     itemDescription: invoice.itemDescription,
   });
 
@@ -45,6 +52,9 @@ export const GET = withApiErrors(async (_req: NextRequest, { params }: Params) =
     subject: renderTemplate(template.subject, vars),
     body: renderTemplate(template.body, vars),
     configured: isMailConfigured(),
+    // The dialog tells the sender what goes out with the message.
+    attachment: pdfFileName(invoice.invoiceNumber),
+    cancelled: invoice.status === "CANCELLED",
   });
 });
 
@@ -69,7 +79,10 @@ export const POST = withApiErrors(async (req: NextRequest, { params }: Params) =
 
   const invoice = await prisma.invoice.findUnique({
     where: { id },
-    include: { payments: { select: { amount: true } } },
+    include: {
+      payments: { select: { amount: true, kind: true, tdsAmount: true } },
+      creditNotes: { select: { grossAmount: true } },
+    },
   });
   if (!invoice) throw new ApiError(404, "Invoice not found");
 
@@ -77,7 +90,8 @@ export const POST = withApiErrors(async (req: NextRequest, { params }: Params) =
   if (!EMAIL_RE.test(to)) throw badRequest("Add a valid customer email address before sending", { to: "Not a valid email" });
 
   const brand = BRANDS[invoice.brand];
-  const amountPaid = invoice.payments.reduce((sum, p) => sum + p.amount, 0);
+  const balance = invoiceBalance(invoice);
+  const amountPaid = Math.round((balance.received - balance.refunded) * 100) / 100;
 
   // The sender may tweak the wording for this one email; otherwise the brand's
   // saved template is used, with placeholders filled in.
@@ -89,7 +103,7 @@ export const POST = withApiErrors(async (req: NextRequest, { params }: Params) =
     invoiceDate: invoice.invoiceDate,
     dueDate: invoice.dueDate,
     total: invoice.grossAmount,
-    balanceDue: invoice.grossAmount - amountPaid,
+    balanceDue: balance.balance,
     itemDescription: invoice.itemDescription,
   });
 
@@ -111,28 +125,46 @@ export const POST = withApiErrors(async (req: NextRequest, { params }: Params) =
     message,
   };
 
+  // The customer gets the actual tax invoice, not just a summary of it.
+  const pdfData = await loadInvoicePdfData(id);
+  if (!pdfData) throw new ApiError(404, "Invoice not found");
+  const pdf = await renderInvoicePdf(pdfData);
+  const filename = pdfFileName(invoice.invoiceNumber);
+
   await sendMail({
     to,
     fromName: brand.name,
     subject,
     text: invoiceEmailText(data),
     html: invoiceEmailHtml(data),
+    attachments: [{ filename, content: pdf, contentType: "application/pdf" }],
   });
+
+  // Keep the exact PDF that went out, so there's a record of what the
+  // customer received even if the invoice is edited later. The email has
+  // already gone, so a storage hiccup only costs the copy, not the send.
+  let emailedPdfPath: string | null = null;
+  try {
+    emailedPdfPath = await saveGeneratedPdf(pdf);
+  } catch (e) {
+    console.error(`Sent ${invoice.invoiceNumber}, but couldn't keep a copy of the PDF:`, e);
+  }
 
   // Remember the address so the next send doesn't have to be retyped.
   await prisma.invoice.update({
     where: { id },
-    data: { emailSentAt: new Date(), customerEmail: to },
+    data: { emailSentAt: new Date(), customerEmail: to, ...(emailedPdfPath ? { emailedPdfPath } : {}) },
   });
+  if (emailedPdfPath && invoice.emailedPdfPath) await deleteUpload(invoice.emailedPdfPath).catch(() => {});
   await audit({
     user,
     businessId: access.businessId,
     action: "invoice.email",
     entityType: "invoice",
     entityId: id,
-    summary: `Emailed ${invoice.invoiceNumber} to ${to}`,
+    summary: `Emailed ${invoice.invoiceNumber} to ${to} with ${filename} attached`,
     req,
   });
 
-  return NextResponse.json({ ok: true, to });
+  return NextResponse.json({ ok: true, to, attachment: filename, copyKept: Boolean(emailedPdfPath) });
 });
