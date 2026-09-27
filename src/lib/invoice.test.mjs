@@ -451,6 +451,7 @@ const bajajRow = paymentReceiptRow(
   { brand: "GRATEFUL", customerName: "Kavya Sharma", invoiceNumber: "IPC-INV-002250", gstPercent: 18 }
 );
 assert.equal(bajajRow.amount, 100000, "financed amount settled");
+assert.equal(bajajRow.amountExCharges, 91103, "what reached the bank after Bajaj's cut");
 assert.equal(bajajRow.amountExGst, Math.round((91103 / 1.18) * 100) / 100, "credited, excluding GST");
 assert.match(bajajRow.remarks, /Bajaj Finance disbursement · via Bajaj Finance · Bajaj Finance fee ₹8,897/);
 

@@ -170,7 +170,7 @@ export function SheetConnectionForm({
         </summary>
         <ol className="mt-2 list-decimal space-y-1 pl-5 text-neutral-600 dark:text-neutral-400">
           <li>In the Google Sheet: Extensions → Apps Script. Paste in <code className="font-mono">google-apps-script/PaymentSync.gs</code> from the app&apos;s code.</li>
-          <li>At the top, set <code className="font-mono">SECRET</code> to a long random string, and set <code className="font-mono">RECEIPT_COLUMNS</code> to match this sheet&apos;s columns.</li>
+          <li>At the top, set <code className="font-mono">SECRET</code> to a long random string, and set <code className="font-mono">LAYOUT</code> to <code className="font-mono">&quot;VENTURE&quot;</code> (IPC / IWC: receipts A–F, expenses G–J) or <code className="font-mono">&quot;MULBERRY&quot;</code>. Each month gets its own tab, created with the headings when the month&apos;s first entry comes in.</li>
           <li>Deploy → New deployment → Web app. Execute as: Me. Who has access: Anyone. Authorise it.</li>
           <li>Paste the /exec URL and the same secret above, save, then Test connection.</li>
         </ol>

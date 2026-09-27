@@ -12,20 +12,19 @@
  * One copy per workbook. The code is the same in each; only the settings block
  * below differs:
  *
- *   Workbook            App variables
- *   Mulberry Weddings   SHEETS_WEBHOOK_URL      / SHEETS_WEBHOOK_SECRET
- *   IPC Finance         SHEETS_WEBHOOK_URL_IPC  / SHEETS_WEBHOOK_SECRET_IPC
- *   IWC Finance         SHEETS_WEBHOOK_URL_IWC  / SHEETS_WEBHOOK_SECRET_IWC
+ *   Workbook            LAYOUT
+ *   Mulberry Weddings   "MULBERRY"
+ *   IPC Finance         "VENTURE"
+ *   IWC Finance         "VENTURE"
  *
  * Setup (once per workbook):
  *   1. In the sheet: Extensions -> Apps Script, paste this in.
- *   2. Set SECRET to a fresh random string and put the same string in the
- *      app's matching *_SECRET variable. Use a different one per workbook.
- *   3. Set RECEIPT_COLUMNS (and the expense settings, if wanted) to match
- *      this workbook's layout. Save.
- *   4. Deploy -> New deployment -> Web app, "Execute as: Me",
+ *   2. Set SECRET to a fresh random string (a different one per workbook)
+ *      and LAYOUT to this workbook's. Save.
+ *   3. Deploy -> New deployment -> Web app, "Execute as: Me",
  *      "Who has access: Anyone", Deploy, and authorise it.
- *   5. Copy the /exec URL into the app's matching *_URL variable.
+ *   4. In the app: Settings -> Businesses -> the business -> Google Sheet,
+ *      paste the /exec URL and the same secret, and press Test.
  *
  * After editing this file, Deploy -> Manage deployments -> edit -> New version,
  * otherwise the live URL keeps running the old code.
@@ -33,41 +32,57 @@
 
 // ---- Settings: the only part that differs between workbooks ---------------
 
-/** Must match this workbook's *_SECRET in the app. */
+/** Must match this workbook's secret in the app (Settings -> Businesses -> Google Sheet). */
 var SECRET = "CHANGE-ME";
 
 /**
- * The receipts table, left to right from column A. Fields the app sends:
- * date, client, amount (GST-inclusive), amountExGst, remarks.
+ * Which workbook this is. Pick one:
+ *   "VENTURE"  - IPC Finance / IWC Finance: one tab per month ("September 2026"),
+ *                receipts in A-F and expenses in G-J, side by side:
+ *                Date | Client Name | Payment Received | Excluding Payment Gateway Charges
+ *                | Excluding Gst & Charges | Remarks || Date | Expenses | Incl Gst | Excluding Gst
+ *   "MULBERRY" - Mulberry Weddings hisaab: one tab per month,
+ *                (Receipts) Date | Client | Amount Received | Remarks, no expense sync.
  */
-// Mulberry's hisaab: (Receipts) Date | Client | Amount Received | Remarks
-var RECEIPT_COLUMNS = ["date", "client", "amount", "remarks"];
-// IWC / IPC Finance: Date | Client Name | Payment Received including Gst & Charges
-//                    | Excluding Gst & Charges | Remarks
-// var RECEIPT_COLUMNS = ["date", "client", "amount", "amountExGst", "remarks"];
+var LAYOUT = "VENTURE";
 
-/** Header for a month tab this script has to create. Same order as RECEIPT_COLUMNS. */
-var RECEIPT_HEADER = ["(Receipts) Date", "Client", "Amount Received ", "Remarks"];
-// var RECEIPT_HEADER = ["Date", "Client Name", "Payment Received including Gst & Charges", "Excluding Gst & Charges", "Remarks"];
+var LAYOUTS = {
+  VENTURE: {
+    // Fields the app sends for a receipt: date, client, amount (what the customer
+    // paid), amountExCharges (after the gateway's / Bajaj's cut), amountExGst
+    // (that, with GST taken back out), remarks.
+    receiptColumns: ["date", "client", "amount", "amountExCharges", "amountExGst", "remarks"],
+    receiptHeader: ["Date", "Client Name", "Payment Received", "Excluding Payment Gateway Charges", "Excluding Gst & Charges", "Remarks"],
+    // For an expense: date, particular, amount (incl. GST), amountExGst.
+    expenseFirstColumn: 7, // G
+    expenseColumns: ["date", "particular", "amount", "amountExGst"],
+    expenseHeader: ["Date", "Expenses", "Incl Gst", "Excluding Gst"],
+    singleTab: "", // one tab per month (see monthSheet)
+    newTabName: "{Month} {Year}",
+  },
+  MULBERRY: {
+    receiptColumns: ["date", "client", "amount", "remarks"],
+    receiptHeader: ["(Receipts) Date", "Client", "Amount Received ", "Remarks"],
+    expenseFirstColumn: 0, // 0 turns expense sync off
+    expenseColumns: ["date", "amount", "amountExGst"],
+    expenseHeader: [],
+    singleTab: "", // one tab per month (see monthSheet)
+    newTabName: "Hisaab till {Month} {Year}",
+  },
+};
 
-/**
- * The expenses table. 0 turns expense sync off — the app's expenses are then
- * simply not written here. Fields the app sends: date, particular,
- * amount (GST-inclusive), amountExGst. Check the column against the workbook
- * before turning it on; a wrong one writes over whatever is there.
- */
-var EXPENSE_FIRST_COLUMN = 0;
-var EXPENSE_COLUMNS = ["date", "amount", "amountExGst"];
-// IWC Finance (Date | Expenses Incl Gst | Excluding Gst, straight after the receipts):
-// var EXPENSE_FIRST_COLUMN = 6; // F
+var CONFIG = LAYOUTS[LAYOUT];
+var RECEIPT_COLUMNS = CONFIG.receiptColumns;
+var RECEIPT_HEADER = CONFIG.receiptHeader;
+var EXPENSE_FIRST_COLUMN = CONFIG.expenseFirstColumn;
+var EXPENSE_COLUMNS = CONFIG.expenseColumns;
+var EXPENSE_HEADER = CONFIG.expenseHeader;
+/** A tab name to write everything into; "*" is the first tab. Empty means one tab per month. */
+var SINGLE_TAB = CONFIG.singleTab;
+/** What a missing month's tab is called when this script creates it. */
+var NEW_TAB_NAME = CONFIG.newTabName;
 
-/**
- * A tab name to write everything into, for a workbook kept as one running
- * sheet. Empty means one tab per month (see monthSheet).
- */
-var SINGLE_TAB = "";
-
-/** Column P: clear of the tables the tabs keep side by side. */
+/** Column P: clear of the tables the tabs keep side by side. Can be hidden. */
 var ID_COLUMN = 16;
 /** Column Q: where an expense's id is kept, next to the payments'. */
 var EXPENSE_ID_COLUMN = 17;
@@ -146,7 +161,7 @@ function upsertRow(sheet, firstColumn, fields, idColumn, date, record) {
 function writeRow(sheet, row, firstColumn, fields, idColumn, date, record) {
   var values = fields.map(function (field) {
     if (field === "date") return date;
-    if (field === "amount" || field === "amountExGst") {
+    if (field === "amount" || field === "amountExCharges" || field === "amountExGst") {
       return record[field] === undefined || record[field] === null ? "" : Number(record[field]);
     }
     return record[field] || "";
@@ -171,27 +186,48 @@ function parseDate(value) {
 function targetSheet(date) {
   if (!SINGLE_TAB) return monthSheet(date);
   var ss = SpreadsheetApp.getActive();
-  return ss.getSheetByName(SINGLE_TAB) || ss.insertSheet(SINGLE_TAB);
+  if (SINGLE_TAB === "*") return ss.getSheets()[0];
+  return ss.getSheetByName(SINGLE_TAB) || withHeaders(ss.insertSheet(SINGLE_TAB));
+}
+
+/** A tab this script had to create gets the same headings as the workbook's own. */
+function withHeaders(sheet) {
+  sheet.getRange(1, 1, 1, RECEIPT_HEADER.length).setValues([RECEIPT_HEADER]);
+  if (EXPENSE_FIRST_COLUMN && EXPENSE_HEADER.length) {
+    sheet.getRange(1, EXPENSE_FIRST_COLUMN, 1, EXPENSE_HEADER.length).setValues([EXPENSE_HEADER]);
+  }
+  return sheet;
 }
 
 /**
- * The tab this month's rows belong in. The workbook keeps one per month,
- * named "Hisaab till 31st August" and, over the years, half a dozen spellings
- * of that — so match on the full month name (deliberately not "Sep", which
- * would also match other text) and take the right-most, which is the one most
- * recently added. A month with no tab yet gets one.
+ * The tab this month's rows belong in, matched on the full month name
+ * (deliberately not "Sep", which would also match other text). Mulberry's
+ * tabs are "Hisaab till 31st August" and half a dozen spellings of that, with
+ * no year, so: a tab naming the month and the year wins; otherwise one naming
+ * just the month, as long as it isn't another year's. Among several, the
+ * right-most, which is the one most recently added. A month with no tab yet
+ * gets one, with the table headings.
  */
 function monthSheet(date) {
   var ss = SpreadsheetApp.getActive();
-  var month = Utilities.formatDate(date, ss.getSpreadsheetTimeZone(), "MMMM");
-  var matches = ss.getSheets().filter(function (sheet) {
-    return sheet.getName().toLowerCase().indexOf(month.toLowerCase()) !== -1;
+  var tz = ss.getSpreadsheetTimeZone();
+  var month = Utilities.formatDate(date, tz, "MMMM").toLowerCase();
+  var year = String(date.getFullYear());
+  var sheets = ss.getSheets();
+  var named = sheets.filter(function (sheet) {
+    return sheet.getName().toLowerCase().indexOf(month) !== -1;
   });
-  if (matches.length) return matches[matches.length - 1];
+  var thisYear = named.filter(function (sheet) {
+    return sheet.getName().indexOf(year) !== -1;
+  });
+  var noYear = named.filter(function (sheet) {
+    return !/(19|20)\d\d/.test(sheet.getName());
+  });
+  var match = thisYear.length ? thisYear : noYear;
+  if (match.length) return match[match.length - 1];
 
-  var sheet = ss.insertSheet("Hisaab till " + month + " " + date.getFullYear());
-  sheet.getRange(1, 1, 1, RECEIPT_HEADER.length).setValues([RECEIPT_HEADER]);
-  return sheet;
+  var name = NEW_TAB_NAME.replace("{Month}", Utilities.formatDate(date, tz, "MMMM")).replace("{Year}", year);
+  return withHeaders(ss.insertSheet(name, sheets.length));
 }
 
 /**

@@ -8,6 +8,8 @@ export type ReceiptRow = {
   client: string;
   /** What the customer paid, GST and gateway charges included. */
   amount: number;
+  /** For the ventures' "Excluding Payment Gateway Charges" column: what reached the bank. */
+  amountExCharges: number;
   /** For the ventures' "Excluding Gst & Charges" column; ignored where a workbook has none. */
   amountExGst: number;
   remarks: string;
@@ -73,6 +75,7 @@ export function paymentReceiptRow(payment: PaymentForSheet, invoice: InvoiceForS
       date: isoDate(payment.paidOn),
       client: invoice.customerName,
       amount: -payment.amount,
+      amountExCharges: -payment.amount,
       amountExGst: -round2(exGst(payment.amount)),
       remarks: ["Refund", payment.method, payment.note, invoice.invoiceNumber].filter(Boolean).join(" · "),
     };
@@ -88,6 +91,7 @@ export function paymentReceiptRow(payment: PaymentForSheet, invoice: InvoiceForS
     date: isoDate(payment.paidOn),
     client: invoice.customerName,
     amount: payment.amount,
+    amountExCharges: round2(settled),
     amountExGst: round2(exGst(settled)),
     remarks: [
       payment.method,
@@ -132,6 +136,7 @@ export function expenseSheetBody(expense: ExpenseForSheet): SheetBody {
     date: isoDate(expense.date),
     client: label,
     amount: expense.grossAmount,
+    amountExCharges: expense.grossAmount,
     amountExGst: expense.netAmount,
     remarks: [expense.gateway?.name, expense.category.name].filter(Boolean).join(" · "),
   };
