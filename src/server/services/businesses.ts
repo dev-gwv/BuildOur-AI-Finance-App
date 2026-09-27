@@ -60,6 +60,8 @@ export const updateBusinessSchema = z.object({
   /** Write-only. "" clears the connection (URL and secret). */
   sheetSecret: z.string().max(200).optional(),
   archived: z.boolean().optional(),
+  /** The mailbox its invoices are emailed from; "" = use the default mailbox. */
+  mailAccountId: z.union([z.literal(""), id]).optional(),
   /** Confirms an automatically set-up business. */
   reviewed: z.literal(true).optional(),
 });
@@ -177,6 +179,17 @@ export async function updateBusiness(admin: SessionUser, businessId: string, inp
     if (clash) throw conflict(`The short name "${input.slug}" is taken`);
   }
 
+  let mailboxNote: string | null = null;
+  if (input.mailAccountId !== undefined && (input.mailAccountId || null) !== existing.mailAccountId) {
+    if (input.mailAccountId) {
+      const mailbox = await prisma.mailAccount.findUnique({ where: { id: input.mailAccountId }, select: { email: true } });
+      if (!mailbox) throw badRequest("That mailbox no longer exists", { mailAccountId: "Pick a saved mailbox" });
+      mailboxNote = `invoices now sent from ${mailbox.email}`;
+    } else {
+      mailboxNote = "invoices now sent from the default mailbox";
+    }
+  }
+
   const prefixAfter = input.invoicePrefix ?? existing.invoicePrefix;
   assertNumberLengths(prefixAfter, input.creditNotePrefix ?? existing.creditNotePrefix, input.invoiceDigits ?? existing.invoiceDigits);
 
@@ -219,6 +232,7 @@ export async function updateBusiness(admin: SessionUser, businessId: string, inp
         }),
     ...(input.archived !== undefined ? { archivedAt: input.archived ? (existing.archivedAt ?? new Date()) : null } : {}),
     ...(input.reviewed ? { needsReview: false } : {}),
+    ...(input.mailAccountId !== undefined ? { mailAccountId: input.mailAccountId || null } : {}),
   };
   if (!clearSheet && (data.sheetUrl ?? existing.sheetUrl) && !(input.sheetSecret || existing.sheetSecretEnc)) {
     throw badRequest("Add the sheet's secret too (the SECRET at the top of its script)", { sheetSecret: "Required with a URL" });
@@ -232,6 +246,7 @@ export async function updateBusiness(admin: SessionUser, businessId: string, inp
     clearSheet ? "sheet disconnected" : null,
     input.archived !== undefined && Boolean(existing.archivedAt) !== input.archived ? (input.archived ? "archived" : "restored") : null,
     input.reviewed && existing.needsReview ? "settings confirmed" : null,
+    mailboxNote,
     // Re-opening a filed period is allowed (admins fix mistakes) but worth flagging in the log.
     input.gstLockedThrough !== undefined && existing.gstLockedThrough &&
     (input.gstLockedThrough === "" || input.gstLockedThrough.getTime() < existing.gstLockedThrough.getTime())

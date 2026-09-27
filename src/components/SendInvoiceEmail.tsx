@@ -5,11 +5,20 @@ import { useState } from "react";
 import { AlertTriangle, CheckCircle2, FileText, Mail } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
-import { Field, Input, Textarea, useFieldErrors } from "@/components/ui/Field";
+import { Field, Input, Select, Textarea, useFieldErrors } from "@/components/ui/Field";
 import { useToast } from "@/components/ui/Toast";
 import { formatDate } from "@/lib/format";
 
-type Draft = { configured: boolean; attachment: string | null; cancelled: boolean };
+type Mailbox = { id: string | null; label: string; email: string };
+type Draft = {
+  configured: boolean;
+  attachment: string | null;
+  cancelled: boolean;
+  /** The business's mailbox (or the default) — where this email goes from. */
+  sender: Mailbox | null;
+  /** Saved mailboxes an admin may send from instead; empty for members. */
+  mailboxes: Mailbox[];
+};
 
 export function SendInvoiceEmail({
   invoiceId,
@@ -28,7 +37,10 @@ export function SendInvoiceEmail({
   const [to, setTo] = useState(customerEmail ?? "");
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
-  const [draft, setDraft] = useState<Draft>({ configured: true, attachment: null, cancelled: false });
+  const [draft, setDraft] = useState<Draft>({ configured: true, attachment: null, cancelled: false, sender: null, mailboxes: [] });
+  /** An admin's one-off choice of mailbox; null = the business's own. */
+  const [fromId, setFromId] = useState<string | null>(null);
+  const [changingFrom, setChangingFrom] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   const { errors, apply, clear } = useFieldErrors<"to" | "subject" | "body">();
 
@@ -47,7 +59,15 @@ export function SendInvoiceEmail({
       setTo((prev) => prev || d.to);
       setSubject(d.subject);
       setBody(d.body);
-      setDraft({ configured: Boolean(d.configured), attachment: d.attachment ?? null, cancelled: Boolean(d.cancelled) });
+      setDraft({
+        configured: Boolean(d.configured),
+        attachment: d.attachment ?? null,
+        cancelled: Boolean(d.cancelled),
+        sender: d.sender ?? null,
+        mailboxes: Array.isArray(d.mailboxes) ? d.mailboxes : [],
+      });
+      setFromId(null);
+      setChangingFrom(false);
     } catch {
       setProblem("Network error while loading the draft. Check your connection and try again.");
     } finally {
@@ -67,6 +87,7 @@ export function SendInvoiceEmail({
       form.append("to", to.trim());
       form.append("subject", subject);
       form.append("body", body);
+      if (fromId && fromId !== draft.sender?.id) form.append("fromAccountId", fromId);
       const res = await fetch(`/api/invoices/${invoiceId}/email`, { method: "POST", body: form });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -75,7 +96,7 @@ export function SendInvoiceEmail({
         setProblem(data.error ?? "Couldn't send the email");
         return;
       }
-      toast.success(`Invoice emailed to ${to.trim()}${data.attachment ? ` with ${data.attachment}` : ""}`);
+      toast.success(`Invoice emailed to ${to.trim()}${data.from ? ` from ${data.from}` : ""}`);
       setOpen(false);
       router.refresh();
     } catch {
@@ -139,9 +160,8 @@ export function SendInvoiceEmail({
               <div role="alert" className="flex gap-2 rounded-xl bg-amber-50 px-3 py-2.5 text-sm text-amber-900 dark:bg-amber-500/10 dark:text-amber-200">
                 <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
                 <p>
-                  Email isn&apos;t set up yet, so nothing can be sent. Whoever manages the app needs to add the SMTP settings
-                  (SMTP_HOST, SMTP_USER, SMTP_PASS, SMTP_FROM) in Vercel and redeploy. You can still download the PDF and send
-                  it yourself.
+                  No mailbox is set up to send from yet, so nothing can be sent. An admin can add one in Settings → Integrations →
+                  Email. You can still download the PDF and send it yourself.
                 </p>
               </div>
             )}
@@ -155,6 +175,38 @@ export function SendInvoiceEmail({
               <div role="alert" className="flex gap-2 rounded-xl bg-red-50 px-3 py-2.5 text-sm text-red-800 dark:bg-red-500/10 dark:text-red-300">
                 <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
                 <p>{problem}</p>
+              </div>
+            )}
+
+            {draft.sender && (
+              <div className="rounded-xl border border-neutral-200/80 bg-neutral-50/70 px-3 py-2.5 text-sm dark:border-white/10 dark:bg-white/[0.03]">
+                {changingFrom && draft.mailboxes.length > 1 ? (
+                  <Field label="Send from" hint="Just for this email — the business keeps its usual mailbox.">
+                    <Select value={fromId ?? draft.sender.id ?? ""} onChange={(e) => setFromId(e.target.value || null)}>
+                      {draft.mailboxes.map((m) => (
+                        <option key={m.id ?? m.email} value={m.id ?? ""}>
+                          {m.email} — {m.label}
+                        </option>
+                      ))}
+                    </Select>
+                  </Field>
+                ) : (
+                  <p className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                    <span className="text-neutral-600 dark:text-neutral-400">From</span>
+                    <span className="font-medium text-neutral-900 dark:text-neutral-100">
+                      {(draft.mailboxes.find((m) => m.id === fromId) ?? draft.sender).email}
+                    </span>
+                    {draft.mailboxes.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => setChangingFrom(true)}
+                        className="ml-auto text-xs font-medium text-brand-600 hover:underline dark:text-brand-400"
+                      >
+                        Change
+                      </button>
+                    )}
+                  </p>
+                )}
               </div>
             )}
 

@@ -4,11 +4,17 @@ import { openSecret } from "@/lib/secretBox";
 import { RAZORPAY_PROVIDER, maskKeyId } from "@/lib/integrations/razorpay";
 import { RazorpayIntegrationCard } from "@/components/RazorpayIntegrationCard";
 import { PageHeader } from "@/components/ui/PageHeader";
+import { MailboxesCard } from "@/components/settings/MailboxesCard";
+import { listMailAccounts } from "@/server/mailAccounts";
+import { envSender } from "@/lib/mailer";
 
 export default async function IntegrationsPage() {
   await requirePageAdmin();
 
-  const row = await prisma.integration.findUnique({ where: { provider: RAZORPAY_PROVIDER } });
+  const [row, mailboxes] = await Promise.all([
+    prisma.integration.findUnique({ where: { provider: RAZORPAY_PROVIDER } }),
+    listMailAccounts(),
+  ]);
   const secretOpens = row?.secretEnc ? openSecret(row.secretEnc) !== null : false;
 
   return (
@@ -18,6 +24,7 @@ export default async function IntegrationsPage() {
         title="Integrations"
         description="Connect outside services. Each one stays off until it's turned on here."
       />
+      <MailboxesCard initial={mailboxes} envFallback={envSender()?.email ?? null} />
       <RazorpayIntegrationCard
         initial={{
           enabled: row?.enabled ?? false,

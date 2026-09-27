@@ -1,12 +1,14 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { AlertTriangle, ArrowLeft, Building2, CreditCard, Landmark, Sheet, Tag, Users } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Building2, CreditCard, Landmark, Mail, Sheet, Tag, Users } from "lucide-react";
 import { prisma } from "@/lib/prisma";
 import { requirePageAdmin } from "@/server/session";
 import { sheetSource } from "@/server/businesses";
 import { BusinessProfileForm } from "@/components/settings/BusinessProfileForm";
 import { SheetConnectionForm } from "@/components/settings/SheetConnectionForm";
 import { GstLockForm } from "@/components/settings/GstLockForm";
+import { BusinessMailboxForm } from "@/components/settings/BusinessMailboxForm";
+import { defaultSender } from "@/server/mailAccounts";
 import { CategoriesEditor, GatewaysEditor } from "@/components/settings/CatalogEditors";
 import { MembersEditor } from "@/components/settings/MembersEditor";
 import { ArchiveButton, MarkReviewedButton } from "@/components/settings/BusinessActions";
@@ -56,7 +58,7 @@ export default async function BusinessSettingsPage({ params }: { params: Promise
   await requirePageAdmin();
   const { id } = await params;
 
-  const [business, users] = await Promise.all([
+  const [business, users, mailboxes, fallback] = await Promise.all([
     prisma.business.findUnique({
       where: { id },
       include: {
@@ -71,6 +73,11 @@ export default async function BusinessSettingsPage({ params }: { params: Promise
       orderBy: [{ active: "desc" }, { name: "asc" }],
       select: { id: true, name: true, email: true, active: true },
     }),
+    prisma.mailAccount.findMany({
+      orderBy: [{ isDefault: "desc" }, { createdAt: "asc" }],
+      select: { id: true, label: true, email: true, isDefault: true },
+    }),
+    defaultSender(),
   ]);
   if (!business) notFound();
 
@@ -123,6 +130,7 @@ export default async function BusinessSettingsPage({ params }: { params: Promise
         {[
           ["profile", "Profile & numbering"],
           ...(business.entity === "GRATEFUL" ? [["gst", "GST filing lock"]] : []),
+          ["email", "Email"],
           ["sheet", "Google Sheet"],
           ["categories", "Categories"],
           ["gateways", "Gateways"],
@@ -166,6 +174,15 @@ export default async function BusinessSettingsPage({ params }: { params: Promise
           />
         </Section>
       )}
+
+      <Section id="email" icon={Mail} title="Email" subtitle="Which mailbox this business's invoices are sent from">
+        <BusinessMailboxForm
+          businessId={business.id}
+          current={business.mailAccountId}
+          mailboxes={mailboxes}
+          defaultEmail={fallback?.email ?? null}
+        />
+      </Section>
 
       <Section id="sheet" icon={Sheet} title="Google Sheet" subtitle="Payments and entries are written here as they're saved">
         <SheetConnectionForm

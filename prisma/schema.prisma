@@ -72,6 +72,9 @@ model Business {
   /// GST returns are filed through this date: invoices, credit notes and
   /// entries dated on or before it can't be added, changed or removed.
   gstLockedThrough  DateTime?
+  /// The mailbox its invoices are emailed from. Null = the default mailbox.
+  mailAccountId     String?
+  mailAccount       MailAccount?     @relation(fields: [mailAccountId], references: [id], onDelete: SetNull)
   defaultGstPercent Float            @default(18)
   /// Its Google Sheet (Apps Script web app). The secret is stored encrypted.
   sheetUrl          String?
@@ -427,4 +430,31 @@ model PasswordResetToken {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
+}
+
+/// A mailbox the app sends email through (SMTP), e.g. Grateful's accounts@
+/// and Mulberry's. Each business picks one for its invoices; the default one
+/// is used for businesses that haven't, and for system email (password
+/// resets). The password (an app password) is stored encrypted.
+model MailAccount {
+  id         String     @id @default(cuid())
+  /// A name people recognise in Settings, e.g. "Grateful accounts".
+  label      String
+  /// The address mail is sent from.
+  email      String     @unique
+  host       String
+  port       Int        @default(465)
+  /// Usually the same as `email`.
+  username   String
+  secretEnc  String
+  /// Shown as the sender name; empty = the business's legal name.
+  fromName   String?
+  /// Where customer replies go; empty = back to this mailbox.
+  replyTo    String?
+  isDefault  Boolean    @default(false)
+  /// Last time a test connection with these details succeeded.
+  verifiedAt DateTime?
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
+  businesses Business[]
 }

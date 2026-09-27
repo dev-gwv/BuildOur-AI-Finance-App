@@ -1,13 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { ApiError, badRequest, withApiErrors } from "@/server/errors";
-import { requireUser } from "@/server/session";
+import { isAdmin, requireUser } from "@/server/session";
 import { requireInvoiceAccess } from "@/server/access";
 import { enforce } from "@/server/rateLimit";
 import { audit } from "@/server/audit";
 import { BRANDS } from "@/lib/brands";
 import { invoiceEmailHtml, invoiceEmailText } from "@/lib/invoiceEmail";
-import { isMailConfigured, sendMail } from "@/lib/mailer";
+import { sendMail } from "@/lib/mailer";
+import { describeSender, senderForBusiness } from "@/server/mailAccounts";
 import { renderTemplate, templateVars } from "@/lib/emailTemplate";
 import { templateFor } from "@/lib/templateStore";
 import { invoiceBalance } from "@/lib/invoiceLines";
@@ -23,7 +24,7 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 export const GET = withApiErrors(async (_req: NextRequest, { params }: Params) => {
   const user = await requireUser();
   const { id } = await params;
-  await requireInvoiceAccess(user, id);
+  const access = await requireInvoiceAccess(user, id);
 
   const invoice = await prisma.invoice.findUnique({
     where: { id },
@@ -46,12 +47,19 @@ export const GET = withApiErrors(async (_req: NextRequest, { params }: Params) =
     balanceDue: balance.balance,
     itemDescription: invoice.itemDescription,
   });
+  const sender = await senderForBusiness(access.businessId);
 
   return NextResponse.json({
     to: invoice.customerEmail ?? "",
     subject: renderTemplate(template.subject, vars),
     body: renderTemplate(template.body, vars),
-    configured: isMailConfigured(),
+    configured: sender !== null,
+    // Which mailbox it goes from (set per business), so nobody has to guess.
+    sender: describeSender(sender),
+    // Admins may send a one-off from another saved mailbox.
+    mailboxes: isAdmin(user)
+      ? await prisma.mailAccount.findMany({ orderBy: [{ isDefault: "desc" }, { createdAt: "asc" }], select: { id: true, label: true, email: true } })
+      : [],
     // The dialog tells the sender what goes out with the message.
     attachment: pdfFileName(invoice.invoiceNumber),
     cancelled: invoice.status === "CANCELLED",
@@ -65,14 +73,17 @@ export const POST = withApiErrors(async (req: NextRequest, { params }: Params) =
   // A leaked session mustn't be able to use the business's mail account to spam.
   await enforce("emailPerUser", user.id);
 
-  if (!isMailConfigured()) {
+  const form = await req.formData().catch(() => null);
+  // Only admins may send from a mailbox other than the business's own.
+  const requestedMailbox = form?.get("fromAccountId") ? String(form.get("fromAccountId")) : null;
+  const sender = await senderForBusiness(access.businessId, isAdmin(user) ? requestedMailbox : null);
+  if (!sender) {
     throw new ApiError(
       400,
-      "Email isn't set up yet. Ask whoever manages the app to add the SMTP_HOST, SMTP_USER, SMTP_PASS and SMTP_FROM settings in Vercel, then redeploy."
+      "No mailbox is set up to send from yet. An admin can add one in Settings → Integrations → Email."
     );
   }
 
-  const form = await req.formData().catch(() => null);
   const override = form?.get("to") ? String(form.get("to")).trim().slice(0, 254) : "";
   const subjectOverride = form?.get("subject") ? String(form.get("subject")).slice(0, 300) : "";
   const bodyOverride = form?.get("body") ? String(form.get("body")).slice(0, 20_000) : "";
@@ -131,7 +142,7 @@ export const POST = withApiErrors(async (req: NextRequest, { params }: Params) =
   const pdf = await renderInvoicePdf(pdfData);
   const filename = pdfFileName(invoice.invoiceNumber);
 
-  await sendMail({
+  await sendMail(sender, {
     to,
     fromName: brand.name,
     subject,
@@ -162,9 +173,9 @@ export const POST = withApiErrors(async (req: NextRequest, { params }: Params) =
     action: "invoice.email",
     entityType: "invoice",
     entityId: id,
-    summary: `Emailed ${invoice.invoiceNumber} to ${to} with ${filename} attached`,
+    summary: `Emailed ${invoice.invoiceNumber} to ${to} from ${sender.email} with ${filename} attached`,
     req,
   });
 
-  return NextResponse.json({ ok: true, to, attachment: filename, copyKept: Boolean(emailedPdfPath) });
+  return NextResponse.json({ ok: true, to, from: sender.email, attachment: filename, copyKept: Boolean(emailedPdfPath) });
 });

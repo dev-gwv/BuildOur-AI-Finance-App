@@ -1,7 +1,8 @@
 import { createHash, randomBytes } from "node:crypto";
 import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
-import { isMailConfigured, sendMail } from "@/lib/mailer";
+import { sendMail } from "@/lib/mailer";
+import { defaultSender } from "@/server/mailAccounts";
 import { audit } from "./audit";
 import { badRequest } from "./errors";
 import { LIMITS, clientIp, hit } from "./rateLimit";
@@ -33,8 +34,9 @@ function appOrigin(): string | null {
   return process.env.NODE_ENV === "production" ? null : "http://localhost:3100";
 }
 
-export function resetByEmailAvailable(): boolean {
-  return isMailConfigured() && appOrigin() !== null;
+/** Reset links need a mailbox to send from (the default one) and a known app address. */
+export async function resetByEmailAvailable(): Promise<boolean> {
+  return appOrigin() !== null && (await defaultSender()) !== null;
 }
 
 export async function requestPasswordReset(emailInput: string, req: Request): Promise<void> {
@@ -44,7 +46,8 @@ export async function requestPasswordReset(emailInput: string, req: Request): Pr
     hit(`reset:${email}`, 3, 60 * 60),
     hit(`reset-ip:${clientIp(req.headers)}`, LIMITS.loginPerIp.limit, LIMITS.loginPerIp.window),
   ]);
-  if (!perEmail.ok || !perIp.ok || !resetByEmailAvailable()) return;
+  const sender = await defaultSender();
+  if (!perEmail.ok || !perIp.ok || !sender || appOrigin() === null) return;
 
   const user = await prisma.user.findUnique({ where: { email }, select: { id: true, name: true, email: true, active: true } });
   if (!user || !user.active) return;
@@ -59,7 +62,7 @@ export async function requestPasswordReset(emailInput: string, req: Request): Pr
 
   const link = `${appOrigin()}/reset-password?token=${token}`;
   try {
-    await sendMail({
+    await sendMail(sender, {
       to: user.email,
       subject: "Reset your Grateful Finance password",
       text: `Hi ${user.name},\n\nSomeone (hopefully you) asked to reset your Grateful Finance password. Open this link within 30 minutes to choose a new one:\n\n${link}\n\nIf it wasn't you, ignore this email — your password stays the same.`,
