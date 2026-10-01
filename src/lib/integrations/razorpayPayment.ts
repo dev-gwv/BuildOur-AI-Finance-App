@@ -69,3 +69,32 @@ export function normalizeRazorpayPayment(p: RawPayment): RazorpayPayment {
   };
 }
 
+
+const DAY_MS = 86_400_000;
+
+/**
+ * The one Razorpay payment a recorded payment is, when its id wasn't given:
+ * same amount, captured within a day either side of the date it was recorded
+ * on (a payment late at night can be entered the next morning), and not
+ * already taken by another payment. Prefers the same day. Null when nothing
+ * fits or the choice is ambiguous — two customers paying ₹4,999 on one day
+ * must not be guessed between.
+ */
+export function matchRazorpayPayment(
+  candidates: RazorpayPayment[],
+  amount: number,
+  paidOn: string,
+  taken: ReadonlySet<string> = new Set()
+): RazorpayPayment | null {
+  const day = Date.parse(`${paidOn}T00:00:00Z`);
+  const fits = candidates.filter(
+    (p) =>
+      p.status === "captured" &&
+      !taken.has(p.id) &&
+      Math.abs(p.amount - amount) < 0.005 &&
+      Math.abs(Date.parse(`${p.paidOn}T00:00:00Z`) - day) <= DAY_MS
+  );
+  if (fits.length === 1) return fits[0];
+  const sameDay = fits.filter((p) => p.paidOn === paidOn);
+  return sameDay.length === 1 ? sameDay[0] : null;
+}

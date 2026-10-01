@@ -5,6 +5,7 @@ import { amountInWords } from "@/lib/numberToWords";
 import { formatCurrency, formatDate } from "@/lib/format";
 import { BRANDS, type BrandKey } from "@/lib/brands";
 import { AUTHORIZED_SIGNATURE_DATA_URI } from "@/lib/signatureImage";
+import { ScrollX } from "@/components/ui/ScrollX";
 
 export interface InvoiceDocumentData {
   brand?: BrandKey;
@@ -117,7 +118,7 @@ export function InvoiceDocument({
           </div>
         )}
 
-        <div className={`flex flex-col gap-6 px-8 py-8 text-white sm:flex-row sm:items-start sm:justify-between ${brand.headerClass}`}>
+        <div className={`flex flex-col gap-6 px-5 sm:px-8 py-8 text-white sm:flex-row sm:items-start sm:justify-between ${brand.headerClass}`}>
           <div className="flex min-w-0 flex-1 items-start gap-4">
             {brand.logoDataUri && (
               // eslint-disable-next-line @next/next/no-img-element -- inline data URI
@@ -165,14 +166,14 @@ export function InvoiceDocument({
         </div>
 
         {cancelled && (
-          <div className="border-b border-red-100 bg-red-50 px-8 py-3 text-sm text-red-800">
+          <div className="border-b border-red-100 bg-red-50 px-5 sm:px-8 py-3 text-sm text-red-800">
             <span className="font-semibold">This invoice was cancelled</span>
             {invoice.cancelledAt && ` on ${formatDate(invoice.cancelledAt)}`}
             {invoice.cancelReason && ` — ${invoice.cancelReason}`}. Nothing is payable against it.
           </div>
         )}
 
-        <div className="grid gap-8 px-8 py-8 sm:grid-cols-2">
+        <div className="grid gap-8 px-5 sm:px-8 py-8 sm:grid-cols-2">
           <div>
             <p className="text-xs font-semibold uppercase tracking-wide text-neutral-500">Bill to</p>
             <p className="mt-1 text-base font-semibold text-neutral-900">{invoice.customerName}</p>
@@ -249,7 +250,7 @@ export function InvoiceDocument({
           ))}
         </div>
 
-        <div className="hidden overflow-x-auto px-8 sm:block print:block">
+        <ScrollX className="hidden px-5 sm:px-8 sm:block print:block">
           <table className="w-full min-w-[640px] text-sm">
             <thead>
               <tr className="border-y border-neutral-200 bg-neutral-50 text-left text-xs uppercase tracking-wide text-neutral-500">
@@ -304,9 +305,9 @@ export function InvoiceDocument({
               ))}
             </tbody>
           </table>
-        </div>
+        </ScrollX>
 
-        <div className="flex flex-col items-end px-8 pb-2 pt-6 text-sm">
+        <div className="flex flex-col items-end px-5 sm:px-8 pb-2 pt-6 text-sm">
           <div className="w-full max-w-sm space-y-2">
             <div className="flex justify-between text-neutral-600">
               <span>{taxed ? "Taxable value" : "Sub total"}</span>
@@ -397,7 +398,7 @@ export function InvoiceDocument({
         </div>
 
         {taxed && (
-          <div className="overflow-x-auto px-8 pt-6">
+          <ScrollX className="px-5 sm:px-8 pt-6">
             <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-500">HSN/SAC summary</p>
             <table className="w-full min-w-[520px] text-xs">
               <thead>
@@ -435,11 +436,11 @@ export function InvoiceDocument({
                 ))}
               </tbody>
             </table>
-          </div>
+          </ScrollX>
         )}
 
         {(invoice.notes || invoice.terms) && (
-          <div className="grid gap-4 px-8 py-6 text-sm sm:grid-cols-2">
+          <div className="grid gap-4 px-5 sm:px-8 py-6 text-sm sm:grid-cols-2">
             {invoice.notes && (
               <div>
                 <p className="font-semibold text-neutral-700">Notes</p>
@@ -455,7 +456,7 @@ export function InvoiceDocument({
           </div>
         )}
 
-        <div className="flex flex-col gap-6 border-t border-neutral-200 px-8 py-6 sm:flex-row sm:items-end sm:justify-between">
+        <div className="flex flex-col gap-6 border-t border-neutral-200 px-5 sm:px-8 py-6 sm:flex-row sm:items-end sm:justify-between">
           <div className="text-sm text-neutral-600">
             {brand.bank ? (
               <>
@@ -479,7 +480,7 @@ export function InvoiceDocument({
           </div>
         </div>
 
-        <p className="border-t border-neutral-100 px-8 py-3 text-center text-[11px] text-neutral-500">
+        <p className="border-t border-neutral-100 px-5 sm:px-8 py-3 text-center text-[11px] text-neutral-500">
           This is a computer-generated {brand.documentTitle.toLowerCase()} and is valid without a physical stamp.
         </p>
       </div>

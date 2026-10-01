@@ -11,6 +11,7 @@ import { amountInWords } from "@/lib/numberToWords";
 import { formatCurrency, formatDate } from "@/lib/format";
 import { PrintButton } from "@/components/PrintButton";
 import { PageHeader } from "@/components/ui/PageHeader";
+import { ScrollX } from "@/components/ui/ScrollX";
 
 /**
  * A credit note as a document the customer can be given: same seller header
@@ -65,7 +66,7 @@ export default async function CreditNotePage({ params }: { params: Promise<{ id:
       </div>
 
       <article className="mx-auto max-w-3xl overflow-hidden rounded-2xl border border-neutral-200 bg-white text-neutral-900 shadow-card print:max-w-none print:rounded-none print:border-0 print:shadow-none">
-        <header className={`px-8 py-7 text-white ${brand.headerClass}`}>
+        <header className={`px-5 sm:px-8 py-7 text-white ${brand.headerClass}`}>
           <p className={`text-xs font-semibold uppercase tracking-[0.2em] ${brand.accentTextClass}`}>Credit Note</p>
           <div className="mt-2 flex flex-wrap items-start justify-between gap-4">
             <div>
@@ -81,7 +82,7 @@ export default async function CreditNotePage({ params }: { params: Promise<{ id:
           </div>
         </header>
 
-        <div className="grid gap-6 px-8 py-6 sm:grid-cols-2">
+        <div className="grid gap-6 px-5 sm:px-8 py-6 sm:grid-cols-2">
           <div>
             <p className="text-xs font-semibold uppercase tracking-wide text-neutral-500">Issued to</p>
             <p className="mt-1 font-semibold">{inv.customerName}</p>
@@ -100,7 +101,7 @@ export default async function CreditNotePage({ params }: { params: Promise<{ id:
           </dl>
         </div>
 
-        <div className="px-8">
+        <ScrollX className="px-5 sm:px-8">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-y border-neutral-200 bg-neutral-50 text-left text-xs uppercase tracking-wide text-neutral-500">
@@ -143,13 +144,13 @@ export default async function CreditNotePage({ params }: { params: Promise<{ id:
                       </td>
                     </>
                   ))}
-                <td className="py-4 pr-2 text-right align-top font-semibold tabular-nums">{formatCurrency(cn.grossAmount)}</td>
+                <td className="whitespace-nowrap py-4 pr-2 text-right align-top font-semibold tabular-nums">{formatCurrency(cn.grossAmount)}</td>
               </tr>
             </tbody>
           </table>
-        </div>
+        </ScrollX>
 
-        <div className="flex flex-wrap items-end justify-between gap-6 px-8 py-6">
+        <div className="flex flex-wrap items-end justify-between gap-6 px-5 sm:px-8 py-6">
           <p className="max-w-sm text-sm italic text-neutral-600">{amountInWords(cn.grossAmount)}</p>
           <div className="text-right">
             <p className="text-sm text-neutral-500">Total credited</p>
@@ -157,7 +158,7 @@ export default async function CreditNotePage({ params }: { params: Promise<{ id:
           </div>
         </div>
 
-        <footer className="flex justify-end border-t border-neutral-100 px-8 py-6">
+        <footer className="flex justify-end border-t border-neutral-100 px-5 sm:px-8 py-6">
           <div className="text-center">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src={signature} alt="Authorised signature" className="mx-auto h-14 object-contain" />

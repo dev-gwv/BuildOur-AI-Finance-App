@@ -3,6 +3,7 @@ import { openSecret } from "@/lib/secretBox";
 import { normalizeRazorpayPayment, type RawPayment, type RazorpayPayment } from "./razorpayPayment";
 
 export type { RazorpayPayment };
+export { matchRazorpayPayment } from "./razorpayPayment";
 
 /**
  * Razorpay, read-only. When connected (Settings -> Integrations), a payment's
@@ -15,7 +16,8 @@ export type { RazorpayPayment };
  */
 
 export const RAZORPAY_PROVIDER = "razorpay";
-const API = "https://api.razorpay.com/v1";
+// Overridable only so tests can point it at a stand-in.
+const API = process.env.RAZORPAY_API_URL || "https://api.razorpay.com/v1";
 
 export class RazorpayError extends Error {
   constructor(
@@ -77,6 +79,33 @@ export async function listRecentRazorpayPayments(days = 14, count = 50): Promise
   const page = await request<{ items: RawPayment[] }>(`/payments?from=${from}&count=${count}`, creds.keyId, creds.keySecret);
   return page.items.filter((p) => p.status === "captured").map(normalizeRazorpayPayment);
 }
+
+/**
+ * Captured payments made between two dates (YYYY-MM-DD, IST, inclusive), all
+ * pages of them, up to `max`.
+ */
+export async function listRazorpayPaymentsBetween(fromDay: string, toDay: string, max = 2000): Promise<RazorpayPayment[]> {
+  const creds = await getRazorpayCredentials();
+  if (!creds) throw new RazorpayError("Razorpay isn't connected — turn it on in Settings → Integrations", 409);
+  // IST midnight is 18:30 UTC the day before.
+  const from = Math.floor(Date.parse(`${fromDay}T00:00:00+05:30`) / 1000);
+  const to = Math.floor(Date.parse(`${toDay}T23:59:59+05:30`) / 1000);
+  const out: RazorpayPayment[] = [];
+  for (let skip = 0; skip < max; skip += 100) {
+    const page = await request<{ items: RawPayment[] }>(
+      `/payments?from=${from}&to=${to}&count=100&skip=${skip}`,
+      creds.keyId,
+      creds.keySecret
+    );
+    out.push(...page.items.map(normalizeRazorpayPayment));
+    if (page.items.length < 100) break;
+  }
+  return out.filter((p) => p.status === "captured");
+}
+
+/** A YYYY-MM-DD day moved by whole days. */
+export const shiftDay = (day: string, days: number) =>
+  new Date(Date.parse(`${day}T00:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10);
 
 export function maskKeyId(keyId: string | null): string | null {
   if (!keyId) return null;

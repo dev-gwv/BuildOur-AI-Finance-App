@@ -12,6 +12,7 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/Table";
 import { formatCurrency, formatCurrencyWhole, formatDate } from "@/lib/format";
 import { loadTdsReport } from "./tdsData";
+import { ScrollX } from "@/components/ui/ScrollX";
 
 /**
  * TDS receivable: tax B2B customers deducted when paying, which the business
@@ -86,7 +87,7 @@ export default async function TdsReportPage({ searchParams }: { searchParams: Pr
               <CardHeader>
                 <CardTitle title="By deductor" subtitle="Grouped by the customer's GSTIN, or name when there isn't one" />
               </CardHeader>
-              <div className="overflow-x-auto">
+              <ScrollX>
                 <Table className="min-w-[560px]">
                   <THead>
                     <tr>
@@ -120,7 +121,7 @@ export default async function TdsReportPage({ searchParams }: { searchParams: Pr
                     ))}
                   </TBody>
                 </Table>
-              </div>
+              </ScrollX>
             </Card>
 
             <Card>
@@ -142,7 +143,7 @@ export default async function TdsReportPage({ searchParams }: { searchParams: Pr
             <CardHeader>
               <CardTitle title="Every deduction" subtitle="Newest first" />
             </CardHeader>
-            <div className="overflow-x-auto">
+            <ScrollX>
               <Table className="min-w-[760px]">
                 <THead>
                   <tr>
@@ -190,7 +191,7 @@ export default async function TdsReportPage({ searchParams }: { searchParams: Pr
                   ))}
                 </TBody>
               </Table>
-            </div>
+            </ScrollX>
           </Card>
         </>
       )}

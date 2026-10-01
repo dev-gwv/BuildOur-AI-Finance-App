@@ -9,6 +9,7 @@ import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/Table";
+import { ScrollX } from "@/components/ui/ScrollX";
 
 export default async function BusinessesPage() {
   await requirePageAdmin();
@@ -64,7 +65,7 @@ export default async function BusinessesPage() {
         <EmptyState icon={Building2} title="No businesses yet" description="Create the first one to start invoicing." />
       ) : (
         <Card className="overflow-hidden">
-          <div className="overflow-x-auto">
+          <ScrollX>
             <Table className="min-w-[680px]">
               <THead>
                 <tr>
@@ -130,7 +131,7 @@ export default async function BusinessesPage() {
                 })}
               </TBody>
             </Table>
-          </div>
+          </ScrollX>
         </Card>
       )}
     </div>

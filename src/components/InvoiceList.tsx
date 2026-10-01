@@ -10,6 +10,7 @@ import { isInterStateSupply } from "@/lib/gstState";
 import { formatCurrency, formatCurrencyWhole, formatDate } from "@/lib/format";
 import { startOfToday } from "@/lib/alerts";
 import { invoiceBalance } from "@/lib/invoiceLines";
+import { ScrollX } from "@/components/ui/ScrollX";
 
 export type ListedInvoice = {
   id: string;
@@ -212,7 +213,7 @@ export function InvoiceList({
             <p className={`mt-1 truncate text-[15px] font-semibold tracking-tight tabular-nums sm:mt-1.5 sm:text-xl ${m.cls}`}>
               {formatCurrencyWhole(m.value)}
             </p>
-            <p className="mt-0.5 truncate text-[11px] text-neutral-400 sm:text-xs">{m.hint}</p>
+            <p className="mt-0.5 text-[11px] text-neutral-400 sm:text-xs">{m.hint}</p>
           </Card>
         ))}
       </div>
@@ -289,14 +290,13 @@ export function InvoiceList({
           {visible.length === 0 && <li className="px-4 py-10 text-center text-sm text-neutral-500">No invoices match these filters.</li>}
         </ul>
 
-        <div className="hidden overflow-x-auto sm:block">
-          <Table className="min-w-[880px]">
+        <ScrollX className="hidden sm:block">
+          <Table className="min-w-[760px]">
             <THead>
               <tr>
                 <TH>Invoice</TH>
                 <TH>Customer</TH>
                 {showBusiness && <TH>Business</TH>}
-                <TH>Date</TH>
                 <TH>Status</TH>
                 <TH className="text-right">Amount</TH>
                 <TH className="text-right">Collected</TH>
@@ -320,6 +320,7 @@ export function InvoiceList({
                         </Link>
                         {inv.locked && lockIcon}
                       </span>
+                      <p className="whitespace-nowrap text-xs text-neutral-500 dark:text-neutral-400">{formatDate(inv.invoiceDate)}</p>
                       <div className="mt-1 flex flex-wrap gap-1">
                         {inv.brand === "GRATEFUL" &&
                           (isInterStateSupply(inv.customerGstin, inv.placeOfSupply) ? <Badge tone="warning">IGST</Badge> : <Badge>CGST+SGST</Badge>)}
@@ -328,8 +329,10 @@ export function InvoiceList({
                       </div>
                     </TD>
                     <TD>
-                      <p className="font-medium text-neutral-800 dark:text-neutral-200">{inv.customerName}</p>
-                      <p className="text-xs text-neutral-400">
+                      <p className="max-w-48 truncate font-medium text-neutral-800 dark:text-neutral-200" title={inv.customerName}>
+                        {inv.customerName}
+                      </p>
+                      <p className="max-w-48 truncate text-xs text-neutral-400">
                         {inv.brand === "GRATEFUL" ? (inv.customerGstin ?? "B2C") : "—"}
                         {inv.emailSentAt && " · emailed"}
                       </p>
@@ -338,11 +341,10 @@ export function InvoiceList({
                       <TD>
                         <span className="flex items-center gap-1.5 whitespace-nowrap text-neutral-700 dark:text-neutral-300">
                           <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: inv.business.color }} />
-                          {inv.business.name}
+                          <span className="max-w-28 truncate" title={inv.business.name}>{inv.business.name}</span>
                         </span>
                       </TD>
                     )}
-                    <TD className="whitespace-nowrap">{formatDate(inv.invoiceDate)}</TD>
                     <TD>{status(inv)}</TD>
                     <TD
                       className={`text-right tabular-nums font-medium ${inv.bal.cancelled ? "text-neutral-400 line-through" : "text-neutral-900 dark:text-neutral-100"}`}
@@ -376,7 +378,7 @@ export function InvoiceList({
               )}
             </TBody>
           </Table>
-        </div>
+        </ScrollX>
       </Card>
     </div>
   );

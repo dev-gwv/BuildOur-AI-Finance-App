@@ -2,14 +2,15 @@
 
 import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
-import { CheckCircle2, ExternalLink, KeyRound, Plug, ShieldCheck, Unplug } from "lucide-react";
+import Link from "next/link";
+import { CheckCircle2, ExternalLink, KeyRound, Plug, RefreshCw, ShieldCheck, Unplug } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Field, Input } from "@/components/ui/Field";
 import { Badge } from "@/components/ui/Badge";
 import { Card, CardBody, CardHeader, CardTitle } from "@/components/ui/Card";
 import { useToast } from "@/components/ui/Toast";
 import { useConfirm } from "@/components/ui/ConfirmDialog";
-import { formatDate } from "@/lib/format";
+import { formatCurrency, formatDate } from "@/lib/format";
 
 type Status = {
   enabled: boolean;
@@ -19,6 +20,12 @@ type Status = {
   keyId: string | null;
   mode: "test" | "live" | null;
   connectedAt: string | null;
+};
+
+type FeeRefresh = {
+  checked: number;
+  updated: number;
+  unmatched: { invoiceId: string; invoiceNumber: string; amount: number; paidOn: string }[];
 };
 
 /**
@@ -34,6 +41,31 @@ export function RazorpayIntegrationCard({ initial }: { initial: Status }) {
   const [keyId, setKeyId] = useState("");
   const [keySecret, setKeySecret] = useState("");
   const [pending, setPending] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshed, setRefreshed] = useState<FeeRefresh | null>(null);
+
+  async function refreshFees() {
+    setRefreshing(true);
+    try {
+      const res = await fetch("/api/integrations/razorpay/fees", { method: "POST" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast.error(data.error ?? "Couldn't update the fees");
+        return;
+      }
+      setRefreshed(data);
+      toast.success(
+        data.updated
+          ? `Updated the Razorpay fee on ${data.updated} payment${data.updated === 1 ? "" : "s"}`
+          : "Every Razorpay payment already has Razorpay's fee"
+      );
+      router.refresh();
+    } catch {
+      toast.error("Network error — please try again");
+    } finally {
+      setRefreshing(false);
+    }
+  }
 
   async function save(body: { enabled?: boolean; keyId?: string; keySecret?: string }, success: string) {
     setPending(true);
@@ -222,8 +254,53 @@ export function RazorpayIntegrationCard({ initial }: { initial: Status }) {
             </form>
           )}
 
+          {status.connected && (
+            <div className="rounded-xl border border-neutral-200/80 px-4 py-3 dark:border-white/[0.07]">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-neutral-900 dark:text-neutral-100">Fees on past payments</p>
+                  <p className="text-xs text-neutral-500">
+                    Replaces the % estimate with Razorpay&apos;s actual commission on payments from the last 6 months, and
+                    updates the sheets.
+                  </p>
+                </div>
+                <Button variant="secondary" size="sm" onClick={refreshFees} loading={refreshing}>
+                  <RefreshCw className="h-3.5 w-3.5" />
+                  Update from Razorpay
+                </Button>
+              </div>
+              {refreshed && (
+                <div className="mt-3 border-t border-neutral-100 pt-3 text-xs text-neutral-600 dark:border-white/[0.06] dark:text-neutral-400">
+                  <p>
+                    Checked {refreshed.checked} Razorpay payment{refreshed.checked === 1 ? "" : "s"} · updated {refreshed.updated}.
+                  </p>
+                  {refreshed.unmatched.length > 0 && (
+                    <>
+                      <p className="mt-1.5">
+                        {refreshed.unmatched.length} couldn&apos;t be matched to one Razorpay payment (no payment of that amount
+                        that day, or more than one), so they keep the estimate. Open one and add its pay_ ID:
+                      </p>
+                      <ul className="mt-1 flex flex-wrap gap-1.5">
+                        {refreshed.unmatched.slice(0, 20).map((u) => (
+                          <li key={`${u.invoiceId}-${u.paidOn}-${u.amount}`}>
+                            <Link
+                              href={`/invoices/${u.invoiceId}`}
+                              className="inline-block rounded-md bg-neutral-100 px-2 py-0.5 font-medium text-neutral-800 hover:bg-neutral-200 dark:bg-white/[0.06] dark:text-neutral-200"
+                            >
+                              {u.invoiceNumber} · {formatCurrency(u.amount)} · {formatDate(u.paidOn)}
+                            </Link>
+                          </li>
+                        ))}
+                      </ul>
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
           <ul className="grid gap-1.5 text-sm text-neutral-600 dark:text-neutral-400">
-            <li>• A payment with a Razorpay ID — typed, or read off a screenshot — gets its exact fee and GST from Razorpay.</li>
+            <li>• Every Razorpay payment gets its exact fee and GST from Razorpay — by its pay_ ID, or, without one, by finding the one payment of that amount on that day.</li>
             <li>• &ldquo;Pick from Razorpay&rdquo; on any invoice lists the last two weeks&apos; payments, no screenshot needed.</li>
             <li>• A Razorpay payment can only be recorded once; a duplicate is refused.</li>
             <li>• While switched off, Razorpay payments use the commission % in Invoice Settings as an estimate.</li>

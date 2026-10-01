@@ -9,6 +9,7 @@ import { Card, CardBody, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/Table";
+import { ScrollX } from "@/components/ui/ScrollX";
 
 const ACTION_LABELS: Record<string, string> = {
   upsert: "Write receipt",
@@ -121,7 +122,7 @@ export default async function SheetSyncPage() {
             <EmptyState icon={CheckCircle2} title="Nothing pending" description="Every change has reached its sheet." />
           </CardBody>
         ) : (
-          <div className="overflow-x-auto">
+          <ScrollX>
             <Table className="min-w-[860px]">
               <THead>
                 <tr>
@@ -162,7 +163,7 @@ export default async function SheetSyncPage() {
                 })}
               </TBody>
             </Table>
-          </div>
+          </ScrollX>
         )}
       </Card>
 
@@ -178,7 +179,7 @@ export default async function SheetSyncPage() {
             </p>
           </CardBody>
         ) : (
-          <div className="overflow-x-auto">
+          <ScrollX>
             <Table className="min-w-[640px]">
               <THead>
                 <tr>
@@ -203,7 +204,7 @@ export default async function SheetSyncPage() {
                 })}
               </TBody>
             </Table>
-          </div>
+          </ScrollX>
         )}
       </Card>
 

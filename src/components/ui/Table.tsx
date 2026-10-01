@@ -17,7 +17,7 @@ export function THead({ className = "", ...rest }: HTMLAttributes<HTMLTableSecti
 }
 
 export function TH({ className = "", ...rest }: ThHTMLAttributes<HTMLTableCellElement>) {
-  return <th className={`px-4 py-2.5 font-medium ${className}`} {...rest} />;
+  return <th className={`px-3 py-2.5 font-medium first:pl-4 last:pr-4 ${className}`} {...rest} />;
 }
 
 export function TBody({ className = "", ...rest }: HTMLAttributes<HTMLTableSectionElement>) {
@@ -29,5 +29,5 @@ export function TR({ className = "", ...rest }: HTMLAttributes<HTMLTableRowEleme
 }
 
 export function TD({ className = "", ...rest }: TdHTMLAttributes<HTMLTableCellElement>) {
-  return <td className={`px-4 py-3 text-neutral-600 dark:text-neutral-400 ${className}`} {...rest} />;
+  return <td className={`px-3 py-3 text-neutral-600 first:pl-4 last:pr-4 dark:text-neutral-400 ${className}`} {...rest} />;
 }

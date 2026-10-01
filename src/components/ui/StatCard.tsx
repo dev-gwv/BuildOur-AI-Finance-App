@@ -79,7 +79,7 @@ export function StatCard({
             {Math.abs(delta!).toFixed(Math.abs(delta!) < 10 ? 1 : 0)}%
           </span>
         )}
-        {hint && <span className="truncate text-neutral-500 dark:text-neutral-400">{hint}</span>}
+        {hint && <span className="min-w-0 text-neutral-500 dark:text-neutral-400">{hint}</span>}
       </div>
       {showTrend && (
         // Its own strip under the text, bleeding to the card's edges — never

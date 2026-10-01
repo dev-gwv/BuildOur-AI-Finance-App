@@ -15,7 +15,7 @@ import { computeInvoice, invoiceBalance, invoiceSummaryFields } from "./invoiceL
 import { calculateCostBreakup, calculateGatewayFee } from "./calc.ts";
 import { detectGateway } from "./parsePaymentScreenshot.ts";
 import { expenseSheetBody, paymentReceiptRow } from "./sheetRows.ts";
-import { normalizeRazorpayPayment } from "./integrations/razorpayPayment.ts";
+import { matchRazorpayPayment, normalizeRazorpayPayment } from "./integrations/razorpayPayment.ts";
 import { gstCreditLine, gstLine, gstPeriodRange, hsnSummary, inputGst, monthlySummary, netGstPayable, netOfCredits, sumLines } from "./gstReport.ts";
 
 // --- GST back-calculation, matched against INV-002241 ---
@@ -405,6 +405,17 @@ assert.equal(api.netAmount, 9764, "settled amount");
 assert.equal(api.reference, "123456789012");
 assert.match(api.paidOn, /^\d{4}-\d{2}-\d{2}$/);
 assert.equal(normalizeRazorpayPayment({ id: "pay_x", status: "captured", amount: 500, created_at: 1789000000 }).feeAmount, 0, "no fee reported yet");
+
+// --- A Razorpay payment recorded without its pay_ id, found by amount and date ---
+const rp = (id, amount, paidOn, status = "captured") => ({ id, amount, paidOn, status, feeAmount: 100, feeGstAmount: 18 });
+const pool = [rp("pay_A", 4999, "2026-10-01"), rp("pay_B", 4999, "2026-10-02"), rp("pay_C", 9999, "2026-10-01"), rp("pay_D", 20000, "2026-10-01", "failed")];
+assert.equal(matchRazorpayPayment(pool, 9999, "2026-10-01")?.id, "pay_C", "one payment of that amount");
+assert.equal(matchRazorpayPayment(pool, 9999, "2026-10-02")?.id, "pay_C", "entered the next morning");
+assert.equal(matchRazorpayPayment(pool, 9999, "2026-10-04"), null, "too far apart");
+assert.equal(matchRazorpayPayment(pool, 4999, "2026-10-01")?.id, "pay_A", "two near, one that day");
+assert.equal(matchRazorpayPayment([...pool, rp("pay_E", 4999, "2026-10-01")], 4999, "2026-10-01"), null, "two that day: never guessed");
+assert.equal(matchRazorpayPayment(pool, 4999, "2026-10-01", new Set(["pay_A"]))?.id, "pay_B", "an id already recorded is skipped");
+assert.equal(matchRazorpayPayment(pool, 20000, "2026-10-01"), null, "failed payments don't count");
 
 // --- DO price read by OCR from a photographed table ---
 assert.equal(parseDeliveryOrderText("A Product Price [117,999.00 117,999.00").productPrice, 117999, "OCR bracket before the price");

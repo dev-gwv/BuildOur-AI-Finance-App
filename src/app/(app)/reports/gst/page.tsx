@@ -12,6 +12,7 @@ import { Badge } from "@/components/ui/Badge";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/Table";
 import { formatCurrency, formatCurrencyWhole, formatDate } from "@/lib/format";
+import { ScrollX } from "@/components/ui/ScrollX";
 
 function TotalsRow({ label, t, strong, sub }: { label: string; t: GstTotals; strong?: boolean; sub?: boolean }) {
   const cls = strong ? "font-semibold text-neutral-900 dark:text-white" : sub ? "text-xs" : "";
@@ -50,7 +51,7 @@ function InvoiceTable({
           <p className="text-sm text-neutral-500">None in this period.</p>
         </CardBody>
       ) : (
-        <div className="overflow-x-auto">
+        <ScrollX>
           <Table className="min-w-[1080px]">
             <THead>
               <tr>
@@ -97,7 +98,7 @@ function InvoiceTable({
               ))}
             </TBody>
           </Table>
-        </div>
+        </ScrollX>
       )}
     </Card>
   );
@@ -165,7 +166,7 @@ export default async function GstReportPage({
         }
       />
 
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         {candidates.length > 1 ? (
           <Segmented
             items={[
@@ -266,7 +267,7 @@ export default async function GstReportPage({
             <CardHeader>
               <CardTitle title="Month by month" subtitle="Output tax by return period, split B2B (has a GSTIN) and B2C" />
             </CardHeader>
-            <div className="overflow-x-auto">
+            <ScrollX>
               <Table className="min-w-[900px]">
                 <THead>
                   <tr>
@@ -299,7 +300,7 @@ export default async function GstReportPage({
                   )}
                 </TBody>
               </Table>
-            </div>
+            </ScrollX>
           </Card>
 
           <InvoiceTable
@@ -326,7 +327,7 @@ export default async function GstReportPage({
                 <p className="text-sm text-neutral-500">None in this period.</p>
               </CardBody>
             ) : (
-              <div className="overflow-x-auto">
+              <ScrollX>
                 <Table className="min-w-[760px]">
                   <THead>
                     <tr>
@@ -355,7 +356,7 @@ export default async function GstReportPage({
                     ))}
                   </TBody>
                 </Table>
-              </div>
+              </ScrollX>
             )}
           </Card>
         </>
@@ -374,7 +375,7 @@ export default async function GstReportPage({
               subtitle="These numbers were issued and then cancelled. They stay in the series with nothing reported against them."
             />
           </CardHeader>
-          <div className="overflow-x-auto">
+          <ScrollX>
             <Table className="min-w-[640px]">
               <THead>
                 <tr>
@@ -405,7 +406,7 @@ export default async function GstReportPage({
                 ))}
               </TBody>
             </Table>
-          </div>
+          </ScrollX>
         </Card>
       )}
 
@@ -429,7 +430,7 @@ export default async function GstReportPage({
             </p>
           </CardBody>
         ) : (
-          <div className="overflow-x-auto">
+          <ScrollX>
             <Table className="min-w-[640px]">
               <THead>
                 <tr>
@@ -470,7 +471,7 @@ export default async function GstReportPage({
                 ))}
               </TBody>
             </Table>
-          </div>
+          </ScrollX>
         )}
       </Card>
     </div>
@@ -542,7 +543,7 @@ function CreditNoteTable({
           <p className="text-sm text-neutral-500">None in this period.</p>
         </CardBody>
       ) : (
-        <div className="overflow-x-auto">
+        <ScrollX>
           <Table className="min-w-[1080px]">
             <THead>
               <tr>
@@ -587,7 +588,7 @@ function CreditNoteTable({
               ))}
             </TBody>
           </Table>
-        </div>
+        </ScrollX>
       )}
     </Card>
   );

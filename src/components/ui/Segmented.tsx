@@ -3,7 +3,11 @@ import type { ComponentProps } from "react";
 
 type Href = ComponentProps<typeof Link>["href"];
 
-/** A row of mutually exclusive filters, driven by the URL so it works without JS. */
+/**
+ * A row of mutually exclusive filters, driven by the URL so it works without JS.
+ * Too many to fit wrap onto another line rather than scrolling: a sideways
+ * scroll here has no visible sign, so the last options just look missing.
+ */
 export function Segmented({
   items,
   className = "",
@@ -13,7 +17,7 @@ export function Segmented({
 }) {
   return (
     <div
-      className={`inline-flex max-w-full items-center gap-0.5 overflow-x-auto rounded-xl border border-neutral-200/80 bg-white p-0.5 shadow-card dark:border-white/[0.07] dark:bg-neutral-900/70 ${className}`}
+      className={`inline-flex max-w-full flex-wrap items-center gap-0.5 rounded-xl border border-neutral-200/80 bg-white p-0.5 shadow-card dark:border-white/[0.07] dark:bg-neutral-900/70 ${className}`}
     >
       {items.map((item) => (
         <Link

@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Pencil, Plus, Receipt, Search } from "lucide-react";
+import { Paperclip, Pencil, Plus, Receipt, Search } from "lucide-react";
 import { prisma } from "@/lib/prisma";
 import { requirePageUser } from "@/server/session";
 import { getScope, scopeWhere } from "@/server/scope";
@@ -11,6 +11,7 @@ import { Segmented } from "@/components/ui/Segmented";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/Table";
 import { formatCurrency, formatDate } from "@/lib/format";
+import { ScrollX } from "@/components/ui/ScrollX";
 
 const newButtonClass =
   "inline-flex h-9 items-center gap-1.5 rounded-lg bg-neutral-900 px-4 text-sm font-medium text-white shadow-sm ring-1 ring-inset ring-white/10 hover:bg-neutral-800 dark:bg-white dark:text-neutral-900";
@@ -122,7 +123,7 @@ export default async function MoneyPage({
             <Card key={m.label} className="px-5 py-4">
               <p className="text-[13px] font-medium text-neutral-500 dark:text-neutral-400">{m.label}</p>
               <p className={`mt-1.5 text-xl font-semibold tracking-tight tabular-nums ${m.cls}`}>{formatCurrency(m.value)}</p>
-              <p className="mt-0.5 truncate text-xs text-neutral-400">{m.hint}</p>
+              <p className="mt-0.5 text-xs text-neutral-400">{m.hint}</p>
             </Card>
           ))}
         </div>
@@ -198,19 +199,16 @@ export default async function MoneyPage({
               </li>
             ))}
           </ul>
-          <div className="hidden overflow-x-auto sm:block">
-            <Table className="min-w-[900px]">
+          <ScrollX className="hidden sm:block">
+            <Table className="min-w-[680px]">
               <THead>
                 <tr>
                   <TH>Date</TH>
-                  <TH>Type</TH>
                   {showBusiness && <TH>Business</TH>}
                   <TH>Entry</TH>
                   <TH className="text-right">Gross</TH>
-                  <TH>Gateway</TH>
                   <TH className="text-right">GST</TH>
                   <TH className="text-right">Net</TH>
-                  <TH>Proof</TH>
                   <TH />
                 </tr>
               </THead>
@@ -218,55 +216,55 @@ export default async function MoneyPage({
                 {entries.map((e) => (
                   <TR key={e.id}>
                     <TD className="whitespace-nowrap">{formatDate(e.date)}</TD>
-                    <TD>{e.direction === "OUT" ? <Badge tone="danger" dot>Out</Badge> : <Badge tone="success" dot>In</Badge>}</TD>
                     {showBusiness && (
                       <TD>
                         <span className="flex items-center gap-2 whitespace-nowrap font-medium text-neutral-900 dark:text-neutral-100">
                           <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: e.business.color }} />
-                          {e.business.name}
+                          <span className="max-w-32 truncate" title={e.business.name}>{e.business.name}</span>
                         </span>
                       </TD>
                     )}
                     <TD>
                       {/* What it was (the expense or receipt) leads; its category sits underneath. */}
-                      <p className="max-w-72 truncate font-medium text-neutral-900 dark:text-neutral-100">{e.description || e.category.name}</p>
-                      {e.description && <p className="max-w-72 truncate text-xs text-neutral-400">{e.category.name}</p>}
+                      <span className="flex items-center gap-2">
+                        {e.direction === "OUT" ? <Badge tone="danger" dot>Out</Badge> : <Badge tone="success" dot>In</Badge>}
+                        <span className="max-w-56 truncate font-medium text-neutral-900 dark:text-neutral-100" title={e.description || e.category.name}>
+                          {e.description || e.category.name}
+                        </span>
+                      </span>
+                      {e.description && <p className="mt-0.5 max-w-64 truncate text-xs text-neutral-400">{e.category.name}</p>}
                     </TD>
-                    <TD className="text-right tabular-nums">{formatCurrency(e.grossAmount)}</TD>
-                    <TD>
-                      {e.gateway ? (
-                        <Badge tone="warning">
+                    <TD className="whitespace-nowrap text-right tabular-nums">
+                      {formatCurrency(e.grossAmount)}
+                      {e.gateway && (
+                        <p className="text-xs text-amber-700 dark:text-amber-400">
                           {e.gateway.name} −{formatCurrency(e.gatewayChargeAmount)}
-                        </Badge>
-                      ) : (
-                        <span className="text-neutral-400">—</span>
+                        </p>
                       )}
                     </TD>
-                    <TD className="text-right tabular-nums">
+                    <TD className="whitespace-nowrap text-right tabular-nums">
                       {e.gstAmount > 0 ? `−${formatCurrency(e.gstAmount)}` : <span className="text-neutral-400">—</span>}
                     </TD>
                     <TD
-                      className={`text-right tabular-nums font-semibold ${e.direction === "OUT" ? "text-red-600 dark:text-red-400" : "text-emerald-600 dark:text-emerald-400"}`}
+                      className={`whitespace-nowrap text-right tabular-nums font-semibold ${e.direction === "OUT" ? "text-red-600 dark:text-red-400" : "text-emerald-600 dark:text-emerald-400"}`}
                     >
                       {e.direction === "OUT" ? "−" : ""}
                       {formatCurrency(e.netAmount)}
                     </TD>
                     <TD>
-                      {e.screenshotPath ? (
-                        <a
-                          href={`/api/uploads/${e.screenshotPath}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-brand-600 hover:underline dark:text-brand-400"
-                        >
-                          View
-                        </a>
-                      ) : (
-                        <span className="text-neutral-400">—</span>
-                      )}
-                    </TD>
-                    <TD>
                       <div className="flex items-center justify-end gap-1">
+                        {e.screenshotPath && (
+                          <a
+                            href={`/api/uploads/${e.screenshotPath}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="rounded-md p-1.5 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700 dark:hover:bg-neutral-800 dark:hover:text-neutral-200"
+                            title="View proof"
+                            aria-label="View proof"
+                          >
+                            <Paperclip className="h-3.5 w-3.5" />
+                          </a>
+                        )}
                         <Link
                           href={`/money/${e.id}/edit`}
                           className="rounded-md p-1.5 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700 dark:hover:bg-neutral-800 dark:hover:text-neutral-200"
@@ -281,7 +279,7 @@ export default async function MoneyPage({
                 ))}
               </TBody>
             </Table>
-          </div>
+          </ScrollX>
           {entries.length === 300 && (
             <p className="border-t border-neutral-100 px-4 py-2.5 text-xs text-neutral-500 dark:border-white/[0.05]">
               Showing the latest 300 — search or filter to narrow down, or export from Reports for the full list.

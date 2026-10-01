@@ -1,7 +1,13 @@
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { calculateGatewayFee } from "@/lib/calc";
-import { fetchRazorpayPayment, isRazorpayConnected } from "@/lib/integrations/razorpay";
+import {
+  fetchRazorpayPayment,
+  isRazorpayConnected,
+  listRazorpayPaymentsBetween,
+  matchRazorpayPayment,
+  shiftDay,
+} from "@/lib/integrations/razorpay";
 import { badRequest } from "@/server/errors";
 import { formToObject, isoDate, money, optionalText, positiveMoney } from "@/server/validation";
 
@@ -44,7 +50,15 @@ const paymentSchema = z.object({
  */
 export async function readPaymentForm(form: FormData): Promise<PaymentInput> {
   const input = paymentSchema.parse(formToObject(form));
-  const gateway = input.gateway;
+  // "Razorpay" picked as the platform with the Razorpay switch left off: the
+  // money still came through Razorpay, so its commission still applies. The
+  // form's zero fees were only the switch being off, so they're ignored.
+  const impliedRazorpay = !input.gateway && /razorpay/i.test(input.method ?? "");
+  const gateway = impliedRazorpay ? "Razorpay" : input.gateway;
+  if (impliedRazorpay) {
+    input.feeAmount = undefined;
+    input.feeGstAmount = undefined;
+  }
 
   // TDS is part of what settles the invoice but is paid to the government, so
   // it can't exceed the payment, and gateway fees come out of the cash only.
@@ -54,7 +68,7 @@ export async function readPaymentForm(form: FormData): Promise<PaymentInput> {
     throw badRequest("TDS must be less than the amount this payment settles", { tdsAmount: "Less than the amount" });
   }
   const cash = input.amount - tdsAmount;
-  const gatewayRef = gateway ? input.gatewayRef : null;
+  const gatewayRef = gateway ? (input.gatewayRef ?? null) : null;
 
   let feeAmount = 0;
   let feeGstAmount = 0;
@@ -124,7 +138,8 @@ export function readRefundForm(form: FormData): RefundInput {
  * failure is logged, since the money has arrived either way.
  */
 export async function verifyRazorpayPayment(input: PaymentInput, excludePaymentId?: string): Promise<PaymentInput> {
-  if (input.gateway !== "Razorpay" || !input.gatewayRef) return input;
+  if (input.gateway !== "Razorpay") return input;
+  if (!input.gatewayRef) return matchByAmount(input, excludePaymentId);
 
   const duplicate = await prisma.payment.findFirst({
     where: { gatewayRef: input.gatewayRef, ...(excludePaymentId ? { id: { not: excludePaymentId } } : {}) },
@@ -149,4 +164,31 @@ export async function verifyRazorpayPayment(input: PaymentInput, excludePaymentI
   // The amount is left as entered: a customer can settle part of a Razorpay
   // payment against one invoice, so a mismatch isn't an error.
   return { ...input, feeAmount: payment.feeAmount, feeGstAmount: payment.feeGstAmount };
+}
+
+/**
+ * A Razorpay payment recorded without its pay_ id: found in Razorpay by its
+ * amount and date, so the commission is Razorpay's actual one rather than the
+ * % estimate. Only an unambiguous match is used; anything else keeps the estimate.
+ */
+async function matchByAmount(input: PaymentInput, excludePaymentId?: string): Promise<PaymentInput> {
+  if (!(await isRazorpayConnected())) return input;
+  const day = input.paidOn.toISOString().slice(0, 10);
+  const cash = Math.round((input.amount - input.tdsAmount) * 100) / 100;
+  try {
+    const candidates = await listRazorpayPaymentsBetween(shiftDay(day, -1), shiftDay(day, 1), 500);
+    const recorded = await prisma.payment.findMany({
+      where: {
+        gatewayRef: { in: candidates.map((p) => p.id) },
+        ...(excludePaymentId ? { id: { not: excludePaymentId } } : {}),
+      },
+      select: { gatewayRef: true },
+    });
+    const match = matchRazorpayPayment(candidates, cash, day, new Set(recorded.map((r) => r.gatewayRef!)));
+    if (!match) return input;
+    return { ...input, gatewayRef: match.id, feeAmount: match.feeAmount, feeGstAmount: match.feeGstAmount };
+  } catch (e) {
+    console.error("Couldn't look the payment up in Razorpay; keeping the estimated fee:", e);
+    return input;
+  }
 }

@@ -13,6 +13,7 @@ import { Segmented } from "@/components/ui/Segmented";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/Table";
 import { formatCurrency, formatCurrencyWhole, formatDate } from "@/lib/format";
 import type { Prisma } from "@/generated/prisma/client";
+import { ScrollX } from "@/components/ui/ScrollX";
 
 const GATEWAYS = [
   { key: "all", label: "All" },
@@ -166,7 +167,7 @@ export default async function PaymentsPage({
             <p className={`mt-1 truncate text-[15px] font-semibold tracking-tight tabular-nums sm:mt-1.5 sm:text-xl ${m.cls}`}>
               {formatCurrencyWhole(m.value)}
             </p>
-            <p className="mt-0.5 truncate text-[11px] text-neutral-600 sm:text-xs dark:text-neutral-400">{m.hint}</p>
+            <p className="mt-0.5 text-[11px] text-neutral-600 sm:text-xs dark:text-neutral-400">{m.hint}</p>
           </Card>
         ))}
       </div>
@@ -255,18 +256,16 @@ export default async function PaymentsPage({
               );
             })}
           </ul>
-          <div className="hidden overflow-x-auto sm:block">
-            <Table className="min-w-[900px]">
+          <ScrollX className="hidden sm:block">
+            <Table className="min-w-[700px]">
               <THead>
                 <tr>
                   <TH>Date</TH>
                   <TH>Customer</TH>
-                  <TH>Invoice</TH>
                   {showBusiness && <TH>Business</TH>}
                   <TH>Method</TH>
                   <TH className="text-right">Amount</TH>
-                  <TH className="text-right">TDS</TH>
-                  <TH className="text-right">Fees</TH>
+                  <TH className="text-right">Fees &amp; TDS</TH>
                   <TH className="text-right">In the bank</TH>
                 </tr>
               </THead>
@@ -277,11 +276,13 @@ export default async function PaymentsPage({
                   return (
                     <TR key={p.id}>
                       <TD className="whitespace-nowrap">{formatDate(p.paidOn)}</TD>
-                      <TD className="font-medium text-neutral-800 dark:text-neutral-200">{p.invoice.customerName}</TD>
                       <TD>
+                        <span className="block max-w-56 truncate font-medium text-neutral-800 dark:text-neutral-200" title={p.invoice.customerName}>
+                          {p.invoice.customerName}
+                        </span>
                         <Link
                           href={`/invoices/${p.invoice.id}`}
-                          className="whitespace-nowrap font-medium text-neutral-900 hover:text-brand-600 dark:text-neutral-100 dark:hover:text-brand-400"
+                          className="whitespace-nowrap text-xs font-medium text-neutral-500 hover:text-brand-600 dark:text-neutral-400 dark:hover:text-brand-400"
                         >
                           {p.invoice.invoiceNumber}
                         </Link>
@@ -290,7 +291,7 @@ export default async function PaymentsPage({
                         <TD>
                           <span className="flex items-center gap-1.5 whitespace-nowrap">
                             <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: p.invoice.business.color }} />
-                            {p.invoice.business.name}
+                            <span className="max-w-32 truncate" title={p.invoice.business.name}>{p.invoice.business.name}</span>
                           </span>
                         </TD>
                       )}
@@ -308,17 +309,27 @@ export default async function PaymentsPage({
                         {refund ? `−${formatCurrency(p.amount)}` : formatCurrency(p.amount)}
                       </TD>
                       <TD className="whitespace-nowrap text-right tabular-nums">
-                        {p.tdsAmount > 0 ? (
-                          <span title={p.tdsSection ? `Section ${p.tdsSection}` : undefined}>
-                            {formatCurrency(p.tdsAmount)}
-                            {p.tdsSection && <span className="ml-1 text-[11px] text-neutral-600 dark:text-neutral-400">{p.tdsSection}</span>}
-                          </span>
-                        ) : (
-                          <span className="text-neutral-500 dark:text-neutral-500" aria-label="none">—</span>
+                        {fees > 0 && (
+                          <p className="text-amber-700 dark:text-amber-400" title={`${p.gateway ?? "Gateway"} fee`}>
+                            −{formatCurrency(fees)}
+                            {p.gateway === "Razorpay" && !p.gatewayRef && (
+                              <span className="ml-1 text-[11px] text-neutral-500" title="Not matched to a Razorpay payment: the % estimate">
+                                est.
+                              </span>
+                            )}
+                          </p>
                         )}
-                      </TD>
-                      <TD className={`whitespace-nowrap text-right tabular-nums ${fees > 0 ? "text-amber-700 dark:text-amber-400" : "text-neutral-500"}`}>
-                        {fees > 0 ? `−${formatCurrency(fees)}` : "—"}
+                        {p.tdsAmount > 0 && (
+                          <p title={p.tdsSection ? `TDS under section ${p.tdsSection}` : "TDS"}>
+                            TDS {formatCurrency(p.tdsAmount)}
+                            {p.tdsSection && <span className="ml-1 text-[11px] text-neutral-600 dark:text-neutral-400">{p.tdsSection}</span>}
+                          </p>
+                        )}
+                        {fees <= 0 && p.tdsAmount <= 0 && (
+                          <span className="text-neutral-500" aria-label="none">
+                            —
+                          </span>
+                        )}
                       </TD>
                       <TD
                         className={`whitespace-nowrap text-right tabular-nums font-semibold ${refund ? "text-amber-700 dark:text-amber-400" : "text-emerald-700 dark:text-emerald-400"}`}
@@ -330,7 +341,7 @@ export default async function PaymentsPage({
                 })}
               </TBody>
             </Table>
-          </div>
+          </ScrollX>
           </>
         )}
       </Card>

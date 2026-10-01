@@ -25,12 +25,13 @@ import { PageHeader } from "@/components/ui/PageHeader";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Badge } from "@/components/ui/Badge";
 import { Segmented } from "@/components/ui/Segmented";
-import { Field, Input } from "@/components/ui/Field";
 import { Button } from "@/components/ui/Button";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/Table";
 import { formatCompactINR, formatCurrencyWhole, formatDate } from "@/lib/format";
 import { totalsByPlatform } from "@/lib/invoiceCalc";
 import type { Prisma } from "@/generated/prisma/client";
+import { ScrollX } from "@/components/ui/ScrollX";
+import { DateRangeFields } from "@/components/dashboard/DateRangeFields";
 
 // ---------------------------------------------------------------------------
 // Periods. Indian financial year (April–March) and its quarters, since that's
@@ -606,14 +607,7 @@ export default async function DashboardPage({
               className="absolute right-0 z-20 mt-2 grid w-[24rem] max-w-[calc(100vw-2rem)] gap-3 rounded-xl border border-neutral-200/80 bg-white p-4 text-sm shadow-pop dark:border-white/10 dark:bg-neutral-900"
             >
               <p className="text-xs font-medium uppercase tracking-[0.06em] text-neutral-500 dark:text-neutral-400">Custom dates</p>
-              <div className="grid grid-cols-2 gap-2.5">
-                <Field label="From">
-                  <Input type="date" name="from" defaultValue={from ?? ""} className="px-2.5" />
-                </Field>
-                <Field label="To">
-                  <Input type="date" name="to" defaultValue={to ?? ""} className="px-2.5" />
-                </Field>
-              </div>
+              <DateRangeFields from={from ?? null} to={to ?? null} />
               <div className="flex items-center justify-end gap-2 border-t border-neutral-100 pt-3 dark:border-white/[0.06]">
                 <Link
                   href="/dashboard"
@@ -752,8 +746,8 @@ export default async function DashboardPage({
           <CardHeader>
             <CardTitle title="By business" subtitle={`Each row matches its Google Sheet · ${periodLabel}`} />
           </CardHeader>
-          <div className="overflow-x-auto">
-            <Table className="min-w-[980px]">
+          <ScrollX>
+            <Table className="min-w-[860px]">
               <THead>
                 <tr>
                   <TH>Business</TH>
@@ -774,7 +768,7 @@ export default async function DashboardPage({
                       <TD>
                         <span className="flex items-center gap-2 whitespace-nowrap font-medium text-neutral-900 dark:text-neutral-100">
                           <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: row.business.color }} />
-                          {row.business.name}
+                          <span className="max-w-56 truncate" title={row.business.name}>{row.business.name}</span>
                           <span className="text-xs font-normal text-neutral-400">{row.invoices} inv.</span>
                         </span>
                       </TD>
@@ -816,7 +810,7 @@ export default async function DashboardPage({
                 })}
               </TBody>
             </Table>
-          </div>
+          </ScrollX>
         </Card>
       )}
 
@@ -839,7 +833,7 @@ export default async function DashboardPage({
               )}
             </CardBody>
           ) : (
-            <div className="overflow-x-auto">
+            <ScrollX>
               <Table className="min-w-[560px]">
                 <THead>
                   <tr>
@@ -891,7 +885,7 @@ export default async function DashboardPage({
                   + {open.length - 7} more open invoice{open.length - 7 === 1 ? "" : "s"}
                 </p>
               )}
-            </div>
+            </ScrollX>
           )}
         </Card>
 

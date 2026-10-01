@@ -74,6 +74,7 @@ type RazorpayPick = {
   email: string | null;
   contact: string | null;
   vpa: string | null;
+  createdAt?: string;
   recordedOn: { id: string; invoiceNumber: string } | null;
 };
 
@@ -125,6 +126,7 @@ export function PaymentsPanel({
   /** The payment being edited, or null when recording a new one. */
   const [editing, setEditing] = useState<PaymentRow | null>(null);
   const [amount, setAmount] = useState("");
+  const [paidOn, setPaidOn] = useState(todayISO());
   const [method, setMethod] = useState("");
   const [viaRazorpay, setViaRazorpay] = useState(false);
   const [gatewayRef, setGatewayRef] = useState("");
@@ -146,6 +148,12 @@ export function PaymentsPanel({
   const [pickerOpen, setPickerOpen] = useState(false);
   const [recent, setRecent] = useState<RazorpayPick[] | null>(null);
   const [recentError, setRecentError] = useState<string | null>(null);
+  /** Several Razorpay payments of the amount around the date: the user says which. */
+  const [candidates, setCandidates] = useState<RazorpayPick[] | null>(null);
+  /** The amount|date last looked up in Razorpay, so each is asked once. */
+  const lookedUp = useRef<string | null>(null);
+  /** A pay_ id found by amount and date (not typed), and the amount|date it was found for. */
+  const autoMatch = useRef<{ key: string; id: string } | null>(null);
   const feesExact = verify.state === "ok" && !overrideFees;
 
   // One balance rule for every screen: credit notes, refunds, TDS, cancellation.
@@ -213,6 +221,7 @@ export function PaymentsPanel({
 
       const setField = (name: string, value: string) => {
         if (name === "method") return setMethod(value);
+        if (name === "paidOn") return setPaidOn(value);
         const el = form.elements.namedItem(name);
         if (el instanceof HTMLInputElement) el.value = value;
       };
@@ -296,15 +305,23 @@ export function PaymentsPanel({
     setVerify({ state: "idle" });
     setOverrideFees(false);
     setPickerOpen(false);
+    setCandidates(null);
     verifiedRef.current = null;
+    lookedUp.current = null;
+    autoMatch.current = null;
   }
 
-  /** Fills the form from Razorpay's own record of a payment: exact amount, date and fee. */
-  function applyRazorpay(p: RazorpayPick) {
+  /**
+   * Fills the form from Razorpay's own record of a payment: exact amount, date
+   * and fee. `found` is a payment found from the amount and date already
+   * entered, which are then left as they are (the amount may include TDS).
+   */
+  function applyRazorpay(p: RazorpayPick, found = false) {
     verifiedRef.current = p.id;
     setViaRazorpay(true);
     setGatewayRef(p.id);
     setPickerOpen(false);
+    setCandidates(null);
     // The payment being edited is allowed to carry its own id.
     if (p.recordedOn && editing?.gatewayRef !== p.id) {
       setVerify({ state: "error", message: `Already recorded on ${p.recordedOn.invoiceNumber}`, blocking: true });
@@ -314,19 +331,24 @@ export function PaymentsPanel({
       setVerify({ state: "error", message: `Razorpay says this payment is "${p.status}", not captured`, blocking: true });
       return;
     }
-    setAmount(String(p.amount));
-    setOverpaidBy(p.amount > limit ? p.amount - limit : null);
-    const form = formRef.current;
-    const paidOnField = form?.elements.namedItem("paidOn");
-    if (paidOnField instanceof HTMLInputElement) paidOnField.value = p.paidOn;
+    if (!found) {
+      setAmount(String(p.amount));
+      setOverpaidBy(p.amount > limit ? p.amount - limit : null);
+      setPaidOn(p.paidOn);
+    }
     setMethod((m) => m || "Razorpay");
     setFeeInput(String(p.feeAmount));
     setFeeGstInput(String(p.feeGstAmount));
     setOverrideFees(false);
     setVerify({
       state: "ok",
-      message: `Verified with Razorpay · fee ${formatCurrency(p.feeAmount)} + GST ${formatCurrency(p.feeGstAmount)}`,
+      message: `${found ? `Found in Razorpay (${p.id})` : "Verified with Razorpay"} · fee ${formatCurrency(p.feeAmount)} + GST ${formatCurrency(p.feeGstAmount)}`,
     });
+  }
+
+  function pickCandidate(p: RazorpayPick) {
+    autoMatch.current = { key: lookupKey, id: p.id };
+    applyRazorpay(p, true);
   }
 
   async function openPicker() {
@@ -385,6 +407,65 @@ export function PaymentsPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rzpConnected, viaRazorpay, gatewayRef]);
 
+  // No pay_ id: the payment is looked up in Razorpay by what reached it (the
+  // amount less any TDS) and the date, so its actual fee shows before saving.
+  // A match found this way follows the amount and date: change either and
+  // it's looked up again.
+  const lookupKey = `${cashValue}|${paidOn}`;
+  useEffect(() => {
+    if (!rzpConnected || !viaRazorpay || cashValue <= 0 || !/^\d{4}-\d{2}-\d{2}$/.test(paidOn)) return;
+    const ref = gatewayRef.trim();
+    const auto = autoMatch.current;
+    if (auto && ref === auto.id) {
+      if (auto.key === lookupKey) return;
+      autoMatch.current = null;
+      verifiedRef.current = null;
+      setGatewayRef("");
+      setFeeInput(null);
+      setFeeGstInput(null);
+      setVerify({ state: "idle" });
+      return;
+    }
+    if (ref || lookedUp.current === lookupKey) return;
+    const key = lookupKey;
+    const timer = setTimeout(async () => {
+      lookedUp.current = key;
+      setCandidates(null);
+      setVerify({ state: "loading" });
+      const estimate = `using the ${razorpayRates.feePercent}% estimate`;
+      try {
+        const qs = new URLSearchParams({ amount: String(cashValue), date: paidOn });
+        if (editing) qs.set("exclude", editing.id);
+        const res = await fetch(`/api/integrations/razorpay/payments?${qs}`);
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          setVerify({ state: "error", message: `${data.error ?? "Couldn't check Razorpay"} — ${estimate}` });
+          return;
+        }
+        if (data.match) {
+          autoMatch.current = { key, id: data.match.id };
+          applyRazorpay(data.match, true);
+        } else if (data.candidates?.length) {
+          setCandidates(data.candidates);
+          setVerify({
+            state: "error",
+            message: `${data.candidates.length} Razorpay payments of ${formatCurrency(cashValue)} around this date — pick the one this is:`,
+          });
+        } else {
+          setVerify({
+            state: "error",
+            message: `No Razorpay payment of ${formatCurrency(cashValue)} on or a day either side of ${formatDate(paidOn)} — ${estimate}. Check the amount and date, or add the pay_ ID.`,
+          });
+        }
+      } catch {
+        setVerify({ state: "error", message: `Couldn't reach Razorpay — ${estimate}` });
+      }
+    }, 600);
+    return () => clearTimeout(timer);
+    // applyRazorpay reads the latest state on each run; the triggers are the amount, date and id.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rzpConnected, viaRazorpay, lookupKey, gatewayRef]);
+
   function closeForm() {
     setOpen(false);
     setEditing(null);
@@ -402,6 +483,7 @@ export function PaymentsPanel({
     setTds("");
     setTdsSection("194J");
     setAmount(String(Math.max(outstanding, 0)));
+    setPaidOn(todayISO());
     setMethod("");
     setOpen(true);
   }
@@ -412,6 +494,7 @@ export function PaymentsPanel({
     clearError();
     setEditing(p);
     setAmount(String(p.amount));
+    setPaidOn(new Date(p.paidOn).toISOString().slice(0, 10));
     setMethod(p.method ?? "");
     setTds(p.tdsAmount ? String(p.tdsAmount) : "");
     setTdsSection(p.tdsSection ?? "194J");
@@ -779,9 +862,12 @@ export function PaymentsPanel({
                 <Input
                   name="paidOn"
                   type="date"
-                  defaultValue={editing ? new Date(editing.paidOn).toISOString().slice(0, 10) : todayISO()}
+                  value={paidOn}
                   required
-                  onChange={() => clearError("paidOn")}
+                  onChange={(e) => {
+                    setPaidOn(e.target.value);
+                    clearError("paidOn");
+                  }}
                 />
               </Field>
             </div>
@@ -790,7 +876,15 @@ export function PaymentsPanel({
                 <Combobox
                   name="method"
                   value={method}
-                  onValueChange={setMethod}
+                  onValueChange={(v) => {
+                    setMethod(v);
+                    // Money through Razorpay always has its commission taken.
+                    if (/razorpay/i.test(v) && !viaRazorpay) {
+                      setViaRazorpay(true);
+                      setFeeInput(null);
+                      setFeeGstInput(null);
+                    }
+                  }}
                   options={PAYMENT_METHODS}
                   placeholder="PhonePe, GPay, bank transfer…"
                   createLabel={(t) => `Use “${t}”`}
@@ -871,7 +965,10 @@ export function PaymentsPanel({
                     setFeeGstInput(null);
                     setVerify({ state: "idle" });
                     setOverrideFees(false);
+                    setCandidates(null);
                     verifiedRef.current = null;
+                    lookedUp.current = null;
+                    autoMatch.current = null;
                   }}
                   className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500 ${
                     viaRazorpay ? "bg-brand-600" : "bg-neutral-300 dark:bg-neutral-700"
@@ -888,12 +985,23 @@ export function PaymentsPanel({
               {viaRazorpay && (
                 <div className="mt-3 grid gap-3 border-t border-neutral-100 pt-3 dark:border-white/[0.06]">
                   <div className="grid gap-3 sm:grid-cols-3">
-                    <Field label="Razorpay payment ID">
+                    <Field
+                      label="Razorpay payment ID"
+                      optional={rzpConnected}
+                      hint={
+                        rzpConnected && !gatewayRef.trim()
+                          ? "Not needed: the payment is found in Razorpay by its amount and date."
+                          : undefined
+                      }
+                    >
                       <Input
                         className="font-mono placeholder:font-sans"
                         value={gatewayRef}
                         onChange={(e) => {
                           setGatewayRef(e.target.value);
+                          autoMatch.current = null;
+                          lookedUp.current = null;
+                          setCandidates(null);
                           // A different id invalidates what the old one verified.
                           if (verify.state !== "idle") {
                             setVerify({ state: "idle" });
@@ -968,6 +1076,34 @@ export function PaymentsPanel({
                         verify.message
                       )}
                     </p>
+                  )}
+                  {candidates && candidates.length > 0 && !gatewayRef.trim() && (
+                    <ul className="grid gap-1">
+                      {candidates.map((c) => (
+                        <li key={c.id}>
+                          <button
+                            type="button"
+                            onClick={() => pickCandidate(c)}
+                            className="flex w-full items-center justify-between gap-3 rounded-lg border border-neutral-200 px-3 py-2 text-left hover:bg-neutral-50 dark:border-white/10 dark:hover:bg-white/[0.04]"
+                          >
+                            <span className="min-w-0">
+                              <span className="block truncate text-sm font-medium text-neutral-900 dark:text-neutral-100">
+                                {c.vpa || c.contact || c.email || c.id}
+                              </span>
+                              <span className="block truncate text-xs text-neutral-500 dark:text-neutral-400">
+                                {formatDate(c.paidOn)}
+                                {c.createdAt &&
+                                  ` · ${new Date(c.createdAt).toLocaleTimeString("en-IN", { hour: "numeric", minute: "2-digit", timeZone: "Asia/Kolkata" })}`}
+                                {c.method && ` · ${c.method.toUpperCase()}`} · {c.id}
+                              </span>
+                            </span>
+                            <span className="shrink-0 text-xs tabular-nums text-amber-700 dark:text-amber-400">
+                              fee {formatCurrency(round2(c.feeAmount + c.feeGstAmount))}
+                            </span>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
                   )}
                   <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs sm:grid-cols-4">
                     <div>
@@ -1084,6 +1220,11 @@ export function PaymentsPanel({
                           {fee > 0 && (
                             <span className="text-amber-700 dark:text-amber-400">
                               −{formatCurrency(fee)} {p.gateway ?? "gateway"}
+                              {p.gateway === "Razorpay" && !p.gatewayRef && (
+                                <span title="Not matched to a Razorpay payment, so the fee is the % estimate. Edit the payment to look it up.">
+                                  {" "}(estimate)
+                                </span>
+                              )}
                               {" · "}
                             </span>
                           )}
