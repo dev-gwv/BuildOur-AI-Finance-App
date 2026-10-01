@@ -93,7 +93,7 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
           actions={
             <>
               {invoice.doFilePath && (
-                <Link
+                <a
                   href={`/api/uploads/${invoice.doFilePath}`}
                   target="_blank"
                   rel="noopener noreferrer"
@@ -104,7 +104,7 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
                   <span className="hidden sm:inline">
                     {invoice.brand === "MULBERRY" ? "View quotation" : "View original document"}
                   </span>
-                </Link>
+                </a>
               )}
               {!cancelled && !locked && (
                 <Link href={`/invoices/${invoice.id}/edit`} className={secondaryAction}>

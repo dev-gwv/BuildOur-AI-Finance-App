@@ -798,12 +798,12 @@ export default async function DashboardPage({
                         )}
                       </TD>
                       <TD className="text-right">
-                        <Link
+                        <a
                           href={`/scope?b=${row.business.slug}&next=${encodeURIComponent("/dashboard")}`}
                           className="inline-flex items-center gap-0.5 text-xs font-medium text-brand-600 hover:text-brand-500 dark:text-brand-400"
                         >
                           Open <ArrowUpRight className="h-3 w-3" />
-                        </Link>
+                        </a>
                       </TD>
                     </TR>
                   );

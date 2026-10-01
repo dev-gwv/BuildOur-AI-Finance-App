@@ -1235,7 +1235,7 @@ export function PaymentsPanel({
                   </div>
                   <div className="flex shrink-0 items-center gap-1">
                     {p.proofPath && (
-                      <Link
+                      <a
                         href={`/api/uploads/${p.proofPath}`}
                         target="_blank"
                         rel="noopener noreferrer"
@@ -1244,7 +1244,7 @@ export function PaymentsPanel({
                         className="flex h-10 w-10 items-center justify-center rounded-md text-neutral-500 hover:bg-neutral-100 hover:text-neutral-800 sm:h-8 sm:w-8 dark:hover:bg-neutral-800"
                       >
                         <Paperclip className="h-3.5 w-3.5" />
-                      </Link>
+                      </a>
                     )}
                     {!refund && (
                       <button

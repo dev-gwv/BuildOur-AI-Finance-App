@@ -48,7 +48,7 @@ export default async function NewInvoicePage({ searchParams }: { searchParams: P
         ) : (
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
             {scope.businesses.map((b) => (
-              <Link key={b.id} href={`/scope?b=${encodeURIComponent(b.slug)}&next=/invoices/new`} className="group">
+              <a key={b.id} href={`/scope?b=${encodeURIComponent(b.slug)}&next=/invoices/new`} className="group">
                 <Card className="h-full p-5 transition-all group-hover:-translate-y-0.5 group-hover:shadow-pop">
                   <div className="flex items-start justify-between gap-3">
                     <span
@@ -68,7 +68,7 @@ export default async function NewInvoicePage({ searchParams }: { searchParams: P
                     </Badge>
                   </div>
                 </Card>
-              </Link>
+              </a>
             ))}
           </div>
         )}
