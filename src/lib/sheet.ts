@@ -80,6 +80,7 @@ const paymentSelect = {
   method: true,
   note: true,
   gateway: true,
+  gatewayRef: true,
   feeAmount: true,
   feeGstAmount: true,
   kind: true,
@@ -91,6 +92,7 @@ const paymentSelect = {
       brand: true,
       customerName: true,
       invoiceNumber: true,
+      doId: true,
       gstPercent: true,
       lines: { select: { grossAmount: true, gstPercent: true, hsnSac: true, description: true, qty: true } },
     },
@@ -102,6 +104,7 @@ function sheetInvoice(inv: {
   brand: string;
   customerName: string;
   invoiceNumber: string;
+  doId?: string | null;
   gstPercent: number;
   lines: { grossAmount: number; gstPercent: number; hsnSac: string; description: string; qty: number }[];
 }) {

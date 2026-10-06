@@ -15,6 +15,7 @@ import { computeInvoice, invoiceBalance, invoiceSummaryFields } from "./invoiceL
 import { calculateBreakup, calculateCostBreakup, calculateGatewayFee } from "./calc.ts";
 import { detectGateway } from "./parsePaymentScreenshot.ts";
 import { expenseSheetBody, paymentReceiptRow } from "./sheetRows.ts";
+import { chargesCollected, expectedBajajDeduction, pickDoDetails } from "./bajajDo.ts";
 import { matchRazorpayPayment, normalizeRazorpayPayment } from "./integrations/razorpayPayment.ts";
 import { gstCreditLine, gstLine, gstPeriodRange, hsnSummary, inputGst, monthlySummary, netGstPayable, netOfCredits, sumLines } from "./gstReport.ts";
 
@@ -267,6 +268,29 @@ assert.equal(
   5000,
   "balance is not the payment"
 );
+// --- Ways ₹15,000 used to come out as ₹1,50,000 ---
+const shot = (text, line) => parsePaymentScreenshotText(text, line);
+// A bank SMS: nothing printed bigger, so the "largest" line was the balance.
+assert.equal(shot("Rs.15000.00 credited to A/c XX1234 on 01-10-26 by UPI ref 627512345678. Avl Bal Rs.150000.00", "Avl Bal Rs.150000.00").amount, 15000, "SMS: the balance line is not the amount");
+// The decimal point lost from "15,000.0": the text's own figure wins.
+assert.equal(shot("Received ₹15,000.0 from Ajay Pal Singh", "₹15,0000").amount, 15000, "lost decimal point (×10)");
+assert.equal(shot("Amount credited Rs 15,000 to your account", "1500000").amount, 15000, "lost decimal point (×100)");
+// A doubled zero with nothing to check it against is kept, but flagged.
+const doubled = shot("₹15,0000", "₹15,0000");
+assert.equal(doubled.amountUncertain, true, "an impossibly grouped figure is flagged for checking");
+// "+₹15,000" on a credit: the plus isn't the rupee sign, the glued 2 is.
+assert.equal(shot("+215,000 Received from Ajay", "+215,000").amount, 15000, "₹ read as a digit after a plus sign");
+// "₹15000" read as "215000": only fixable when the text states the amount.
+assert.equal(shot("215000 Paid to ACME Amount Rs 15000", "215000").amount, 15000, "₹ read as a leading digit, ungrouped");
+// Letters among the digits.
+assert.equal(shot("", "₹15,0O0").amount, 15000, "O read for 0");
+assert.equal(shot("", "₹1l,500").amount, 11500, "l read for 1");
+// Correct figures stay correct, and aren't flagged.
+assert.equal(shot("Paid ₹1,50,000 to ACME", "₹1,50,000").amount, 150000, "a real ₹1,50,000 is left alone");
+assert.equal(shot("Paid ₹1,50,000 to ACME", "₹1,50,000").amountUncertain, false);
+// A fee or cashback printed with the payment is not the payment.
+assert.equal(shot("Cashback ₹50 Paid ₹5,000 to ACME").amount, 5000, "cashback is not the payment");
+
 // Timestamps and dates are numbers too.
 assert.equal(parsePaymentScreenshotText("no money here", "11:04 am").amount, null, "a time is not an amount");
 assert.equal(
@@ -470,13 +494,58 @@ assert.equal(minimalDo.mobile, null);
 // --- Bajaj disbursement in the sheet: "incl. charges" is the financed amount,
 // "excluding" is what reached the bank with GST taken back out ---
 const bajajRow = paymentReceiptRow(
-  { id: "p9", amount: 100000, paidOn: new Date("2026-09-25T00:00:00Z"), method: "Bajaj Finance disbursement", note: null, gateway: "Bajaj Finance", feeAmount: 8897, feeGstAmount: 0 },
-  { brand: "GRATEFUL", customerName: "Kavya Sharma", invoiceNumber: "IPC-INV-002250", gstPercent: 18 }
+  { id: "p9", amount: 100000, paidOn: new Date("2026-09-25T00:00:00Z"), method: "Bajaj Finance disbursement", note: null, gateway: "Bajaj Finance", gatewayRef: "UTR998877", feeAmount: 8897, feeGstAmount: 0 },
+  { brand: "GRATEFUL", customerName: "Kavya Sharma", invoiceNumber: "IPC-INV-002250", doId: "B429427477", gstPercent: 18 }
 );
 assert.equal(bajajRow.amount, 100000, "financed amount settled");
 assert.equal(bajajRow.amountExCharges, 91103, "what reached the bank after Bajaj's cut");
 assert.equal(bajajRow.amountExGst, Math.round((91103 / 1.18) * 100) / 100, "credited, excluding GST");
-assert.match(bajajRow.remarks, /Bajaj Finance disbursement · via Bajaj Finance · Bajaj Finance fee ₹8,897/);
+assert.equal(bajajRow.remarks, "Bajaj Finance · DO B429427477 · Bajaj kept ₹8,897 · UTR UTR998877 · IPC-INV-002250");
+
+// --- A real Bajaj DO's layout (customer details made up) ---
+const realDo = parseDeliveryOrderText(
+  "Bajaj Finance Limited DELIVERY ORDER Dear GRATEFUL WORLD VENTURES OPC PRIVATE LIMITED#DELHI#BPES LSF#162312 Customer ID: A100000001 " +
+    "ATOS Deal ID: Date: 03/10/2026 12:37:35 PM We are pleased to inform you that the loan application of Mr/Miss/Mrs. Test Customer has been " +
+    "approved by Bajaj Finance. Disbursement Details are as follows: DO ID: B442379411 Total Roll No. / Reg. No. 0 Invoice to be made on or before " +
+    "02-04-2027 Asset Category LSF PROFESSIONAL COURSES Scheme Code (GT/AE) 5002445 (12/2) A Product Price 118,000.00 118,000.00 B Gross Loan Amount " +
+    "118,000.00 118,000.00 C Net Loan Amount 98334 98334 D Margin Money 0 0 E Advance EMI 19666 19666 F Service Charge 0 0 G Upfront Interest 767 767 " +
+    "H Dealer Interest Subsidy value (%) 11501 (9.7468%) 11501 I MBD from Dealer Value (%) 0 0 J Card Charges (EMI, Add on Card) 530 530 CS Credit " +
+    "Suraksha Fees 0 0 P Total EMI 10039 10039 U Total GST 1755 1755 V Mandate Registration Charges 0 0 W Convenience Fee Charges 320 320 " +
+    "Y DP from Customer 21283 21283 YY DP from Customer through BFL RBL Supercard 0 0 Z Total Deductions 32784 32784 AA Net Disbursement 85216 85216 " +
+    "Margin Money(D)= A-B Down Payment (Y)= D+E+F+G+J+AC+AD+K+M+N+V+W+AAB+CS-X-T-YY Total Deductions(Z) = D+E+F+G+H+I+J Net Disbursement(AA) = " +
+    "A+X+YY-Z-TDS 194-O–BFSD-CS - BB + BC The required formalities Address of the customer for delivery: 1 Test Road, Jaipur, Rajasthan Mobile Number: 9000000001"
+);
+assert.equal(realDo.productPrice, 118000);
+assert.equal(realDo.grossLoanAmount, 118000, "gross loan read, but not used as the loan");
+assert.equal(realDo.loanAmount, 98334, "the loan is the net loan, not the gross");
+assert.equal(realDo.netLoanAmount, 98334);
+assert.equal(realDo.downPayment, 21283, "'DP from Customer', not the 'Margin Money 0' printed before it");
+assert.equal(realDo.netDisbursement, 85216, "the row, not the formula under the table");
+assert.equal(realDo.totalDeductions, 32784);
+assert.equal(realDo.advanceEmi, 19666);
+assert.equal(realDo.advanceEmis, 2, "from the scheme code (12/2)");
+assert.equal(realDo.tenureMonths, 12, "from the scheme code (12/2)");
+assert.equal(realDo.emi, 10039, "Total EMI, not the advance EMI");
+assert.equal(realDo.dealerSubsidy, 11501);
+assert.equal(realDo.dealerSubsidyPercent, 9.7468);
+assert.equal(realDo.bajajCharges, 1617, "upfront interest + card + convenience");
+assert.equal(realDo.totalGst, 1755);
+assert.equal(realDo.doId, "B442379411");
+assert.equal(realDo.doDate, "2026-10-03");
+const details = pickDoDetails(realDo);
+assert.equal(chargesCollected(details, 118000 - 98334), 1617, "the customer's down payment beyond the invoice is Bajaj's charges");
+assert.equal(expectedBajajDeduction(details), 13118, "net loan − net disbursement = subsidy + charges");
+assert.equal(details.dealerSubsidy + details.bajajCharges, 13118, "and the DO's own figures agree");
+assert.equal(pickDoDetails({ productPrice: 5000 }), null, "an old DO with only a price keeps nothing extra");
+// The payout as recorded: amount paid by customer = net loan, credited = net disbursement.
+const payout = paymentReceiptRow(
+  { id: "p10", amount: 98334, paidOn: new Date("2026-10-10T00:00:00Z"), method: "Bajaj Finance disbursement", note: null, gateway: "Bajaj Finance", gatewayRef: "B442379411", feeAmount: 11363, feeGstAmount: 1755 },
+  { brand: "GRATEFUL", customerName: "Test Customer", invoiceNumber: "IPC-INV-002400", doId: "B442379411", gstPercent: 18 }
+);
+assert.equal(payout.amount, 98334, "sheet: Payment Received = net loan");
+assert.equal(payout.amountExCharges, 85216, "sheet: Excluding charges = net disbursement");
+assert.equal(payout.amountExGst, 72216.95, "sheet: Excluding GST = net disbursement less 18% inside it");
+assert.equal(payout.remarks, "Bajaj Finance · DO B442379411 · Bajaj kept ₹13,118 · IPC-INV-002400", "no UTR when the ref is the DO");
 
 // --- B2C inter-state: no GSTIN, so the place of supply decides ---
 assert.equal(stateCodeFromPlaceOfSupply("Uttar Pradesh (09)"), "09");

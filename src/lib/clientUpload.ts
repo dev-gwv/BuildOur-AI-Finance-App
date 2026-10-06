@@ -71,16 +71,25 @@ export async function readPaymentScreenshot(file: File): Promise<ScreenshotText>
 
     let amountLine: string | null = null;
     let tallest = 0;
+    const heights: number[] = [];
     for (const block of data.blocks ?? [])
       for (const paragraph of block.paragraphs ?? [])
         for (const line of paragraph.lines ?? [])
           for (const word of line.words ?? []) {
             const height = word.bbox.y1 - word.bbox.y0;
+            if (/[A-Za-z0-9]/.test(word.text)) heights.push(height);
             if (/\d\d/.test(word.text) && height > tallest) {
               tallest = height;
               amountLine = line.text;
             }
           }
+
+    // Only a figure printed clearly bigger than the text around it is "the"
+    // amount. On an SMS or a bank statement everything is one size, and the
+    // tallest figure is as likely the balance: there the words around each
+    // figure ("credited", "Avl Bal") decide instead.
+    const median = [...heights].sort((a, b) => a - b)[Math.floor(heights.length / 2)] ?? 0;
+    if (median > 0 && tallest < median * 1.3) amountLine = null;
 
     return { text: data.text, amountLine };
   } finally {

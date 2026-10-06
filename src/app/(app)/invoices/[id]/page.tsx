@@ -12,6 +12,7 @@ import { PageHeader } from "@/components/ui/PageHeader";
 import { Badge } from "@/components/ui/Badge";
 import { formatDate } from "@/lib/format";
 import { computeInvoice, invoiceBalance } from "@/lib/invoiceLines";
+import { readDoDetails } from "@/lib/bajajDo";
 import { isInterStateSupply } from "@/lib/gstState";
 import { creditNoteTax } from "@/server/services/creditNotes";
 import { CreditNotesPanel } from "@/components/invoices/CreditNotesPanel";
@@ -179,6 +180,7 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
                 ? {
                     financedAmount: invoice.financedAmount ?? invoice.grossAmount - (invoice.downPayment ?? 0),
                     doId: invoice.doId,
+                    doDetails: readDoDetails(invoice.doDetails),
                   }
                 : null
             }

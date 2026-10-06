@@ -2,7 +2,8 @@ import { after } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { UnsupportedUpload, deleteUpload, saveUpload } from "@/lib/storage";
-import { syncInvoicePayments, syncPayment, unsyncPayment } from "@/lib/sheet";
+import { syncExpense, syncInvoicePayments, syncPayment, unsyncPayment } from "@/lib/sheet";
+import { chargesCollected, pickDoDetails } from "@/lib/bajajDo";
 import { accessibleBusinessIds, accessWhere, assertBusinessAccess, requireInvoiceAccess } from "../access";
 import { audit, diff } from "../audit";
 import { allocateInvoiceNumber, businessSummarySelect, nextInvoiceNumberPreview } from "../businesses";
@@ -106,6 +107,8 @@ export const createInvoiceSchema = z.object({
   downPayment: money("Down payment").default(0),
   /** Bajaj sales: the down payment has already been received. */
   downPaymentReceived: flag,
+  /** Bajaj sales: the DO's amount table as the form read it (JSON). */
+  doDetails: z.string().max(4000).optional(),
   advancePaid: money("Advance").default(0),
 });
 
@@ -259,6 +262,13 @@ export async function createInvoice(user: SessionUser, input: z.infer<typeof cre
   const downPayment = isBajaj ? round2(input.downPayment) : null;
   if (isBajaj) checkDownPayment(downPayment!, total);
   const financedAmount = isBajaj ? round2(total - downPayment!) : null;
+  const doDetails = isBajaj && input.doDetails ? parseDoDetails(input.doDetails) : null;
+  // What the customer paid at delivery beyond the down payment toward the
+  // invoice: Bajaj's own charges, which Bajaj takes back out of the payout.
+  // Booked as money in (not against the invoice) so cash and Bajaj's cost
+  // both come out right.
+  const collectedCharges = isBajaj && input.downPaymentReceived ? chargesCollected(doDetails, downPayment!) : 0;
+  const chargesCategory = collectedCharges > 0 ? await bajajChargesCategory(business.id) : null;
 
   const initialPayment = isBajaj
     ? input.downPaymentReceived && downPayment! > 0
@@ -302,6 +312,7 @@ export async function createInvoice(user: SessionUser, input: z.infer<typeof cre
           saleType,
           downPayment,
           financedAmount,
+          ...(doDetails ? { doDetails } : {}),
           createdById: user.id,
           ...(initialPayment > 0
             ? {
@@ -334,13 +345,56 @@ export async function createInvoice(user: SessionUser, input: z.infer<typeof cre
       lines.length > 1 ? ` · ${lines.length} items` : ""
     }${
       isBajaj ? ` · Bajaj DO ${invoice.doId}, financing ${rupees(financedAmount!)}` : ""
-    }${initialPayment > 0 ? ` (${initialMethod.toLowerCase()} ${rupees(initialPayment)} received)` : ""}`,
+    }${initialPayment > 0 ? ` (${initialMethod.toLowerCase()} ${rupees(initialPayment)} received)` : ""}${
+      collectedCharges > 0 ? ` · ${rupees(collectedCharges)} of Bajaj's charges collected` : ""
+    }`,
     req,
   });
 
+  let chargesEntryId: string | null = null;
+  if (collectedCharges > 0 && chargesCategory) {
+    const entry = await prisma.expense.create({
+      data: {
+        businessId: business.id,
+        direction: "IN",
+        categoryId: chargesCategory,
+        description: `Bajaj charges collected at delivery · DO ${invoice.doId} · ${invoice.invoiceNumber}`,
+        date: input.invoiceDate,
+        grossAmount: collectedCharges,
+        netAmount: collectedCharges,
+        createdById: user.id,
+      },
+      select: { id: true },
+    });
+    chargesEntryId = entry.id;
+  }
+
   const [payment] = invoice.payments;
-  if (payment) after(() => syncPayment(payment.id));
+  after(async () => {
+    if (payment) await syncPayment(payment.id);
+    if (chargesEntryId) await syncExpense(chargesEntryId);
+  });
   return { invoice, warning };
+}
+
+function parseDoDetails(json: string) {
+  try {
+    return pickDoDetails(JSON.parse(json));
+  } catch {
+    return null;
+  }
+}
+
+/** The business's money-in category for Bajaj's charges collected from customers. */
+async function bajajChargesCategory(businessId: string): Promise<string> {
+  const name = "Bajaj charges collected";
+  const existing = await prisma.category.findFirst({ where: { businessId, name }, select: { id: true } });
+  if (existing) return existing.id;
+  try {
+    return (await prisma.category.create({ data: { businessId, name }, select: { id: true } })).id;
+  } catch {
+    return (await prisma.category.findFirstOrThrow({ where: { businessId, name }, select: { id: true } })).id;
+  }
 }
 
 const EDIT_LABELS = {

@@ -134,7 +134,9 @@ export function EntryForm({ businesses, expense }: { businesses: EntryBusiness[]
       }
       setScanNote(
         filled.length
-          ? `Read the ${filled.join(", ")} from the screenshot — check them before saving.`
+          ? `Read the ${filled.join(", ")} from the screenshot — check them before saving.${
+              found.amountUncertain ? " The amount was hard to read: compare it with the screenshot." : ""
+            }`
           : "Couldn't find an amount in that image — enter the details by hand. It's attached as proof."
       );
     } catch {

@@ -16,6 +16,7 @@ import {
 import { formatCurrency, formatDate } from "@/lib/format";
 import { BRANDS } from "@/lib/brands";
 import { readImageText } from "@/lib/clientUpload";
+import { chargesCollected, expectedBajajDeduction, pickDoDetails, type DoDetails } from "@/lib/bajajDo";
 import { Button } from "@/components/ui/Button";
 import { Card, CardBody, CardHeader, CardTitle } from "@/components/ui/Card";
 import { useToast } from "@/components/ui/Toast";
@@ -100,6 +101,8 @@ export function InvoiceForm({
   const [loanTerms, setLoanTerms] = useState<{ emi: number | null; tenure: number | null; mobile: string | null } | null>(null);
   /** The loan amount the DO states, to cross-check what was read (OCR can drop or swap a digit). */
   const [loanFromDo, setLoanFromDo] = useState<number | null>(null);
+  /** The DO's amount table, kept on the invoice for the payout and the sheet. */
+  const [doDetails, setDoDetails] = useState<DoDetails | null>(null);
   /** Set when a DO was uploaded for a direct sale (or a GST certificate for a Bajaj one). */
   const [mismatch, setMismatch] = useState<"DO_ON_DIRECT" | "GST_ON_BAJAJ" | null>(null);
 
@@ -200,13 +203,20 @@ export function InvoiceForm({
         setDoDate(parsed.doDate);
       }
       if (parsed.doId) setDoId(parsed.doId);
-      // The DO's own split, when it states one: the down payment, or the loan
-      // amount it leaves (price - loan). Otherwise the customer paid nothing up front.
+      // Bajaj finances the DO's net loan, so the down payment toward the
+      // invoice is price − net loan (the advance EMIs). The "DP from Customer"
+      // the DO prints is more: it also carries Bajaj's own charges, which
+      // aren't part of the invoice. Older DO layouts state a down payment or a
+      // loan amount instead. Otherwise the customer paid nothing up front.
+      const details = pickDoDetails(parsed);
+      setDoDetails(details);
       const dp =
-        parsed.downPayment ??
-        (parsed.loanAmount != null && parsed.productPrice ? Math.max(0, parsed.productPrice - parsed.loanAmount) : null);
+        parsed.netLoanAmount != null && parsed.productPrice
+          ? Math.max(0, Math.round((parsed.productPrice - parsed.netLoanAmount) * 100) / 100)
+          : (parsed.downPayment ??
+            (parsed.loanAmount != null && parsed.productPrice ? Math.max(0, parsed.productPrice - parsed.loanAmount) : null));
       setDownPayment(String(dp ?? 0));
-      setLoanFromDo(parsed.loanAmount ?? null);
+      setLoanFromDo(parsed.netLoanAmount ?? parsed.loanAmount ?? null);
       setLoanTerms(
         parsed.emi || parsed.tenureMonths || parsed.mobile
           ? { emi: parsed.emi ?? null, tenure: parsed.tenureMonths ?? null, mobile: parsed.mobile ?? null }
@@ -272,6 +282,7 @@ export function InvoiceForm({
       if (isBajaj) {
         body.append("downPayment", String(down));
         if (downPaymentReceived && down > 0) body.append("downPaymentReceived", "on");
+        if (doDetails) body.append("doDetails", JSON.stringify(doDetails));
       }
       if (doFile) body.append("doFile", doFile);
 
@@ -575,9 +586,10 @@ export function InvoiceForm({
                   </div>
                 )}
                 <div className="flex flex-wrap items-baseline justify-between gap-2 rounded-lg bg-white px-3 py-2 text-sm dark:bg-neutral-950/50">
-                  <span className="text-neutral-600 dark:text-neutral-400">Bajaj finances</span>
+                  <span className="text-neutral-600 dark:text-neutral-400">Bajaj finances (net loan)</span>
                   <span className="font-semibold tabular-nums text-neutral-900 dark:text-white">{formatCurrency(financed)}</span>
                 </div>
+                {doDetails && <DoBreakdown details={doDetails} down={down} />}
                 {loanTerms && (
                   <p className="text-xs text-neutral-600 dark:text-neutral-400">
                     From the DO:{" "}
@@ -599,9 +611,15 @@ export function InvoiceForm({
                       className="mt-0.5"
                     />
                     <span>
-                      <span className="font-medium">The customer has paid the {formatCurrency(down)} down payment</span>
+                      <span className="font-medium">
+                        The customer has paid the {formatCurrency(down + chargesCollected(doDetails, down))}{" "}
+                        {chargesCollected(doDetails, down) > 0 ? "at delivery" : "down payment"}
+                      </span>
                       <span className="mt-0.5 block text-xs text-neutral-600 dark:text-neutral-400">
-                        Recorded as received. Bajaj&apos;s payout is recorded on the invoice when it reaches the bank.
+                        {chargesCollected(doDetails, down) > 0
+                          ? `${formatCurrency(down)} is recorded against this invoice and ${formatCurrency(chargesCollected(doDetails, down))} as money in — Bajaj's charges, which it takes back out of the payout. `
+                          : "Recorded as received. "}
+                        Bajaj&apos;s payout is recorded on the invoice when it reaches the bank.
                       </span>
                     </span>
                   </label>
@@ -770,5 +788,48 @@ export function InvoiceForm({
         />
       </div>
     </form>
+  );
+}
+
+/**
+ * The DO's numbers as they'll be used: what the customer hands over at
+ * delivery, what Bajaj keeps and why, and what it will pay into the bank —
+ * so they can be checked against the paper DO before the invoice is raised.
+ */
+function DoBreakdown({ details, down }: { details: DoDetails; down: number }) {
+  const charges = chargesCollected(details, down);
+  const kept = expectedBajajDeduction(details);
+  const rows: [string, number | null, string?][] = [
+    ["Customer pays you at delivery", details.downPayment, charges > 0 ? `${formatCurrency(down)} toward the invoice + ${formatCurrency(charges)} Bajaj charges` : undefined],
+    ["Net loan (amount paid by customer)", details.netLoanAmount],
+    [
+      "Dealer interest subsidy",
+      details.dealerSubsidy,
+      [details.dealerSubsidyPercent ? `${details.dealerSubsidyPercent}%` : null, details.totalGst ? `incl. ${formatCurrency(details.totalGst)} GST` : null].filter(Boolean).join(" · ") || undefined,
+    ],
+    ["Bajaj keeps from the loan", kept, kept != null && charges > 0 ? "subsidy + its charges" : undefined],
+    ["Net disbursement (to the bank)", details.netDisbursement],
+  ];
+  const tenure = [details.emi ? `EMI ${formatCurrency(details.emi)}` : null, details.tenureMonths ? `${details.tenureMonths} months` : null, details.advanceEmis ? `${details.advanceEmis} paid up front` : null]
+    .filter(Boolean)
+    .join(" · ");
+  return (
+    <div className="rounded-lg bg-white px-3 py-2 text-sm dark:bg-neutral-950/50">
+      <p className="text-xs font-medium uppercase tracking-[0.06em] text-neutral-500 dark:text-neutral-400">From the DO</p>
+      <dl className="mt-1.5 grid gap-1.5">
+        {rows
+          .filter(([, v]) => v != null)
+          .map(([label, value, note]) => (
+            <div key={label} className="flex flex-wrap items-baseline justify-between gap-x-3">
+              <dt className="text-neutral-600 dark:text-neutral-400">
+                {label}
+                {note && <span className="ml-1.5 text-xs text-neutral-500">({note})</span>}
+              </dt>
+              <dd className="font-medium tabular-nums text-neutral-900 dark:text-white">{formatCurrency(value!)}</dd>
+            </div>
+          ))}
+      </dl>
+      {tenure && <p className="mt-1.5 text-xs text-neutral-500 dark:text-neutral-400">{tenure}</p>}
+    </div>
   );
 }

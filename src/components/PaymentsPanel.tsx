@@ -29,6 +29,7 @@ import { Combobox } from "@/components/ui/Combobox";
 import { RefundCard } from "@/components/invoices/RefundCard";
 import { invoiceBalance } from "@/lib/invoiceLines";
 import { BajajDisbursementCard } from "@/components/invoices/BajajDisbursementCard";
+import type { DoDetails } from "@/lib/bajajDo";
 import { DeleteButton } from "@/components/DeleteButton";
 import { useToast } from "@/components/ui/Toast";
 import { formatCurrency, formatDate } from "@/lib/format";
@@ -111,7 +112,7 @@ export function PaymentsPanel({
   /** Share of a payment that isn't GST (1 when the business charges none). */
   taxableShare?: number;
   /** Set on a Bajaj Finance sale: what Bajaj finances, and its DO. */
-  bajaj?: { financedAmount: number; doId: string | null } | null;
+  bajaj?: { financedAmount: number; doId: string | null; doDetails?: DoDetails | null } | null;
 }) {
   const router = useRouter();
   const toast = useToast();
@@ -238,6 +239,7 @@ export function PaymentsPanel({
         setAmount(String(found.amount));
         parts.push(formatCurrency(found.amount));
         setOverpaidBy(found.amount > limit ? found.amount - limit : null);
+        if (found.amountUncertain) toast.info("The amount was hard to read — compare it with the screenshot before saving");
       }
       if (found.method) {
         setField("method", found.method);
@@ -584,6 +586,7 @@ export function PaymentsPanel({
             invoiceId={invoiceId}
             doId={bajaj.doId}
             financedAmount={bajaj.financedAmount}
+            doDetails={bajaj.doDetails}
             outstanding={Math.max(outstanding, 0)}
             disbursement={payments.find((p) => p.method === BAJAJ_DISBURSEMENT_METHOD) ?? null}
           />

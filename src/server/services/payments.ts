@@ -10,6 +10,7 @@ import { audit, diff } from "../audit";
 import { badRequest, conflict } from "../errors";
 import { isoDate, optionalText, positiveMoney } from "../validation";
 import { BAJAJ_DISBURSEMENT } from "./invoices";
+import { readDoDetails } from "@/lib/bajajDo";
 import type { SessionUser } from "../session";
 import { guardWrite, round2, rupees } from "./common";
 
@@ -174,7 +175,9 @@ export async function deletePayment(user: SessionUser, paymentId: string, req: R
 }
 
 export const bajajDisbursementSchema = z.object({
-  /** What Bajaj actually credited to the bank account. */
+  /** The amount paid by customer: the DO's net loan, what settles the invoice. Defaults to the financed amount. */
+  amount: positiveMoney("Amount paid by customer").optional(),
+  /** What Bajaj actually credited to the bank account: the DO's net disbursement. */
   credited: positiveMoney("Amount credited"),
   paidOn: isoDate("Date credited"),
   /** UTR / bank reference for the credit. */
@@ -205,8 +208,12 @@ export async function recordBajajDisbursement(
   }
 
   const outstanding = balance.balance;
-  const settles = round2(Math.min(invoice.financedAmount ?? outstanding, outstanding));
-  if (settles <= 0) throw badRequest("Nothing is left for Bajaj to pay on this invoice");
+  const financed = round2(Math.min(invoice.financedAmount ?? outstanding, outstanding));
+  if (financed <= 0) throw badRequest("Nothing is left for Bajaj to pay on this invoice");
+  if (input.amount !== undefined && input.amount > financed + 0.005) {
+    throw badRequest(`Bajaj financed at most ${rupees(financed)} of what's still owed`, { amount: `At most ${rupees(financed)}` });
+  }
+  const settles = round2(input.amount ?? financed);
   if (input.credited > settles + 0.005) {
     throw badRequest(`Bajaj can't have paid more than the ${rupees(settles)} it financed`, {
       credited: `At most ${rupees(settles)}`,
@@ -214,6 +221,9 @@ export async function recordBajajDisbursement(
   }
 
   const charges = round2(settles - input.credited);
+  // The GST the DO says is inside what Bajaj charges the dealer: input credit.
+  const doGst = readDoDetails(invoice.doDetails)?.totalGst ?? 0;
+  const chargesGst = doGst > 0 && doGst < charges ? round2(doGst) : 0;
   const payment = await prisma.payment.create({
     data: {
       invoiceId,
@@ -222,8 +232,8 @@ export async function recordBajajDisbursement(
       method: BAJAJ_DISBURSEMENT,
       gateway: "Bajaj Finance",
       gatewayRef: input.reference ?? invoice.doId,
-      feeAmount: charges,
-      feeGstAmount: 0,
+      feeAmount: round2(charges - chargesGst),
+      feeGstAmount: chargesGst,
     },
   });
 
@@ -233,7 +243,7 @@ export async function recordBajajDisbursement(
     action: "payment.create",
     entityType: "payment",
     entityId: payment.id,
-    summary: `Bajaj disbursed ${rupees(input.credited)} on ${invoice.invoiceNumber} against ${rupees(settles)} financed (charges ${rupees(charges)})`,
+    summary: `Bajaj disbursed ${rupees(input.credited)} on ${invoice.invoiceNumber} against ${rupees(settles)} net loan (kept ${rupees(charges)}${chargesGst ? `, incl. ${rupees(chargesGst)} GST` : ""})`,
     req,
   });
 

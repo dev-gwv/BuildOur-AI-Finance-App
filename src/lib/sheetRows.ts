@@ -42,6 +42,8 @@ type PaymentForSheet = {
   method: string | null;
   note: string | null;
   gateway: string | null;
+  /** The gateway's id for it: Razorpay's pay_ id, or a Bajaj payout's UTR. */
+  gatewayRef?: string | null;
   feeAmount: number;
   feeGstAmount: number;
   /** "REFUND" rows are money going back out: written as negative amounts. */
@@ -53,6 +55,8 @@ type InvoiceForSheet = {
   brand: string;
   customerName: string;
   invoiceNumber: string;
+  /** A Bajaj sale's DO number. */
+  doId?: string | null;
   gstPercent: number;
   /**
    * Share of the invoice that's taxable value (sub total / total), from its
@@ -94,6 +98,28 @@ export function paymentReceiptRow(payment: PaymentForSheet, invoice: InvoiceForS
   // its GST is reckoned on the net disbursement that reached the bank.
   const bajaj = payment.method === "Bajaj Finance disbursement";
   const amountExGst = bajaj ? exGst(settled) : exGst(payment.amount) - fees;
+  if (bajaj) {
+    // Payment Received = the net loan, Excluding charges = the net
+    // disbursement that reached the bank, Excluding GST = that less 18%.
+    return {
+      id: payment.id,
+      date: isoDate(payment.paidOn),
+      client: invoice.customerName,
+      amount: payment.amount,
+      amountExCharges: round2(settled),
+      amountExGst: round2(amountExGst),
+      remarks: [
+        "Bajaj Finance",
+        invoice.doId ? `DO ${invoice.doId}` : null,
+        fees > 0 ? `Bajaj kept ₹${round2(fees).toLocaleString("en-IN")}` : null,
+        payment.gatewayRef && payment.gatewayRef !== invoice.doId ? `UTR ${payment.gatewayRef}` : null,
+        payment.note,
+        invoice.invoiceNumber,
+      ]
+        .filter(Boolean)
+        .join(" · "),
+    };
+  }
   return {
     id: payment.id,
     date: isoDate(payment.paidOn),
