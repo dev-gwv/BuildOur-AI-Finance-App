@@ -17,6 +17,7 @@ import { detectGateway } from "./parsePaymentScreenshot.ts";
 import { expenseSheetBody, paymentReceiptRow } from "./sheetRows.ts";
 import { chargesCollected, expectedBajajDeduction, pickDoDetails } from "./bajajDo.ts";
 import { matchRazorpayPayment, normalizeRazorpayPayment } from "./integrations/razorpayPayment.ts";
+import { normalizeTagMangoHost, normalizeTagMangoTransaction } from "./integrations/tagmangoPayment.ts";
 import { gstCreditLine, gstLine, gstPeriodRange, hsnSummary, inputGst, monthlySummary, netGstPayable, netOfCredits, sumLines } from "./gstReport.ts";
 
 // --- GST back-calculation, matched against INV-002241 ---
@@ -452,6 +453,34 @@ assert.equal(matchRazorpayPayment(pool, 4999, "2026-10-01")?.id, "pay_A", "two n
 assert.equal(matchRazorpayPayment([...pool, rp("pay_E", 4999, "2026-10-01")], 4999, "2026-10-01"), null, "two that day: never guessed");
 assert.equal(matchRazorpayPayment(pool, 4999, "2026-10-01", new Set(["pay_A"]))?.id, "pay_B", "an id already recorded is skipped");
 assert.equal(matchRazorpayPayment(pool, 20000, "2026-10-01"), null, "failed payments don't count");
+
+// --- TagMango: its documented transaction, as the app records it ---
+const tm = normalizeTagMangoTransaction({
+  id: "66f3a1c4d9f135a7b2c3d4e5", occurredAt: "2026-08-24T20:02:41.517Z", status: "completed",
+  customer: { name: "John Doe", email: "john.doe@example.com", phone: 1234567890 },
+  mango: { title: "Introduction to Coding" },
+  payment: { type: "onetime", chargedAmount: 4999, currency: "INR", gstAmount: 762.56 },
+  commission: { totalAmountIncludingGst: 499.9, reportedGstAmount: 89.98 },
+  refund: { amount: 0 },
+});
+assert.equal(tm.status, "captured", "completed reads like a captured Razorpay payment");
+assert.equal(tm.amount, 4999);
+assert.equal(tm.gstAmount, 762.56, "GST inside the amount, as TagMango reports it");
+assert.equal(tm.feeAmount, 409.92, "commission excluding its GST");
+assert.equal(tm.feeGstAmount, 89.98);
+assert.equal(tm.paidOn, "2026-08-25", "IST date: 8 pm UTC is past midnight in India");
+assert.equal(tm.contact, "1234567890");
+assert.equal(tm.name, "John Doe");
+assert.equal(tm.description, "Introduction to Coding");
+assert.equal(normalizeTagMangoHost("https://Learn.Example.com/dashboard?x=1"), "learn.example.com");
+assert.equal(normalizeTagMangoHost("not a host"), null);
+const tmRow = paymentReceiptRow(
+  { id: "p11", amount: 4999, paidOn: new Date("2026-08-25T00:00:00Z"), method: "TagMango", note: null, gateway: "TagMango", gatewayRef: tm.id, feeAmount: tm.feeAmount, feeGstAmount: tm.feeGstAmount },
+  { brand: "GRATEFUL", customerName: "John Doe", invoiceNumber: "IWC-INV-001050", gstPercent: 18 }
+);
+assert.equal(tmRow.amountExCharges, 4499.1, "₹4,999 less TagMango's ₹499.90");
+assert.equal(tmRow.amountExGst, 3736.54, "₹4,999 − ₹762.56 GST − ₹499.90 TagMango (GST backed out at 18%: 4,236.44 − 499.90)");
+assert.equal(PAYMENT_METHODS.includes("TagMango"), true, "TagMango can be picked as the platform");
 
 // --- DO price read by OCR from a photographed table ---
 assert.equal(parseDeliveryOrderText("A Product Price [117,999.00 117,999.00").productPrice, 117999, "OCR bracket before the price");

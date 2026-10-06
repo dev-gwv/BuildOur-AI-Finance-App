@@ -58,6 +58,8 @@ export const LIMITS = {
   parsePerUser: { limit: 60, window: 10 * 60 },
   /** Calls through to Razorpay's API. */
   razorpayPerUser: { limit: 60, window: 60 },
+  /** Calls through to TagMango's API, which allows little more than one every few seconds. */
+  tagmangoPerUser: { limit: 30, window: 60 },
   /** Any other write, generously — catches runaway scripts, not people. */
   writesPerUser: { limit: 300, window: 60 },
 } as const;

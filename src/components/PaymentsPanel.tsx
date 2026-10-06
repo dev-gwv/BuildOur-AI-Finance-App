@@ -131,7 +131,13 @@ export function PaymentsPanel({
   const [amount, setAmount] = useState("");
   const [paidOn, setPaidOn] = useState(todayISO());
   const [method, setMethod] = useState("");
+  /** The payment came through a gateway that keeps a cut (Razorpay or TagMango). */
   const [viaRazorpay, setViaRazorpay] = useState(false);
+  /** Which gateway, when `viaRazorpay`. */
+  const [gatewayName, setGatewayName] = useState<"Razorpay" | "TagMango">("Razorpay");
+  const isRazorpay = gatewayName === "Razorpay";
+  const [tmConnected, setTmConnected] = useState(false);
+  const [tmPickerOpen, setTmPickerOpen] = useState(false);
   const [gatewayRef, setGatewayRef] = useState("");
   const [detected, setDetected] = useState<string | null>(null);
   /** null = follow the configured rate; a string = typed over by the user. */
@@ -304,6 +310,8 @@ export function PaymentsPanel({
 
   function resetGateway() {
     setViaRazorpay(false);
+    setGatewayName("Razorpay");
+    setTmPickerOpen(false);
     setGatewayRef("");
     setDetected(null);
     setFeeInput(null);
@@ -352,6 +360,31 @@ export function PaymentsPanel({
     });
   }
 
+  /**
+   * Fills the form from a TagMango transaction: its amount, date and
+   * TagMango's commission with the GST on it, exactly as TagMango reports them.
+   */
+  function applyTagMango(p: RazorpayPick) {
+    verifiedRef.current = p.id;
+    autoMatch.current = null;
+    setGatewayName("TagMango");
+    setViaRazorpay(true);
+    setGatewayRef(p.id);
+    setTmPickerOpen(false);
+    setCandidates(null);
+    setAmount(String(p.amount));
+    setOverpaidBy(p.amount > limit ? p.amount - limit : null);
+    setPaidOn(p.paidOn);
+    setMethod((m) => m || "TagMango");
+    setFeeInput(String(p.feeAmount));
+    setFeeGstInput(String(p.feeGstAmount));
+    setOverrideFees(false);
+    setVerify({
+      state: "ok",
+      message: `From TagMango · commission ${formatCurrency(p.feeAmount)} + GST ${formatCurrency(p.feeGstAmount)}`,
+    });
+  }
+
   function pickCandidate(p: RazorpayPick) {
     autoMatch.current = { key: lookupKey, id: p.id };
     applyRazorpay(p, true);
@@ -369,11 +402,15 @@ export function PaymentsPanel({
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => setRzpConnected(Boolean(data?.connected)))
       .catch(() => {});
+    fetch("/api/integrations/tagmango")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => setTmConnected(Boolean(data?.connected)))
+      .catch(() => {});
   }, [open]);
 
   // A pay_ id (read by OCR or typed) is checked against Razorpay once it looks complete.
   useEffect(() => {
-    if (!rzpConnected || !viaRazorpay) return;
+    if (!rzpConnected || !viaRazorpay || !isRazorpay) return;
     const id = gatewayRef.trim();
     if (!RAZORPAY_ID.test(id) || verifiedRef.current === id) return;
     const timer = setTimeout(async () => {
@@ -398,7 +435,7 @@ export function PaymentsPanel({
     return () => clearTimeout(timer);
     // applyRazorpay reads the latest editing/limit on each run; the trigger is the id.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rzpConnected, viaRazorpay, gatewayRef]);
+  }, [rzpConnected, viaRazorpay, isRazorpay, gatewayRef]);
 
   // No pay_ id: the payment is looked up in Razorpay by what reached it (the
   // amount less any TDS) and the date, so its actual fee shows before saving.
@@ -406,7 +443,7 @@ export function PaymentsPanel({
   // it's looked up again.
   const lookupKey = `${cashValue}|${paidOn}`;
   useEffect(() => {
-    if (!rzpConnected || !viaRazorpay || cashValue <= 0 || !/^\d{4}-\d{2}-\d{2}$/.test(paidOn)) return;
+    if (!rzpConnected || !viaRazorpay || !isRazorpay || cashValue <= 0 || !/^\d{4}-\d{2}-\d{2}$/.test(paidOn)) return;
     const ref = gatewayRef.trim();
     const auto = autoMatch.current;
     if (auto && ref === auto.id) {
@@ -457,7 +494,7 @@ export function PaymentsPanel({
     return () => clearTimeout(timer);
     // applyRazorpay reads the latest state on each run; the triggers are the amount, date and id.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rzpConnected, viaRazorpay, lookupKey, gatewayRef]);
+  }, [rzpConnected, viaRazorpay, isRazorpay, lookupKey, gatewayRef]);
 
   function closeForm() {
     setOpen(false);
@@ -493,6 +530,7 @@ export function PaymentsPanel({
     setTdsSection(p.tdsSection ?? "194J");
     if (p.gateway) {
       setViaRazorpay(true);
+      setGatewayName(p.gateway === "TagMango" ? "TagMango" : "Razorpay");
       setGatewayRef(p.gatewayRef ?? "");
       // Already checked when it was saved; re-fetching would overwrite a
       // deliberately partial amount with Razorpay's full one.
@@ -520,7 +558,7 @@ export function PaymentsPanel({
       if (proof) body.set("proof", proof);
       body.set("amount", amount);
       // Always sent, so switching Razorpay off on an edit clears its fees.
-      body.set("gateway", viaRazorpay ? "Razorpay" : "");
+      body.set("gateway", viaRazorpay ? gatewayName : "");
       body.set("gatewayRef", viaRazorpay ? gatewayRef.trim() : "");
       body.set("feeAmount", viaRazorpay ? String(feeValue) : "0");
       body.set("feeGstAmount", viaRazorpay ? String(feeGstValue) : "0");
@@ -769,12 +807,28 @@ export function PaymentsPanel({
                 Works with PhonePe, GPay, Paytm, Razorpay and bank screenshots — the amount, platform and
                 date fill in below for you to check.
               </p>
-              {rzpConnected && (
-                <div className="relative mt-2">
-                  <Button type="button" size="sm" variant="secondary" onClick={openPicker}>
-                    <ListChecks className="h-3.5 w-3.5" />
-                    Pick from Razorpay
-                  </Button>
+              {(rzpConnected || tmConnected) && (
+                <div className="relative mt-2 flex flex-wrap gap-2">
+                  {rzpConnected && (
+                    <Button type="button" size="sm" variant="secondary" onClick={openPicker}>
+                      <ListChecks className="h-3.5 w-3.5" />
+                      Pick from Razorpay
+                    </Button>
+                  )}
+                  {tmConnected && (
+                    <Button type="button" size="sm" variant="secondary" onClick={() => setTmPickerOpen(true)}>
+                      <ListChecks className="h-3.5 w-3.5" />
+                      Pick from TagMango
+                    </Button>
+                  )}
+                  <GatewayPicker
+                    open={tmPickerOpen}
+                    onClose={() => setTmPickerOpen(false)}
+                    gateway="TagMango"
+                    endpoint="/api/integrations/tagmango/payments"
+                    onPick={(p) => applyTagMango(p)}
+                    currentRef={editing?.gatewayRef}
+                  />
                   <GatewayPicker
                     open={pickerOpen}
                     onClose={() => setPickerOpen(false)}
@@ -834,8 +888,15 @@ export function PaymentsPanel({
                   value={method}
                   onValueChange={(v) => {
                     setMethod(v);
-                    // Money through Razorpay always has its commission taken.
-                    if (/razorpay/i.test(v) && !viaRazorpay) {
+                    // Money through TagMango or Razorpay always has its commission taken.
+                    if (/tag\s*mango/i.test(v) && !(viaRazorpay && gatewayName === "TagMango")) {
+                      setGatewayName("TagMango");
+                      setViaRazorpay(true);
+                      // No estimate for TagMango's commission: pick the payment, or type it.
+                      setFeeInput("0");
+                      setFeeGstInput("0");
+                    } else if (/razorpay/i.test(v) && !viaRazorpay) {
+                      setGatewayName("Razorpay");
                       setViaRazorpay(true);
                       setFeeInput(null);
                       setFeeGstInput(null);
@@ -901,21 +962,23 @@ export function PaymentsPanel({
             <div className="rounded-lg border border-neutral-200 bg-white p-3 dark:border-white/[0.06] dark:bg-neutral-900">
               <div className="flex items-center justify-between gap-3">
                 <div className="min-w-0">
-                  <p className="text-sm font-medium text-neutral-900 dark:text-neutral-100">Paid through Razorpay</p>
+                  <p className="text-sm font-medium text-neutral-900 dark:text-neutral-100">Paid through {gatewayName}</p>
                   <p
                     className={`text-xs ${
                       detected ? "font-medium text-brand-600 dark:text-brand-400" : "text-neutral-500 dark:text-neutral-400"
                     }`}
                   >
-                    {detected ?? "Razorpay keeps a commission, plus GST on it, before paying out."}
+                    {detected ?? `${gatewayName} keeps a commission, plus GST on it, before paying out.`}
                   </p>
                 </div>
                 <button
                   type="button"
                   role="switch"
                   aria-checked={viaRazorpay}
-                  aria-label="Paid through Razorpay"
+                  aria-label={`Paid through ${gatewayName}`}
                   onClick={() => {
+                    // Off, and back on again, starts from Razorpay.
+                    if (viaRazorpay) setGatewayName("Razorpay");
                     setViaRazorpay((v) => !v);
                     setFeeInput(null);
                     setFeeGstInput(null);
@@ -942,10 +1005,10 @@ export function PaymentsPanel({
                 <div className="mt-3 grid gap-3 border-t border-neutral-100 pt-3 dark:border-white/[0.06]">
                   <div className="grid gap-3 sm:grid-cols-3">
                     <Field
-                      label="Razorpay payment ID"
-                      optional={rzpConnected}
+                      label={`${gatewayName} payment ID`}
+                      optional={rzpConnected || !isRazorpay}
                       hint={
-                        rzpConnected && !gatewayRef.trim()
+                        isRazorpay && rzpConnected && !gatewayRef.trim()
                           ? "Not needed: the payment is found in Razorpay by its amount and date."
                           : undefined
                       }
@@ -967,10 +1030,10 @@ export function PaymentsPanel({
                             }
                           }
                         }}
-                        placeholder="pay_…"
+                        placeholder={isRazorpay ? "pay_…" : "From TagMango"}
                       />
                     </Field>
-                    <Field label="Razorpay fee">
+                    <Field label={`${gatewayName} fee`}>
                       <Input
                         type="number"
                         step="0.01"
@@ -1063,13 +1126,13 @@ export function PaymentsPanel({
                   )}
                   <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs sm:grid-cols-4">
                     <div>
-                      <dt className="text-neutral-600 dark:text-neutral-400">{tdsValue > 0 ? "Paid via Razorpay" : "Customer paid"}</dt>
+                      <dt className="text-neutral-600 dark:text-neutral-400">{tdsValue > 0 ? `Paid via ${gatewayName}` : "Customer paid"}</dt>
                       <dd className="font-semibold tabular-nums text-neutral-900 dark:text-neutral-100">
                         {formatCurrency(cashValue)}
                       </dd>
                     </div>
                     <div>
-                      <dt className="text-neutral-500 dark:text-neutral-400">Razorpay fee ({effectiveFeePercent}%)</dt>
+                      <dt className="text-neutral-500 dark:text-neutral-400">{gatewayName} fee ({effectiveFeePercent}%)</dt>
                       <dd className="font-semibold tabular-nums text-amber-700 dark:text-amber-400">
                         −{formatCurrency(feeValue)}
                       </dd>
@@ -1103,7 +1166,7 @@ export function PaymentsPanel({
                       </>
                     )}
                   </dl>
-                  {!feesExact && (feeInput !== null || feeGstInput !== null) && (
+                  {isRazorpay && !feesExact && (feeInput !== null || feeGstInput !== null) && (
                     <button
                       type="button"
                       onClick={() => {

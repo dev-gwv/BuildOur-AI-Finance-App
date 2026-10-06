@@ -138,6 +138,12 @@ export function readRefundForm(form: FormData): RefundInput {
  * failure is logged, since the money has arrived either way.
  */
 export async function verifyRazorpayPayment(input: PaymentInput, excludePaymentId?: string): Promise<PaymentInput> {
+  // A TagMango payment comes from its picker with TagMango's own figures; it
+  // only has to be recorded once.
+  if (input.gateway === "TagMango" && input.gatewayRef) {
+    await assertNotRecorded(input.gateway, input.gatewayRef, excludePaymentId);
+    return input;
+  }
   if (input.gateway !== "Razorpay") return input;
   if (!input.gatewayRef) return matchByAmount(input, excludePaymentId);
 
@@ -164,6 +170,14 @@ export async function verifyRazorpayPayment(input: PaymentInput, excludePaymentI
   // The amount is left as entered: a customer can settle part of a Razorpay
   // payment against one invoice, so a mismatch isn't an error.
   return { ...input, feeAmount: payment.feeAmount, feeGstAmount: payment.feeGstAmount };
+}
+
+async function assertNotRecorded(gateway: string, gatewayRef: string, excludePaymentId?: string) {
+  const duplicate = await prisma.payment.findFirst({
+    where: { gateway, gatewayRef, ...(excludePaymentId ? { id: { not: excludePaymentId } } : {}) },
+    select: { invoice: { select: { invoiceNumber: true } } },
+  });
+  if (duplicate) throw badRequest(`That ${gateway} payment is already recorded on ${duplicate.invoice.invoiceNumber}`);
 }
 
 /**

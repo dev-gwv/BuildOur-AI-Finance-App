@@ -301,7 +301,7 @@ export function RazorpayIntegrationCard({ initial }: { initial: Status }) {
 
           <ul className="grid gap-1.5 text-sm text-neutral-600 dark:text-neutral-400">
             <li>• Every Razorpay payment gets its exact fee and GST from Razorpay — by its pay_ ID, or, without one, by finding the one payment of that amount on that day.</li>
-            <li>• &ldquo;Pick from Razorpay&rdquo; on any invoice lists the last two weeks&apos; payments, no screenshot needed.</li>
+            <li>• &ldquo;Pick from Razorpay&rdquo; on any invoice lists up to 60 days of payments — searchable by name, phone, UPI ID or amount — no screenshot needed.</li>
             <li>• A Razorpay payment can only be recorded once; a duplicate is refused.</li>
             <li>• While switched off, Razorpay payments use the commission % in Invoice Settings as an estimate.</li>
           </ul>

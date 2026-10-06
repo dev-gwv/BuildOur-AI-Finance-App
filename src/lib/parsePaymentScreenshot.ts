@@ -40,6 +40,7 @@ const APPS: Array<[RegExp, string]> = [
   [/amazon\s*pay/i, "Amazon Pay"],
   [/cred\b/i, "CRED"],
   [/net\s*banking|imps|neft|rtgs/i, "Bank transfer"],
+  [/tag\s*mango/i, "TagMango"],
   // Last, so the UPI app a Razorpay checkout was paid from wins when shown.
   [/razorpay|razor\s*pay/i, "Razorpay"],
 ];

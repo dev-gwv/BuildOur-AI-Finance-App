@@ -810,9 +810,6 @@ function DoBreakdown({ details, down }: { details: DoDetails; down: number }) {
     ["Bajaj keeps from the loan", kept, kept != null && charges > 0 ? "subsidy + its charges" : undefined],
     ["Net disbursement (to the bank)", details.netDisbursement],
   ];
-  const tenure = [details.emi ? `EMI ${formatCurrency(details.emi)}` : null, details.tenureMonths ? `${details.tenureMonths} months` : null, details.advanceEmis ? `${details.advanceEmis} paid up front` : null]
-    .filter(Boolean)
-    .join(" · ");
   return (
     <div className="rounded-lg bg-white px-3 py-2 text-sm dark:bg-neutral-950/50">
       <p className="text-xs font-medium uppercase tracking-[0.06em] text-neutral-500 dark:text-neutral-400">From the DO</p>
@@ -829,7 +826,6 @@ function DoBreakdown({ details, down }: { details: DoDetails; down: number }) {
             </div>
           ))}
       </dl>
-      {tenure && <p className="mt-1.5 text-xs text-neutral-500 dark:text-neutral-400">{tenure}</p>}
     </div>
   );
 }

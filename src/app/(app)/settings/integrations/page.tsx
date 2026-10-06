@@ -3,6 +3,8 @@ import { prisma } from "@/lib/prisma";
 import { openSecret } from "@/lib/secretBox";
 import { RAZORPAY_PROVIDER, maskKeyId } from "@/lib/integrations/razorpay";
 import { RazorpayIntegrationCard } from "@/components/RazorpayIntegrationCard";
+import { TagMangoIntegrationCard } from "@/components/settings/TagMangoIntegrationCard";
+import { tagMangoStatus } from "@/lib/integrations/tagmango";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { MailboxesCard } from "@/components/settings/MailboxesCard";
 import { listMailAccounts } from "@/server/mailAccounts";
@@ -11,9 +13,10 @@ import { envSender } from "@/lib/mailer";
 export default async function IntegrationsPage() {
   await requirePageAdmin();
 
-  const [row, mailboxes] = await Promise.all([
+  const [row, mailboxes, tagMango] = await Promise.all([
     prisma.integration.findUnique({ where: { provider: RAZORPAY_PROVIDER } }),
     listMailAccounts(),
+    tagMangoStatus(),
   ]);
   const secretOpens = row?.secretEnc ? openSecret(row.secretEnc) !== null : false;
 
@@ -36,6 +39,7 @@ export default async function IntegrationsPage() {
           connectedAt: row?.connectedAt?.toISOString() ?? null,
         }}
       />
+      <TagMangoIntegrationCard initial={tagMango} />
     </div>
   );
 }
