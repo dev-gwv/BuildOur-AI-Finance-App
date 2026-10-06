@@ -71,7 +71,7 @@ export function GatewayPicker({
   const [method, setMethod] = useState("all");
   const [showRecorded, setShowRecorded] = useState(false);
   /** The last answer, for the period it was asked for: payments or an error. */
-  const [loaded, setLoaded] = useState<{ days: number; payments?: GatewayPayment[]; error?: string } | null>(null);
+  const [loaded, setLoaded] = useState<{ days: number; payments?: GatewayPayment[]; error?: string; newest?: string | null } | null>(null);
 
   useEffect(() => {
     if (!open || loaded?.days === days) return;
@@ -80,7 +80,11 @@ export function GatewayPicker({
       .then(async (res) => {
         const data = await res.json().catch(() => ({}));
         if (cancelled) return;
-        setLoaded(res.ok ? { days, payments: data.payments ?? [] } : { days, error: data.error ?? `Couldn't load payments from ${gateway}` });
+        setLoaded(
+          res.ok
+            ? { days, payments: data.payments ?? [], newest: data.source === "file" ? (data.newest ?? null) : undefined }
+            : { days, error: data.error ?? `Couldn't load payments from ${gateway}` }
+        );
       })
       .catch(() => !cancelled && setLoaded({ days, error: `Couldn't reach ${gateway} — check your connection` }));
     return () => {
@@ -210,6 +214,13 @@ export function GatewayPicker({
         {payments && payments.length > 0 && (
           <p className="text-[11px] text-neutral-500">
             Showing {visible.length} of {payments.length} from the last {days} days.
+          </p>
+        )}
+        {current?.newest !== undefined && (
+          <p className="text-[11px] text-neutral-500">
+            From uploaded {gateway} reports
+            {current.newest ? ` — newest payment ${formatDate(current.newest)}` : " — none uploaded yet"}. Later payments show once a newer report is
+            uploaded in Settings → Integrations.
           </p>
         )}
       </div>

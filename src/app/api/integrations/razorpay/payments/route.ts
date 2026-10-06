@@ -3,11 +3,13 @@ import { prisma } from "@/lib/prisma";
 import { ApiError, withApiErrors } from "@/server/errors";
 import { requireUser } from "@/server/session";
 import { enforce } from "@/server/rateLimit";
+import { newestStoredPayment } from "@/lib/integrations/storedPayments";
 import {
   RazorpayError,
   fetchRazorpayPayment,
   listRazorpayPaymentsBetween,
   matchRazorpayPayment,
+  razorpaySource,
   shiftDay,
 } from "@/lib/integrations/razorpay";
 
@@ -61,7 +63,10 @@ export const GET = withApiErrors(async (req: NextRequest) => {
     const byRef = new Map(recorded.map((r) => [r.gatewayRef, r.invoice]));
     const withStatus = payments.map((p) => ({ ...p, recordedOn: byRef.get(p.id) ?? null }));
 
-    return NextResponse.json(id ? { payment: withStatus[0] } : { payments: withStatus });
+    if (id) return NextResponse.json({ payment: withStatus[0] });
+    // From uploaded reports, a picker says how far they go.
+    const source = await razorpaySource();
+    return NextResponse.json({ payments: withStatus, source, newest: source === "file" ? await newestStoredPayment("razorpay") : null });
   } catch (e) {
     if (e instanceof RazorpayError) throw new ApiError(e.status === 401 ? 502 : e.status, e.message);
     throw e;

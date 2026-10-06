@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { openSecret } from "@/lib/secretBox";
 import { normalizeTagMangoTransaction, type RawTagMangoTransaction, type TagMangoPayment } from "./tagmangoPayment";
+import { importStats, storedPaymentsBetween } from "./storedPayments";
 
 export type { TagMangoPayment };
 
@@ -60,7 +61,7 @@ async function listPage(body: Record<string, unknown>, host: string, apiKey: str
 /** The stored credentials, when the integration is switched on and the key opens. */
 export async function getTagMangoCredentials(): Promise<{ host: string; apiKey: string } | null> {
   const row = await prisma.integration.findUnique({ where: { provider: TAGMANGO_PROVIDER } });
-  if (!row?.enabled || !row.keyId || !row.secretEnc) return null;
+  if (!row?.enabled || row.mode === "file" || !row.keyId || !row.secretEnc) return null;
   const apiKey = openSecret(row.secretEnc);
   return apiKey ? { host: row.keyId, apiKey } : null;
 }
@@ -69,9 +70,13 @@ export async function getTagMangoCredentials(): Promise<{ host: string; apiKey: 
 export async function tagMangoStatus() {
   const row = await prisma.integration.findUnique({ where: { provider: TAGMANGO_PROVIDER } });
   const keyOpens = row?.secretEnc ? openSecret(row.secretEnc) !== null : false;
+  const mode = (row?.mode === "file" ? "file" : "api") as "api" | "file";
+  const imports = await importStats(TAGMANGO_PROVIDER);
   return {
+    mode,
+    imports,
     enabled: row?.enabled ?? false,
-    connected: Boolean(row?.enabled && row.keyId && keyOpens),
+    connected: Boolean(row?.enabled && (mode === "file" ? imports.count > 0 : row.keyId && keyOpens)),
     hasKeys: Boolean(row?.keyId && row?.secretEnc),
     // The key couldn't be decrypted — AUTH_SECRET changed since it was saved.
     needsReentry: Boolean(row?.secretEnc && !keyOpens),
@@ -80,8 +85,15 @@ export async function tagMangoStatus() {
   };
 }
 
+/** Where TagMango payments come from: its API, uploaded reports, or nowhere yet. */
+export async function tagMangoSource(): Promise<"api" | "file" | null> {
+  const row = await prisma.integration.findUnique({ where: { provider: TAGMANGO_PROVIDER }, select: { enabled: true, mode: true } });
+  if (row?.enabled && row.mode === "file") return "file";
+  return (await getTagMangoCredentials()) ? "api" : null;
+}
+
 export async function isTagMangoConnected(): Promise<boolean> {
-  return (await getTagMangoCredentials()) !== null;
+  return (await tagMangoSource()) !== null;
 }
 
 /** Throws TagMangoError if the key or host don't work. Used before saving them. */
@@ -94,6 +106,7 @@ export async function testTagMangoCredentials(host: string, apiKey: string): Pro
  * all pages of them, up to `max`, newest first.
  */
 export async function listTagMangoPayments(fromDay: string, toDay: string, max = 2000): Promise<TagMangoPayment[]> {
+  if ((await tagMangoSource()) === "file") return (await storedPaymentsBetween(TAGMANGO_PROVIDER, fromDay, toDay, max)) as TagMangoPayment[];
   const creds = await getTagMangoCredentials();
   if (!creds) throw new TagMangoError("TagMango isn't connected — turn it on in Settings → Integrations", 409);
   const filter = {

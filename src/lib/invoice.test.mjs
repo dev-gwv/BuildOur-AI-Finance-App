@@ -18,6 +18,7 @@ import { expenseSheetBody, paymentReceiptRow } from "./sheetRows.ts";
 import { chargesCollected, expectedBajajDeduction, pickDoDetails } from "./bajajDo.ts";
 import { matchRazorpayPayment, normalizeRazorpayPayment } from "./integrations/razorpayPayment.ts";
 import { normalizeTagMangoHost, normalizeTagMangoTransaction } from "./integrations/tagmangoPayment.ts";
+import { autoMap, findHeaderRow, parseCsv, parseMoney, parseWhen, rowsToPayments } from "./gatewayImport.ts";
 import { gstCreditLine, gstLine, gstPeriodRange, hsnSummary, inputGst, monthlySummary, netGstPayable, netOfCredits, sumLines } from "./gstReport.ts";
 
 // --- GST back-calculation, matched against INV-002241 ---
@@ -481,6 +482,65 @@ const tmRow = paymentReceiptRow(
 assert.equal(tmRow.amountExCharges, 4499.1, "₹4,999 less TagMango's ₹499.90");
 assert.equal(tmRow.amountExGst, 3736.54, "₹4,999 − ₹762.56 GST − ₹499.90 TagMango (GST backed out at 18%: 4,236.44 − 499.90)");
 assert.equal(PAYMENT_METHODS.includes("TagMango"), true, "TagMango can be picked as the platform");
+
+// --- Uploaded gateway reports ---
+const rzpCsv = parseCsv(
+  'id,amount,currency,status,order_id,method,amount_refunded,refund_status,description,vpa,email,contact,fee,tax,created_at\r\n' +
+    'pay_A1B2C3D4E5F6G7,5000.00,INR,captured,order_X,upi,0,,"Course, batch 3",rahul@okaxis,rahul@example.test,+919000000001,123.90,18.90,24/08/2026 23:30:00\r\n' +
+    "pay_A1B2C3D4E5F6G8,999.00,INR,failed,order_Y,card,0,,,,a@b.c,+919000000002,0,0,24/08/2026 10:00:00\r\n" +
+    "pay_A1B2C3D4E5F6G9,2000.00,INR,refunded,order_Z,netbanking,2000,full,,,c@d.e,+919000000003,47.20,7.20,2026-08-25 09:15:00\r\n"
+);
+assert.equal(rzpCsv.length, 4, "quoted comma kept inside its cell");
+const rzpMap = autoMap(rzpCsv[0], "razorpay");
+assert.equal(rzpCsv[0][rzpMap.externalId], "id");
+assert.equal(rzpCsv[0][rzpMap.amount], "amount", "not amount_refunded");
+assert.equal(rzpCsv[0][rzpMap.refunded], "amount_refunded");
+assert.equal(rzpCsv[0][rzpMap.fee], "fee");
+assert.equal(rzpCsv[0][rzpMap.feeGst], "tax", "Razorpay's tax is the GST on its fee");
+assert.equal(rzpCsv[0][rzpMap.date], "created_at");
+const rzpImport = rowsToPayments(rzpCsv.slice(1), rzpMap, "razorpay");
+assert.equal(rzpImport.payments.length, 2, "the failed payment is left out");
+assert.equal(rzpImport.skipped["not completed (failed, pending or abandoned)"], 1);
+const p1 = rzpImport.payments[0];
+assert.equal(p1.externalId, "pay_A1B2C3D4E5F6G7");
+assert.equal(p1.feeAmount, 105, "fee less its GST");
+assert.equal(p1.feeGstAmount, 18.9);
+assert.equal(p1.paidAt, "2026-08-24T18:00:00.000Z", "11:30 pm in India");
+assert.equal(p1.description, "Course, batch 3");
+assert.equal(rzpImport.payments[1].status, "refunded");
+// TagMango-style export with a title row above the header and its own names.
+const tmRows = [
+  ["Transactions export", "", "", ""],
+  ["Transaction ID", "Customer Name", "Email", "Phone", "Mango", "Amount Paid", "GST", "TagMango Fee", "Status", "Date"],
+  ["66f3a1c4", "Kalpana Mangal", "k@example.test", "9000000004", "IWC Advanced", "₹9,999", "1,525.27", "999.90", "Completed", "25 Aug 2026, 6:05 PM"],
+  ["66f3a1c5", "Abandoned", "x@example.test", "9000000005", "IWC Advanced", "₹9,999", "", "", "Initiated", "25 Aug 2026, 6:10 PM"],
+];
+const tmHeader = findHeaderRow(tmRows, "tagmango");
+assert.equal(tmHeader, 1, "header found below a title row");
+const tmMap = autoMap(tmRows[tmHeader], "tagmango");
+const tmImport = rowsToPayments(tmRows.slice(tmHeader + 1), tmMap, "tagmango");
+assert.equal(tmImport.payments.length, 1, "an initiated (abandoned) checkout isn't a payment");
+const tp = tmImport.payments[0];
+assert.equal(tp.amount, 9999);
+assert.equal(tp.gstAmount, 1525.27);
+assert.equal(tp.feeGstAmount, 152.53, "commission GST taken as 18% inside when the report doesn't say");
+assert.equal(tp.feeAmount, 847.37);
+assert.equal(tmImport.feeGstAssumed, true);
+assert.equal(tp.description, "IWC Advanced");
+assert.equal(tp.paidAt, "2026-08-25T12:35:00.000Z", "6:05 PM IST");
+// Values
+assert.equal(parseMoney("Rs. 1,23,456.50"), 123456.5);
+assert.equal(parseMoney("-"), null);
+assert.equal(parseWhen("2026-08-24T11:02:41.517Z").toISOString(), "2026-08-24T11:02:41.517Z", "an instant with a zone is kept");
+assert.equal(parseWhen("Aug 24, 2026").toISOString(), "2026-08-23T18:30:00.000Z", "midnight in India");
+assert.equal(parseWhen("1787650000").toISOString(), new Date(1787650000 * 1000).toISOString(), "epoch seconds");
+// Paise reports, and no fee column but a net one.
+const paise = rowsToPayments([["pay_1", "500000", "485000", "captured", "01/09/2026"]], { externalId: 0, amount: 1, net: 2, status: 3, date: 4 }, "razorpay", { inPaise: true });
+assert.equal(paise.payments[0].amount, 5000, "paise divided down");
+assert.equal(paise.payments[0].feeAmount + paise.payments[0].feeGstAmount, 150, "fee from gross − net");
+// Same report imported twice: the made-up id is the same both times.
+const noId = (r) => rowsToPayments(r, { amount: 0, date: 1, email: 2 }, "tagmango").payments[0].externalId;
+assert.equal(noId([["4999", "25/08/2026 18:05", "a@b.c"]]), noId([["4999", "25/08/2026 18:05", "a@b.c"]]));
 
 // --- DO price read by OCR from a photographed table ---
 assert.equal(parseDeliveryOrderText("A Product Price [117,999.00 117,999.00").productPrice, 117999, "OCR bracket before the price");

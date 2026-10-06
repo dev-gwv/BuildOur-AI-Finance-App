@@ -4,7 +4,8 @@ import { ApiError, withApiErrors } from "@/server/errors";
 import { requireUser } from "@/server/session";
 import { enforce } from "@/server/rateLimit";
 import { shiftDay } from "@/lib/integrations/razorpay";
-import { TagMangoError, listTagMangoPayments } from "@/lib/integrations/tagmango";
+import { TagMangoError, listTagMangoPayments, tagMangoSource } from "@/lib/integrations/tagmango";
+import { newestStoredPayment } from "@/lib/integrations/storedPayments";
 
 /**
  * GET ?recent=1&days=N -> every completed TagMango payment from the last N
@@ -26,7 +27,12 @@ export const GET = withApiErrors(async (req: NextRequest) => {
       select: { gatewayRef: true, invoice: { select: { id: true, invoiceNumber: true } } },
     });
     const byRef = new Map(recorded.map((r) => [r.gatewayRef, r.invoice]));
-    return NextResponse.json({ payments: payments.map((p) => ({ ...p, recordedOn: byRef.get(p.id) ?? null })) });
+    const source = await tagMangoSource();
+    return NextResponse.json({
+      payments: payments.map((p) => ({ ...p, recordedOn: byRef.get(p.id) ?? null })),
+      source,
+      newest: source === "file" ? await newestStoredPayment("tagmango") : null,
+    });
   } catch (e) {
     if (e instanceof TagMangoError) throw new ApiError(e.status === 401 ? 502 : e.status, e.message);
     throw e;

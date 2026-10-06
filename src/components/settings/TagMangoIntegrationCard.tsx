@@ -10,8 +10,12 @@ import { Card, CardBody, CardHeader, CardTitle } from "@/components/ui/Card";
 import { useToast } from "@/components/ui/Toast";
 import { useConfirm } from "@/components/ui/ConfirmDialog";
 import { formatDate } from "@/lib/format";
+import { ConnectMethodModal, ImportReportDialog, UploadedReports, type ImportStats } from "@/components/settings/GatewayConnect";
 
 type Status = {
+  /** How payments come in: TagMango's API, or uploaded reports. */
+  mode: "api" | "file";
+  imports: ImportStats;
   enabled: boolean;
   connected: boolean;
   hasKeys: boolean;
@@ -19,6 +23,14 @@ type Status = {
   host: string | null;
   connectedAt: string | null;
 };
+
+const HOW_TO_EXPORT = (
+  <ol className="list-decimal space-y-1 pl-4">
+    <li>TagMango creator dashboard → Transactions (or Payments / Sales).</li>
+    <li>Pick the period, then Export / Download as CSV or Excel.</li>
+    <li>Upload that file here. If a column isn&apos;t recognised you can match it before importing.</li>
+  </ol>
+);
 
 /**
  * Connect / switch / disconnect TagMango. The key is checked with TagMango
@@ -29,7 +41,41 @@ export function TagMangoIntegrationCard({ initial }: { initial: Status }) {
   const toast = useToast();
   const confirm = useConfirm();
   const [status, setStatus] = useState(initial);
-  const [editing, setEditing] = useState(!initial.hasKeys || initial.needsReentry);
+  const [editing, setEditing] = useState(initial.needsReentry);
+  const [chooserOpen, setChooserOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
+
+  /** After an upload or a switch the server decides what's connected: ask it. */
+  async function reloadStatus() {
+    const res = await fetch("/api/integrations/tagmango");
+    if (res.ok) setStatus(await res.json());
+    router.refresh();
+  }
+
+  async function switchMode(mode: "api" | "file") {
+    setPending(true);
+    try {
+      const res = await fetch("/api/integrations/tagmango/mode", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ mode }),
+      });
+      if (!res.ok) return toast.error("Couldn't switch how TagMango is connected");
+      await reloadStatus();
+      if (mode === "api" && !status.hasKeys) setEditing(true);
+    } finally {
+      setPending(false);
+    }
+  }
+
+  function choose(mode: "api" | "file") {
+    setChooserOpen(false);
+    if (mode === "file") {
+      if (status.imports.count > 0 && status.mode !== "file") void switchMode("file");
+      setImportOpen(true);
+    } else if (status.mode === "file") void switchMode("api");
+    else setEditing(true);
+  }
   const [host, setHost] = useState(initial.host ?? "");
   const [apiKey, setApiKey] = useState("");
   const [pending, setPending] = useState(false);
@@ -90,7 +136,7 @@ export function TagMangoIntegrationCard({ initial }: { initial: Status }) {
     }
   }
 
-  const canToggle = status.hasKeys && !status.needsReentry;
+  const canToggle = status.mode === "api" && status.hasKeys && !status.needsReentry;
 
   return (
     <Card>
@@ -104,7 +150,7 @@ export function TagMangoIntegrationCard({ initial }: { initial: Status }) {
               TagMango
               {status.connected ? (
                 <Badge tone="success" dot>
-                  Connected
+                  Connected{status.mode === "file" ? " · uploaded reports" : ""}
                 </Badge>
               ) : canToggle ? (
                 <Badge tone="warning" dot>
@@ -151,7 +197,23 @@ export function TagMangoIntegrationCard({ initial }: { initial: Status }) {
             </p>
           )}
 
-          {!editing && status.host ? (
+          {status.mode === "file" ? (
+            <UploadedReports
+              gateway="TagMango"
+              stats={status.imports}
+              busy={pending}
+              onUpload={() => setImportOpen(true)}
+              onSwitchToApi={() => void switchMode("api")}
+            />
+          ) : !editing && !status.host ? (
+            <div className="flex flex-wrap items-center gap-3 rounded-xl border border-dashed border-neutral-200 px-4 py-4 dark:border-white/10">
+              <Button onClick={() => setChooserOpen(true)}>
+                <Plug className="h-4 w-4" />
+                Connect TagMango
+              </Button>
+              <span className="text-sm text-neutral-600 dark:text-neutral-400">With an API key, or by uploading the transactions report you export from TagMango.</span>
+            </div>
+          ) : !editing && status.host ? (
             <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-neutral-200/80 bg-neutral-50/60 px-4 py-3 dark:border-white/[0.07] dark:bg-white/[0.02]">
               <div className="flex items-center gap-3">
                 <Globe className="h-4 w-4 text-neutral-400" />
@@ -204,15 +266,35 @@ export function TagMangoIntegrationCard({ initial }: { initial: Status }) {
                   <CheckCircle2 className="h-4 w-4" />
                   Verify &amp; connect
                 </Button>
-                {canToggle && (
-                  <Button type="button" variant="ghost" onClick={() => setEditing(false)}>
-                    Cancel
-                  </Button>
-                )}
+                <Button type="button" variant="ghost" onClick={() => setEditing(false)}>
+                  Cancel
+                </Button>
                 <span className="text-xs text-neutral-500">Checked with TagMango before anything is saved.</span>
               </div>
+              <p className="text-xs text-neutral-500">
+                No API key yet?{" "}
+                <button type="button" onClick={() => choose("file")} className="font-medium text-brand-600 hover:underline dark:text-brand-400">
+                  Upload exported reports instead
+                </button>
+              </p>
             </form>
           )}
+
+          <ConnectMethodModal
+            open={chooserOpen}
+            onClose={() => setChooserOpen(false)}
+            gateway="TagMango"
+            apiNote="an API key from your TagMango account manager (Ultimate plan)"
+            onChoose={choose}
+          />
+          <ImportReportDialog
+            open={importOpen}
+            onClose={() => setImportOpen(false)}
+            provider="tagmango"
+            gateway="TagMango"
+            howTo={HOW_TO_EXPORT}
+            onImported={() => void reloadStatus()}
+          />
 
           <ul className="grid gap-1.5 text-sm text-neutral-600 dark:text-neutral-400">
             <li>• &ldquo;Pick from TagMango&rdquo; on any invoice lists recent TagMango payments, searchable by customer, course or amount.</li>
@@ -221,20 +303,30 @@ export function TagMangoIntegrationCard({ initial }: { initial: Status }) {
           </ul>
         </div>
 
-        <aside className="rounded-xl bg-neutral-50 p-4 text-sm dark:bg-white/[0.03]">
-          <p className="flex items-center gap-2 font-medium text-neutral-900 dark:text-neutral-100">
-            <ShieldCheck className="h-4 w-4 text-emerald-500" />
-            Getting the API key
-          </p>
-          <ol className="mt-2 list-decimal space-y-1 pl-4 text-neutral-600 dark:text-neutral-400">
-            <li>TagMango gives API access on its Ultimate plan.</li>
-            <li>Ask your TagMango account manager for an API key.</li>
-            <li>Paste it here with your dashboard&apos;s address.</li>
-          </ol>
-          <p className="mt-3 text-xs text-neutral-500">
-            The app only reads transactions — it can&apos;t refund or change anything on TagMango.
-          </p>
-        </aside>
+        {status.mode === "file" ? (
+          <aside className="rounded-xl bg-neutral-50 p-4 text-sm text-neutral-600 dark:bg-white/[0.03] dark:text-neutral-400">
+            <p className="mb-2 flex items-center gap-2 font-medium text-neutral-900 dark:text-neutral-100">
+              <ShieldCheck className="h-4 w-4 text-emerald-500" />
+              Exporting the report
+            </p>
+            {HOW_TO_EXPORT}
+          </aside>
+        ) : (
+          <aside className="rounded-xl bg-neutral-50 p-4 text-sm dark:bg-white/[0.03]">
+            <p className="flex items-center gap-2 font-medium text-neutral-900 dark:text-neutral-100">
+              <ShieldCheck className="h-4 w-4 text-emerald-500" />
+              Getting the API key
+            </p>
+            <ol className="mt-2 list-decimal space-y-1 pl-4 text-neutral-600 dark:text-neutral-400">
+              <li>TagMango gives API access on its Ultimate plan.</li>
+              <li>Ask your TagMango account manager for an API key.</li>
+              <li>Paste it here with your dashboard&apos;s address.</li>
+            </ol>
+            <p className="mt-3 text-xs text-neutral-500">
+              The app only reads transactions — it can&apos;t refund or change anything on TagMango.
+            </p>
+          </aside>
+        )}
       </CardBody>
     </Card>
   );

@@ -11,16 +11,28 @@ import { Card, CardBody, CardHeader, CardTitle } from "@/components/ui/Card";
 import { useToast } from "@/components/ui/Toast";
 import { useConfirm } from "@/components/ui/ConfirmDialog";
 import { formatCurrency, formatDate } from "@/lib/format";
+import { ConnectMethodModal, ImportReportDialog, UploadedReports, type ImportStats } from "@/components/settings/GatewayConnect";
 
 type Status = {
+  /** How payments come in: Razorpay's API, or uploaded reports. */
+  mode: "api" | "file";
+  imports: ImportStats;
   enabled: boolean;
   connected: boolean;
   hasKeys: boolean;
   needsReentry: boolean;
   keyId: string | null;
-  mode: "test" | "live" | null;
+  keyMode: "test" | "live" | null;
   connectedAt: string | null;
 };
+
+const HOW_TO_EXPORT = (
+  <ol className="list-decimal space-y-1 pl-4">
+    <li>Razorpay Dashboard → Transactions → Payments.</li>
+    <li>Pick the period (and status &ldquo;Captured&rdquo; if you like), then Download / Export as CSV or Excel.</li>
+    <li>Upload that file here. Upload a newer one whenever you want later payments.</li>
+  </ol>
+);
 
 type FeeRefresh = {
   checked: number;
@@ -37,7 +49,41 @@ export function RazorpayIntegrationCard({ initial }: { initial: Status }) {
   const toast = useToast();
   const confirm = useConfirm();
   const [status, setStatus] = useState(initial);
-  const [editingKeys, setEditingKeys] = useState(!initial.hasKeys || initial.needsReentry);
+  const [editingKeys, setEditingKeys] = useState(initial.needsReentry);
+  const [chooserOpen, setChooserOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
+
+  /** After an upload or a switch the server decides what's connected: ask it. */
+  async function reloadStatus() {
+    const res = await fetch("/api/integrations/razorpay");
+    if (res.ok) setStatus(await res.json());
+    router.refresh();
+  }
+
+  async function switchMode(mode: "api" | "file") {
+    setPending(true);
+    try {
+      const res = await fetch("/api/integrations/razorpay/mode", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ mode }),
+      });
+      if (!res.ok) return toast.error("Couldn't switch how Razorpay is connected");
+      await reloadStatus();
+      if (mode === "api" && !status.hasKeys) setEditingKeys(true);
+    } finally {
+      setPending(false);
+    }
+  }
+
+  function choose(mode: "api" | "file") {
+    setChooserOpen(false);
+    if (mode === "file") {
+      if (status.imports.count > 0 && status.mode !== "file") void switchMode("file");
+      setImportOpen(true);
+    } else if (status.mode === "file") void switchMode("api");
+    else setEditingKeys(true);
+  }
   const [keyId, setKeyId] = useState("");
   const [keySecret, setKeySecret] = useState("");
   const [pending, setPending] = useState(false);
@@ -128,7 +174,7 @@ export function RazorpayIntegrationCard({ initial }: { initial: Status }) {
     }
   }
 
-  const canToggle = status.hasKeys && !status.needsReentry;
+  const canToggle = status.mode === "api" && status.hasKeys && !status.needsReentry;
 
   return (
     <Card>
@@ -142,7 +188,7 @@ export function RazorpayIntegrationCard({ initial }: { initial: Status }) {
               Razorpay
               {status.connected ? (
                 <Badge tone="success" dot>
-                  Connected{status.mode === "test" ? " · test mode" : ""}
+                  Connected{status.mode === "file" ? " · uploaded reports" : status.keyMode === "test" ? " · test mode" : ""}
                 </Badge>
               ) : canToggle ? (
                 <Badge tone="warning" dot>
@@ -191,7 +237,23 @@ export function RazorpayIntegrationCard({ initial }: { initial: Status }) {
             </p>
           )}
 
-          {!editingKeys && status.keyId ? (
+          {status.mode === "file" ? (
+            <UploadedReports
+              gateway="Razorpay"
+              stats={status.imports}
+              busy={pending}
+              onUpload={() => setImportOpen(true)}
+              onSwitchToApi={() => void switchMode("api")}
+            />
+          ) : !editingKeys && !status.keyId ? (
+            <div className="flex flex-wrap items-center gap-3 rounded-xl border border-dashed border-neutral-200 px-4 py-4 dark:border-white/10">
+              <Button onClick={() => setChooserOpen(true)}>
+                <Plug className="h-4 w-4" />
+                Connect Razorpay
+              </Button>
+              <span className="text-sm text-neutral-600 dark:text-neutral-400">With an API key, or by uploading the payments report you export from Razorpay.</span>
+            </div>
+          ) : !editingKeys && status.keyId ? (
             <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-neutral-200/80 bg-neutral-50/60 px-4 py-3 dark:border-white/[0.07] dark:bg-white/[0.02]">
               <div className="flex items-center gap-3">
                 <KeyRound className="h-4 w-4 text-neutral-400" />
@@ -244,15 +306,35 @@ export function RazorpayIntegrationCard({ initial }: { initial: Status }) {
                   <CheckCircle2 className="h-4 w-4" />
                   Verify &amp; connect
                 </Button>
-                {canToggle && (
-                  <Button type="button" variant="ghost" onClick={() => setEditingKeys(false)}>
-                    Cancel
-                  </Button>
-                )}
+                <Button type="button" variant="ghost" onClick={() => setEditingKeys(false)}>
+                  Cancel
+                </Button>
                 <span className="text-xs text-neutral-500">Checked with Razorpay before anything is saved.</span>
               </div>
+              <p className="text-xs text-neutral-500">
+                No API access?{" "}
+                <button type="button" onClick={() => choose("file")} className="font-medium text-brand-600 hover:underline dark:text-brand-400">
+                  Upload exported reports instead
+                </button>
+              </p>
             </form>
           )}
+
+          <ConnectMethodModal
+            open={chooserOpen}
+            onClose={() => setChooserOpen(false)}
+            gateway="Razorpay"
+            apiNote="a Key ID and Key Secret from Razorpay's dashboard"
+            onChoose={choose}
+          />
+          <ImportReportDialog
+            open={importOpen}
+            onClose={() => setImportOpen(false)}
+            provider="razorpay"
+            gateway="Razorpay"
+            howTo={HOW_TO_EXPORT}
+            onImported={() => void reloadStatus()}
+          />
 
           {status.connected && (
             <div className="rounded-xl border border-neutral-200/80 px-4 py-3 dark:border-white/[0.07]">
@@ -307,29 +389,39 @@ export function RazorpayIntegrationCard({ initial }: { initial: Status }) {
           </ul>
         </div>
 
-        <aside className="rounded-xl bg-neutral-50 p-4 text-sm dark:bg-white/[0.03]">
-          <p className="flex items-center gap-2 font-medium text-neutral-900 dark:text-neutral-100">
-            <ShieldCheck className="h-4 w-4 text-emerald-500" />
-            Where to get the keys
-          </p>
-          <ol className="mt-2 list-decimal space-y-1 pl-4 text-neutral-600 dark:text-neutral-400">
-            <li>Razorpay Dashboard → Account &amp; Settings → API Keys.</li>
-            <li>Generate a key in Live mode (Test mode for trying it out).</li>
-            <li>Paste the Key ID and Key Secret here.</li>
-          </ol>
-          <p className="mt-3 text-xs text-neutral-500">
-            The app only reads payments — it can&apos;t refund, capture or move money. The secret is encrypted before
-            it&apos;s stored and is never shown again.
-          </p>
-          <a
-            href="https://dashboard.razorpay.com/app/website-app-settings/api-keys"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-brand-600 hover:text-brand-500 dark:text-brand-400"
-          >
-            Open Razorpay API keys <ExternalLink className="h-3 w-3" />
-          </a>
-        </aside>
+        {status.mode === "file" ? (
+          <aside className="rounded-xl bg-neutral-50 p-4 text-sm text-neutral-600 dark:bg-white/[0.03] dark:text-neutral-400">
+            <p className="mb-2 flex items-center gap-2 font-medium text-neutral-900 dark:text-neutral-100">
+              <ShieldCheck className="h-4 w-4 text-emerald-500" />
+              Exporting the report
+            </p>
+            {HOW_TO_EXPORT}
+          </aside>
+        ) : (
+          <aside className="rounded-xl bg-neutral-50 p-4 text-sm dark:bg-white/[0.03]">
+            <p className="flex items-center gap-2 font-medium text-neutral-900 dark:text-neutral-100">
+              <ShieldCheck className="h-4 w-4 text-emerald-500" />
+              Where to get the keys
+            </p>
+            <ol className="mt-2 list-decimal space-y-1 pl-4 text-neutral-600 dark:text-neutral-400">
+              <li>Razorpay Dashboard → Account &amp; Settings → API Keys.</li>
+              <li>Generate a key in Live mode (Test mode for trying it out).</li>
+              <li>Paste the Key ID and Key Secret here.</li>
+            </ol>
+            <p className="mt-3 text-xs text-neutral-500">
+              The app only reads payments — it can&apos;t refund, capture or move money. The secret is encrypted before
+              it&apos;s stored and is never shown again.
+            </p>
+            <a
+              href="https://dashboard.razorpay.com/app/website-app-settings/api-keys"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-brand-600 hover:text-brand-500 dark:text-brand-400"
+            >
+              Open Razorpay API keys <ExternalLink className="h-3 w-3" />
+            </a>
+          </aside>
+        )}
       </CardBody>
     </Card>
   );

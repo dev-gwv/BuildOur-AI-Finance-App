@@ -6,24 +6,10 @@ import { ApiError, withApiErrors } from "@/server/errors";
 import { requireAdmin, requireUser } from "@/server/session";
 import { audit } from "@/server/audit";
 import { guardWrite } from "@/server/services/common";
-import { sealSecret, openSecret } from "@/lib/secretBox";
-import { RAZORPAY_PROVIDER, RazorpayError, maskKeyId, testRazorpayCredentials } from "@/lib/integrations/razorpay";
+import { sealSecret } from "@/lib/secretBox";
+import { RAZORPAY_PROVIDER, RazorpayError, maskKeyId, razorpayStatus, testRazorpayCredentials } from "@/lib/integrations/razorpay";
 
-async function status() {
-  const row = await prisma.integration.findUnique({ where: { provider: RAZORPAY_PROVIDER } });
-  const secretOpens = row?.secretEnc ? openSecret(row.secretEnc) !== null : false;
-  return {
-    enabled: row?.enabled ?? false,
-    connected: Boolean(row?.enabled && row.keyId && secretOpens),
-    hasKeys: Boolean(row?.keyId && row?.secretEnc),
-    // The secret couldn't be decrypted — AUTH_SECRET changed since it was saved.
-    needsReentry: Boolean(row?.secretEnc && !secretOpens),
-    keyId: maskKeyId(row?.keyId ?? null),
-    mode: row?.keyId?.startsWith("rzp_test_") ? "test" : row?.keyId ? "live" : null,
-    connectedAt: row?.connectedAt ?? null,
-    lastError: row?.lastError ?? null,
-  };
-}
+const status = razorpayStatus;
 
 /** Whether Razorpay is connected. Never returns the secret. */
 export const GET = withApiErrors(async () => {

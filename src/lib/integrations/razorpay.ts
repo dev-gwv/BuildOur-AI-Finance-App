@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { openSecret } from "@/lib/secretBox";
 import { normalizeRazorpayPayment, type RawPayment, type RazorpayPayment } from "./razorpayPayment";
+import { importStats, storedPayment, storedPaymentsBetween } from "./storedPayments";
 
 export type { RazorpayPayment };
 export { matchRazorpayPayment } from "./razorpayPayment";
@@ -47,16 +48,23 @@ async function request<T>(path: string, keyId: string, keySecret: string): Promi
   return (await res.json()) as T;
 }
 
-/** The stored credentials, when the integration is switched on and the secret opens. */
+/** The stored credentials, when the integration is switched on, by API key, and the secret opens. */
 export async function getRazorpayCredentials(): Promise<{ keyId: string; keySecret: string } | null> {
   const row = await prisma.integration.findUnique({ where: { provider: RAZORPAY_PROVIDER } });
-  if (!row?.enabled || !row.keyId || !row.secretEnc) return null;
+  if (!row?.enabled || row.mode === "file" || !row.keyId || !row.secretEnc) return null;
   const keySecret = openSecret(row.secretEnc);
   return keySecret ? { keyId: row.keyId, keySecret } : null;
 }
 
+/** Where Razorpay payments come from: its API, uploaded reports, or nowhere yet. */
+export async function razorpaySource(): Promise<"api" | "file" | null> {
+  const row = await prisma.integration.findUnique({ where: { provider: RAZORPAY_PROVIDER }, select: { enabled: true, mode: true } });
+  if (row?.enabled && row.mode === "file") return "file";
+  return (await getRazorpayCredentials()) ? "api" : null;
+}
+
 export async function isRazorpayConnected(): Promise<boolean> {
-  return (await getRazorpayCredentials()) !== null;
+  return (await razorpaySource()) !== null;
 }
 
 /** Throws RazorpayError if the keys don't work. Used before saving them. */
@@ -66,6 +74,11 @@ export async function testRazorpayCredentials(keyId: string, keySecret: string):
 
 export async function fetchRazorpayPayment(paymentId: string): Promise<RazorpayPayment> {
   if (!/^pay_[A-Za-z0-9]{14}$/.test(paymentId)) throw new RazorpayError("That isn't a Razorpay payment ID (pay_ + 14 characters)", 400);
+  if ((await razorpaySource()) === "file") {
+    const stored = await storedPayment(RAZORPAY_PROVIDER, paymentId);
+    if (!stored) throw new RazorpayError("That payment isn't in the uploaded Razorpay reports — upload a newer report", 404);
+    return stored;
+  }
   const creds = await getRazorpayCredentials();
   if (!creds) throw new RazorpayError("Razorpay isn't connected — turn it on in Settings → Integrations", 409);
   return normalizeRazorpayPayment(await request<RawPayment>(`/payments/${paymentId}`, creds.keyId, creds.keySecret));
@@ -76,6 +89,7 @@ export async function fetchRazorpayPayment(paymentId: string): Promise<RazorpayP
  * pages of them, up to `max`.
  */
 export async function listRazorpayPaymentsBetween(fromDay: string, toDay: string, max = 2000): Promise<RazorpayPayment[]> {
+  if ((await razorpaySource()) === "file") return storedPaymentsBetween(RAZORPAY_PROVIDER, fromDay, toDay, max);
   const creds = await getRazorpayCredentials();
   if (!creds) throw new RazorpayError("Razorpay isn't connected — turn it on in Settings → Integrations", 409);
   // IST midnight is 18:30 UTC the day before.
@@ -97,6 +111,27 @@ export async function listRazorpayPaymentsBetween(fromDay: string, toDay: string
 /** A YYYY-MM-DD day moved by whole days. */
 export const shiftDay = (day: string, days: number) =>
   new Date(Date.parse(`${day}T00:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10);
+
+/** What the settings card and payment form may know: never the secret. */
+export async function razorpayStatus() {
+  const row = await prisma.integration.findUnique({ where: { provider: RAZORPAY_PROVIDER } });
+  const secretOpens = row?.secretEnc ? openSecret(row.secretEnc) !== null : false;
+  const mode = (row?.mode === "file" ? "file" : "api") as "api" | "file";
+  const imports = await importStats(RAZORPAY_PROVIDER);
+  return {
+    mode,
+    imports,
+    enabled: row?.enabled ?? false,
+    connected: Boolean(row?.enabled && (mode === "file" ? imports.count > 0 : row.keyId && secretOpens)),
+    hasKeys: Boolean(row?.keyId && row?.secretEnc),
+    // The secret couldn't be decrypted — AUTH_SECRET changed since it was saved.
+    needsReentry: Boolean(row?.secretEnc && !secretOpens),
+    keyId: maskKeyId(row?.keyId ?? null),
+    keyMode: (row?.keyId?.startsWith("rzp_test_") ? "test" : row?.keyId ? "live" : null) as "test" | "live" | null,
+    connectedAt: row?.connectedAt?.toISOString() ?? null,
+    lastError: row?.lastError ?? null,
+  };
+}
 
 export function maskKeyId(keyId: string | null): string | null {
   if (!keyId) return null;

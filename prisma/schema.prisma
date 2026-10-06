@@ -330,6 +330,9 @@ model SheetSyncFailure {
 model Integration {
   provider    String    @id
   enabled     Boolean   @default(false)
+  /// How payments come in: "api" (live, with keys) or "file" (exported
+  /// reports uploaded by hand, kept as GatewayTransaction rows).
+  mode        String    @default("api")
   /// Public half of the credentials (Razorpay "rzp_live_..."), shown masked.
   keyId       String?
   secretEnc   String?
@@ -461,4 +464,37 @@ model MailAccount {
   createdAt  DateTime   @default(now())
   updatedAt  DateTime   @updatedAt
   businesses Business[]
+}
+
+/// A payment read from a gateway's exported report (Razorpay, TagMango), for
+/// an integration connected by uploading reports instead of an API key. The
+/// pickers and the Razorpay fee lookups read these the way they'd read the API.
+/// Re-uploading a report updates rows by the gateway's own id, never duplicates.
+model GatewayTransaction {
+  id           String   @id @default(cuid())
+  /// "razorpay" | "tagmango"
+  provider     String
+  /// The gateway's id for it: Razorpay "pay_...", TagMango's transaction id.
+  externalId   String
+  /// "captured" (money received) or "refunded".
+  status       String
+  /// What the customer paid, in rupees.
+  amount       Float
+  /// The gateway's commission, excluding the GST on it, and that GST.
+  feeAmount    Float    @default(0)
+  feeGstAmount Float    @default(0)
+  /// GST inside `amount`, when the report states it.
+  gstAmount    Float?
+  method       String?
+  paidAt       DateTime
+  name         String?
+  email        String?
+  contact      String?
+  vpa          String?
+  description  String?
+  importedAt   DateTime @default(now())
+  importedById String?
+
+  @@unique([provider, externalId])
+  @@index([provider, paidAt])
 }
