@@ -11,7 +11,7 @@ import { SendInvoiceEmail } from "@/components/SendInvoiceEmail";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Badge } from "@/components/ui/Badge";
 import { formatDate } from "@/lib/format";
-import { invoiceBalance } from "@/lib/invoiceLines";
+import { computeInvoice, invoiceBalance } from "@/lib/invoiceLines";
 import { isInterStateSupply } from "@/lib/gstState";
 import { creditNoteTax } from "@/server/services/creditNotes";
 import { CreditNotesPanel } from "@/components/invoices/CreditNotesPanel";
@@ -51,6 +51,14 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
   const locked = Boolean(lock && invoice.invoiceDate.getTime() <= lock.getTime());
   const gstRegistered = invoice.brand === "GRATEFUL";
   const biggestLine = [...invoice.lines].sort((a, b) => b.grossAmount - a.grossAmount)[0];
+  // Share of what the customer pays that isn't GST, from the invoice's own
+  // lines (they can carry different rates), for the payment breakdown.
+  const lineTotals = invoice.lines.length ? computeInvoice(invoice.lines, { isInterState: false, gstRegistered }) : null;
+  const taxableShare = !gstRegistered
+    ? 1
+    : lineTotals && lineTotals.total > 0
+      ? lineTotals.subTotal / lineTotals.total
+      : 1 / (1 + invoice.gstPercent / 100);
   const cancelBlocked = cancelled
     ? null
     : invoice.creditNotes.length
@@ -161,6 +169,7 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
             creditNotes={invoice.creditNotes}
             status={invoice.status}
             payments={invoice.payments}
+            taxableShare={taxableShare}
             razorpayRates={{
               feePercent: settings?.razorpayFeePercent ?? 2,
               feeGstPercent: settings?.razorpayFeeGstPercent ?? 18,

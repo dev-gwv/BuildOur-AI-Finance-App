@@ -71,15 +71,6 @@ export async function fetchRazorpayPayment(paymentId: string): Promise<RazorpayP
   return normalizeRazorpayPayment(await request<RawPayment>(`/payments/${paymentId}`, creds.keyId, creds.keySecret));
 }
 
-/** Captured payments from the last `days` days, newest first. */
-export async function listRecentRazorpayPayments(days = 14, count = 50): Promise<RazorpayPayment[]> {
-  const creds = await getRazorpayCredentials();
-  if (!creds) throw new RazorpayError("Razorpay isn't connected — turn it on in Settings → Integrations", 409);
-  const from = Math.floor(Date.now() / 1000) - days * 86_400;
-  const page = await request<{ items: RawPayment[] }>(`/payments?from=${from}&count=${count}`, creds.keyId, creds.keySecret);
-  return page.items.filter((p) => p.status === "captured").map(normalizeRazorpayPayment);
-}
-
 /**
  * Captured payments made between two dates (YYYY-MM-DD, IST, inclusive), all
  * pages of them, up to `max`.

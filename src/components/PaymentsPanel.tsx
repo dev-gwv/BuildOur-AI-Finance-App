@@ -3,7 +3,6 @@
 import { todayISO } from "@/lib/dates";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, type ChangeEvent, type DragEvent, type FormEvent } from "react";
-import Link from "next/link";
 import {
   BadgeIndianRupee,
   Camera,
@@ -24,7 +23,7 @@ import { PAYMENT_METHODS, parsePaymentScreenshotText } from "@/lib/parsePaymentS
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { Card, CardBody, CardHeader } from "@/components/ui/Card";
-import { Modal } from "@/components/ui/Modal";
+import { GatewayPicker } from "@/components/payments/GatewayPicker";
 import { Field, Input, Select, useFieldErrors } from "@/components/ui/Field";
 import { Combobox } from "@/components/ui/Combobox";
 import { RefundCard } from "@/components/invoices/RefundCard";
@@ -95,6 +94,7 @@ export function PaymentsPanel({
   total,
   payments,
   razorpayRates = { feePercent: 2, feeGstPercent: 18 },
+  taxableShare = 1,
   bajaj,
   creditNotes = [],
   status = "ISSUED",
@@ -108,6 +108,8 @@ export function PaymentsPanel({
   status?: string;
   /** Razorpay's commission and the GST on it, from Invoice Settings. */
   razorpayRates?: { feePercent: number; feeGstPercent: number };
+  /** Share of a payment that isn't GST (1 when the business charges none). */
+  taxableShare?: number;
   /** Set on a Bajaj Finance sale: what Bajaj finances, and its DO. */
   bajaj?: { financedAmount: number; doId: string | null } | null;
 }) {
@@ -146,8 +148,6 @@ export function PaymentsPanel({
   const [verify, setVerify] = useState<VerifyState>({ state: "idle" });
   const [overrideFees, setOverrideFees] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
-  const [recent, setRecent] = useState<RazorpayPick[] | null>(null);
-  const [recentError, setRecentError] = useState<string | null>(null);
   /** Several Razorpay payments of the amount around the date: the user says which. */
   const [candidates, setCandidates] = useState<RazorpayPick[] | null>(null);
   /** The amount|date last looked up in Razorpay, so each is asked once. */
@@ -187,6 +187,10 @@ export function PaymentsPanel({
         ? autoFee.feeGstAmount
         : round2(feeValue * (razorpayRates.feeGstPercent / 100));
   const landsInBank = round2(cashValue - feeValue - feeGstValue);
+  // GST is inside the whole amount paid, and Razorpay's cut comes off that
+  // whole amount too (₹5,000 → ₹762.71 GST, ₹123.90 Razorpay, ₹4,113.39 left).
+  const gstInside = round2(amountValue * (1 - taxableShare));
+  const exGstAndCharges = round2(amountValue - gstInside - feeValue - feeGstValue);
   const effectiveFeePercent = cashValue > 0 ? round2((feeValue / cashValue) * 100) : razorpayRates.feePercent;
 
   // Object URLs leak until revoked, and one is created per screenshot tried.
@@ -351,21 +355,8 @@ export function PaymentsPanel({
     applyRazorpay(p, true);
   }
 
-  async function openPicker() {
-    setPickerOpen((v) => !v);
-    if (recent) return;
-    setRecentError(null);
-    try {
-      const res = await fetch("/api/integrations/razorpay/payments?recent=1");
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        setRecentError(data.error ?? "Couldn't load payments from Razorpay");
-        return;
-      }
-      setRecent(data.payments ?? []);
-    } catch {
-      setRecentError("Couldn't reach Razorpay — check your connection");
-    }
+  function openPicker() {
+    setPickerOpen(true);
   }
 
   // Whether Razorpay's API is connected, asked once when the form first opens.
@@ -777,56 +768,18 @@ export function PaymentsPanel({
               </p>
               {rzpConnected && (
                 <div className="relative mt-2">
-                  <Button type="button" size="sm" variant="secondary" onClick={() => void openPicker()}>
+                  <Button type="button" size="sm" variant="secondary" onClick={openPicker}>
                     <ListChecks className="h-3.5 w-3.5" />
                     Pick from Razorpay
                   </Button>
-                  <Modal
+                  <GatewayPicker
                     open={pickerOpen}
                     onClose={() => setPickerOpen(false)}
-                    title="Pick a Razorpay payment"
-                    description="Captured payments from the last 14 days. Picking one fills in the exact amount, date and fee."
-                  >
-                    <div className="-mx-2">
-                      {recentError ? (
-                        <p className="px-3 py-3 text-xs text-red-600 dark:text-red-400">{recentError}</p>
-                      ) : recent === null ? (
-                        <p className="flex items-center gap-2 px-3 py-3 text-xs text-neutral-500">
-                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                          Loading the last 14 days from Razorpay…
-                        </p>
-                      ) : recent.length === 0 ? (
-                        <p className="px-3 py-3 text-xs text-neutral-500">No captured payments in the last 14 days.</p>
-                      ) : (
-                        recent.map((p) => {
-                          const taken = Boolean(p.recordedOn) && editing?.gatewayRef !== p.id;
-                          return (
-                            <button
-                              key={p.id}
-                              type="button"
-                              disabled={taken}
-                              onClick={() => applyRazorpay(p)}
-                              className="flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2 text-left hover:bg-neutral-100 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent dark:hover:bg-white/[0.06]"
-                            >
-                              <span className="min-w-0">
-                                <span className="block truncate text-sm font-medium text-neutral-900 dark:text-neutral-100">
-                                  {p.vpa || p.contact || p.email || p.id}
-                                </span>
-                                <span className="block truncate text-xs text-neutral-500 dark:text-neutral-400">
-                                  {formatDate(p.paidOn)}
-                                  {p.method && ` · ${p.method.toUpperCase()}`}
-                                  {taken ? ` · on ${p.recordedOn!.invoiceNumber}` : ` · ${p.id}`}
-                                </span>
-                              </span>
-                              <span className="shrink-0 text-sm font-semibold tabular-nums text-neutral-900 dark:text-neutral-100">
-                                {formatCurrency(p.amount)}
-                              </span>
-                            </button>
-                          );
-                        })
-                      )}
-                    </div>
-                  </Modal>
+                    gateway="Razorpay"
+                    endpoint="/api/integrations/razorpay/payments"
+                    onPick={(p) => applyRazorpay(p)}
+                    currentRef={editing?.gatewayRef}
+                  />
                 </div>
               )}
               {overpaidBy !== null && (
@@ -1134,6 +1087,18 @@ export function PaymentsPanel({
                         {formatCurrency(landsInBank)}
                       </dd>
                     </div>
+                    {gstInside > 0 && (
+                      <>
+                        <div className="col-span-2 border-t border-neutral-100 pt-2 sm:col-span-2 dark:border-white/[0.06]">
+                          <dt className="text-neutral-500 dark:text-neutral-400">GST inside the amount paid</dt>
+                          <dd className="font-semibold tabular-nums text-amber-700 dark:text-amber-400">−{formatCurrency(gstInside)}</dd>
+                        </div>
+                        <div className="col-span-2 border-t border-neutral-100 pt-2 sm:col-span-2 dark:border-white/[0.06]">
+                          <dt className="text-neutral-500 dark:text-neutral-400">Excl. GST &amp; charges</dt>
+                          <dd className="font-semibold tabular-nums text-neutral-900 dark:text-neutral-100">{formatCurrency(exGstAndCharges)}</dd>
+                        </div>
+                      </>
+                    )}
                   </dl>
                   {!feesExact && (feeInput !== null || feeGstInput !== null) && (
                     <button

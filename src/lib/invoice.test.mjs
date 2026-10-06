@@ -12,7 +12,7 @@ import { invoiceEmailHtml, invoiceEmailSubject, invoiceEmailText } from "./invoi
 import { guessStateCodeFromAddress, isInterStateSupply, placeOfSupplyFromGstin, stateCodeFromGstin, stateCodeFromPlaceOfSupply } from "./gstState.ts";
 import { formatInvoiceNumber, fyLabel, longestNumberFor, previewInvoiceNumber, resolvePrefix, seqInSeries, slugify } from "./invoiceNumbering.ts";
 import { computeInvoice, invoiceBalance, invoiceSummaryFields } from "./invoiceLines.ts";
-import { calculateCostBreakup, calculateGatewayFee } from "./calc.ts";
+import { calculateBreakup, calculateCostBreakup, calculateGatewayFee } from "./calc.ts";
 import { detectGateway } from "./parsePaymentScreenshot.ts";
 import { expenseSheetBody, paymentReceiptRow } from "./sheetRows.ts";
 import { matchRazorpayPayment, normalizeRazorpayPayment } from "./integrations/razorpayPayment.ts";
@@ -343,14 +343,26 @@ const row = paymentReceiptRow(
 );
 assert.equal(row.date, "2026-09-11");
 assert.equal(row.amount, 118000, "the sheet's 'including GST & charges' is what the customer paid");
-assert.equal(row.amountExGst, 97640, "excluding: minus gateway fee + its GST, then GST backed out");
+assert.equal(row.amountExGst, 97215.2, "excluding: GST backed out of the whole amount, then the gateway fee + its GST off it");
+
+// --- The client's worked example: ₹5,000 through Razorpay at 2.1% ---
+const fiveK = paymentReceiptRow(
+  { id: "p5", amount: 5000, paidOn: new Date("2026-10-01T00:00:00Z"), method: "Razorpay", note: null, gateway: "Razorpay", feeAmount: 105, feeGstAmount: 18.9 },
+  { brand: "GRATEFUL", customerName: "Example", invoiceNumber: "IPC-INV-1", gstPercent: 18 }
+);
+assert.equal(fiveK.amountExCharges, 4876.1, "₹5,000 less Razorpay's ₹123.90");
+assert.equal(fiveK.amountExGst, 4113.39, "₹5,000 − ₹762.71 GST − ₹123.90 Razorpay");
+const entry5k = calculateBreakup({ grossAmount: 5000, gatewayChargePercent: 2.1, gstPercent: 18 });
+assert.equal(entry5k.gstAmount, 762.71, "money-in entry: GST inside the gross");
+assert.equal(entry5k.gatewayChargeAmount, 105, "charge on the gross");
+assert.equal(entry5k.netAmount, 4132.29, "net = gross − GST − charge");
 assert.match(row.remarks, /PhonePe · via Razorpay · Razorpay fee ₹2,784\.8 · IWC-INV-001001/);
 const mulberryRow = paymentReceiptRow(
   { id: "p2", amount: 44000, paidOn: new Date("2026-09-12T00:00:00Z"), method: "GPay", note: null, gateway: null, feeAmount: 0, feeGstAmount: 0 },
   { brand: "MULBERRY", venture: null, customerName: "Aman", invoiceNumber: "INV-001121", gstPercent: 18 }
 );
 assert.equal(mulberryRow.amountExGst, 44000, "Mulberry charges no GST");
-const expenseBase = { id: "e1", date: new Date("2026-09-13T00:00:00Z"), description: null, grossAmount: 1180, netAmount: 1000, category: { name: "Rent" }, gateway: null };
+const expenseBase = { id: "e1", date: new Date("2026-09-13T00:00:00Z"), description: null, grossAmount: 1180, gatewayChargeAmount: 0, netAmount: 1000, category: { name: "Rent" }, gateway: null };
 assert.equal(expenseSheetBody({ ...expenseBase, direction: "OUT" }).action, "upsertExpense", "money out goes to expenses");
 assert.equal(expenseSheetBody({ ...expenseBase, direction: "IN" }).action, "upsert", "money in goes to receipts");
 

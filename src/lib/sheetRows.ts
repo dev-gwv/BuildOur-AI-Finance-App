@@ -10,7 +10,10 @@ export type ReceiptRow = {
   amount: number;
   /** For the ventures' "Excluding Payment Gateway Charges" column: what reached the bank. */
   amountExCharges: number;
-  /** For the ventures' "Excluding Gst & Charges" column; ignored where a workbook has none. */
+  /**
+   * For the ventures' "Excluding Gst & Charges" column; ignored where a workbook
+   * has none. GST and the gateway's charges both come off the whole amount.
+   */
   amountExGst: number;
   remarks: string;
 };
@@ -84,15 +87,20 @@ export function paymentReceiptRow(payment: PaymentForSheet, invoice: InvoiceForS
   const fees = payment.feeAmount + payment.feeGstAmount;
   const tds = payment.tdsAmount ?? 0;
   // TDS is still income (paid to the government on our behalf), so only the
-  // gateway's cut is taken off before the tax is backed out.
+  // gateway's cut comes off what's received.
   const settled = payment.amount - fees;
+  // GST is inside the whole amount the customer paid, and the gateway's cut
+  // comes off that whole amount too. A Bajaj disbursement is the exception:
+  // its GST is reckoned on the net disbursement that reached the bank.
+  const bajaj = payment.method === "Bajaj Finance disbursement";
+  const amountExGst = bajaj ? exGst(settled) : exGst(payment.amount) - fees;
   return {
     id: payment.id,
     date: isoDate(payment.paidOn),
     client: invoice.customerName,
     amount: payment.amount,
     amountExCharges: round2(settled),
-    amountExGst: round2(exGst(settled)),
+    amountExGst: round2(amountExGst),
     remarks: [
       payment.method,
       payment.gateway && payment.gateway !== payment.method ? `via ${payment.gateway}` : null,
@@ -112,6 +120,7 @@ type ExpenseForSheet = {
   direction: string;
   description: string | null;
   grossAmount: number;
+  gatewayChargeAmount: number;
   netAmount: number;
   category: { name: string };
   gateway: { name: string } | null;
@@ -136,7 +145,7 @@ export function expenseSheetBody(expense: ExpenseForSheet): SheetBody {
     date: isoDate(expense.date),
     client: label,
     amount: expense.grossAmount,
-    amountExCharges: expense.grossAmount,
+    amountExCharges: round2(expense.grossAmount - expense.gatewayChargeAmount),
     amountExGst: expense.netAmount,
     remarks: [expense.gateway?.name, expense.category.name].filter(Boolean).join(" · "),
   };

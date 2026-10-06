@@ -7,14 +7,13 @@ import {
   RazorpayError,
   fetchRazorpayPayment,
   listRazorpayPaymentsBetween,
-  listRecentRazorpayPayments,
   matchRazorpayPayment,
   shiftDay,
 } from "@/lib/integrations/razorpay";
 
 /**
  * GET ?id=pay_xxx                 -> that payment, with its exact fee and GST
- * GET ?recent=1                   -> captured payments from the last 14 days (or ?days=N, max 60)
+ * GET ?recent=1                   -> every captured payment from the last 14 days (or ?days=N, max 60)
  * GET ?amount=4999&date=YYYY-MM-DD -> payments of that amount within a day of that date:
  *                                    `match` when exactly one fits, else every `candidate`
  *     (&exclude=<payment id> lets a payment being edited keep its own pay_ id)
@@ -48,9 +47,12 @@ export const GET = withApiErrors(async (req: NextRequest) => {
       return NextResponse.json({ match: match ? { ...match, recordedOn: null } : null, candidates });
     }
 
+    // Every page of the period, newest first, so a long period isn't cut short.
+    const days = Math.min(60, Math.max(1, Number(searchParams.get("days") ?? 14) || 14));
+    const today = new Date(Date.now() + 330 * 60_000).toISOString().slice(0, 10);
     const payments = id
       ? [await fetchRazorpayPayment(id)]
-      : await listRecentRazorpayPayments(Math.min(60, Math.max(1, Number(searchParams.get("days") ?? 14) || 14)));
+      : (await listRazorpayPaymentsBetween(shiftDay(today, -(days - 1)), today, 2000)).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 
     const recorded = await prisma.payment.findMany({
       where: { gatewayRef: { in: payments.map((p) => p.id) } },

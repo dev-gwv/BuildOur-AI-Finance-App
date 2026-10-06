@@ -487,10 +487,10 @@ export function EntryForm({ businesses, expense }: { businesses: EntryBusiness[]
               <dd className="text-right tabular-nums">{formatCurrency(Number(grossAmount) || 0)}</dd>
               <dt>Gateway charge ({gatewayChargePercent}%)</dt>
               <dd className="text-right tabular-nums text-amber-700 dark:text-amber-400">− {formatCurrency(breakup.gatewayChargeAmount)}</dd>
-              <dt>After gateway</dt>
-              <dd className="text-right tabular-nums">{formatCurrency(breakup.afterGatewayAmount)}</dd>
-              <dt>GST ({gstPercent || 0}%)</dt>
+              <dt>GST ({gstPercent || 0}%, included in the gross)</dt>
               <dd className="text-right tabular-nums text-amber-700 dark:text-amber-400">− {formatCurrency(breakup.gstAmount)}</dd>
+              <dt className="text-neutral-500 dark:text-neutral-400">Reached the bank</dt>
+              <dd className="text-right tabular-nums text-neutral-500 dark:text-neutral-400">{formatCurrency(breakup.afterGatewayAmount)}</dd>
               <dt className="border-t border-neutral-100 pt-2 font-semibold text-neutral-900 dark:border-white/[0.06] dark:text-neutral-100">Net revenue</dt>
               <dd className="border-t border-neutral-100 pt-2 text-right tabular-nums font-semibold text-emerald-600 dark:border-white/[0.06] dark:text-emerald-400">
                 {formatCurrency(breakup.netAmount)}

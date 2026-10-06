@@ -15,7 +15,13 @@ function round2(n: number): number {
   return Math.round((n + Number.EPSILON) * 100) / 100;
 }
 
-// Sequential breakup: gross -> minus gateway charge -> minus GST -> net revenue.
+/**
+ * Money received: the GST is inside the gross (it was charged to the customer
+ * as part of it), and the gateway's charge is a percentage of the gross too.
+ * Both come off the whole amount: ₹5,000 at 18% GST and a 2.1% charge is
+ * ₹762.71 GST + ₹105 charge, ₹4,132.29 net. `afterGatewayAmount` is what
+ * reached the bank.
+ */
 export function calculateBreakup({
   grossAmount,
   gatewayChargePercent,
@@ -23,8 +29,8 @@ export function calculateBreakup({
 }: BreakupInput): BreakupResult {
   const gatewayChargeAmount = round2(grossAmount * (gatewayChargePercent / 100));
   const afterGatewayAmount = round2(grossAmount - gatewayChargeAmount);
-  const gstAmount = round2(afterGatewayAmount * (gstPercent / 100));
-  const netAmount = round2(afterGatewayAmount - gstAmount);
+  const gstAmount = round2(grossAmount - grossAmount / (1 + gstPercent / 100));
+  const netAmount = round2(grossAmount - gstAmount - gatewayChargeAmount);
 
   return { gatewayChargeAmount, afterGatewayAmount, gstAmount, netAmount };
 }
