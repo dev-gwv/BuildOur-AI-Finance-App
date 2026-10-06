@@ -1,7 +1,9 @@
 import Link from "next/link";
 import { Paperclip, Pencil, Plus, Receipt, Search } from "lucide-react";
 import { prisma } from "@/lib/prisma";
-import { requirePageUser } from "@/server/session";
+import { isAdmin, requirePageUser } from "@/server/session";
+import { countStaleMoneyIn } from "@/server/services/entries";
+import { RecalculateMoneyIn } from "@/components/money/RecalculateMoneyIn";
 import { getScope, scopeWhere } from "@/server/scope";
 import { DeleteButton } from "@/components/DeleteButton";
 import { PageHeader } from "@/components/ui/PageHeader";
@@ -24,6 +26,8 @@ export default async function MoneyPage({
   const { q, direction: directionParam } = await searchParams;
   const direction = directionParam === "IN" || directionParam === "OUT" ? directionParam : null;
   const user = await requirePageUser();
+  // Entries saved before GST was taken from inside the gross: admins can correct them in one go.
+  const staleMoneyIn = isAdmin(user) ? await countStaleMoneyIn() : 0;
   const scope = await getScope(user);
   const showBusiness = !scope.current;
 
@@ -82,6 +86,8 @@ export default async function MoneyPage({
           </Link>
         }
       />
+
+      {staleMoneyIn > 0 && <RecalculateMoneyIn count={staleMoneyIn} />}
 
       <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         <Segmented

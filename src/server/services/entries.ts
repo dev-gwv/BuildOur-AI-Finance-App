@@ -303,3 +303,57 @@ export async function deleteEntry(user: SessionUser, entryId: string, req: Reque
   });
   after(() => unsyncExpense(entry.businessId, entry.direction, entryId));
 }
+
+// --- Money-in figures from before GST was taken from inside the gross --------
+
+const moved = (a: number, b: number) => Math.abs(a - b) > 0.005;
+
+/**
+ * Money-in entries whose stored GST and net predate the rule that GST is
+ * inside the gross and the gateway's charge comes off the whole amount. They
+ * were saved with GST added on top of what was left after the gateway, so
+ * their net is too low. Found by recomputing, so each is corrected once.
+ */
+async function staleMoneyIn() {
+  const rows = await prisma.expense.findMany({
+    where: { direction: "IN" },
+    select: { id: true, businessId: true, grossAmount: true, gatewayChargePercent: true, gstPercent: true, gatewayChargeAmount: true, gstAmount: true, netAmount: true },
+  });
+  return rows
+    .map((row) => ({ row, next: calculateBreakup({ grossAmount: row.grossAmount, gatewayChargePercent: row.gatewayChargePercent, gstPercent: row.gstPercent }) }))
+    .filter(({ row, next }) => moved(row.netAmount, next.netAmount) || moved(row.gstAmount, next.gstAmount) || moved(row.gatewayChargeAmount, next.gatewayChargeAmount));
+}
+
+export async function countStaleMoneyIn(): Promise<number> {
+  return (await staleMoneyIn()).length;
+}
+
+/** Recomputes them all, records what changed, and rewrites their sheet rows. Admin only (the route checks). */
+export async function recalculateMoneyIn(admin: SessionUser, req: Request) {
+  await guardWrite(admin);
+  const stale = await staleMoneyIn();
+  if (stale.length === 0) return { updated: 0, netBefore: 0, netAfter: 0 };
+
+  await prisma.$transaction(
+    stale.map(({ row, next }) =>
+      prisma.expense.update({
+        where: { id: row.id },
+        data: { gatewayChargeAmount: next.gatewayChargeAmount, gstAmount: next.gstAmount, netAmount: next.netAmount },
+      })
+    )
+  );
+  const netBefore = stale.reduce((s, { row }) => s + row.netAmount, 0);
+  const netAfter = stale.reduce((s, { next }) => s + next.netAmount, 0);
+  await audit({
+    user: admin,
+    action: "entry.recalculate",
+    entityType: "entry",
+    entityId: "money-in",
+    summary: `Recalculated ${stale.length} money-in entr${stale.length === 1 ? "y" : "ies"} with GST inside the gross: net ${rupees(netBefore)} → ${rupees(netAfter)}`,
+    req,
+  });
+  after(async () => {
+    for (const { row } of stale) await syncExpense(row.id);
+  });
+  return { updated: stale.length, netBefore, netAfter };
+}
