@@ -16,6 +16,8 @@
  *   Mulberry Weddings   "MULBERRY"
  *   IPC Finance         "VENTURE"
  *   IWC Finance         "VENTURE"
+ *   IAA Bhavesh         "FUNNEL"
+ *   Fire Himeesh        "FUNNEL"
  *
  * Setup (once per workbook):
  *   1. In the sheet: Extensions -> Apps Script, paste this in.
@@ -41,6 +43,9 @@ var SECRET = "CHANGE-ME";
  *                receipts in A-F and expenses in G-J, side by side:
  *                Date | Client Name | Payment Received | Excluding Payment Gateway Charges
  *                | Excluding Gst & Charges | Remarks || Date | Expenses | Incl Gst | Excluding Gst
+ *   "FUNNEL"   - IAA Bhavesh / Fire Himeesh: one tab per month, receipts in A-E
+ *                (Date | Client Name | Payment Received | Excluding Gst & Charges | Remarks),
+ *                expenses in F-I (Date | Expenses | Incl Gst | Excluding Gst).
  *   "MULBERRY" - Mulberry Weddings hisaab: one tab per month,
  *                (Receipts) Date | Client | Amount Received | Remarks, no expense sync.
  */
@@ -58,6 +63,17 @@ var LAYOUTS = {
     expenseColumns: ["date", "particular", "amount", "amountExGst"],
     expenseHeader: ["Date", "Expenses", "Incl Gst", "Excluding Gst"],
     singleTab: "", // one tab per month (see monthSheet)
+    newTabName: "{Month} {Year}",
+  },
+  FUNNEL: {
+    // Funnel sheets (IAA Bhavesh, Fire Himeesh): like VENTURE, minus the
+    // "Excluding Payment Gateway Charges" column. Receipts in A-E, expenses in F-I.
+    receiptColumns: ["date", "client", "amount", "amountExGst", "remarks"],
+    receiptHeader: ["Date", "Client Name", "Payment Received", "Excluding Gst & Charges", "Remarks"],
+    expenseFirstColumn: 6, // F
+    expenseColumns: ["date", "particular", "amount", "amountExGst"],
+    expenseHeader: ["Date", "Expenses", "Incl Gst", "Excluding Gst"],
+    singleTab: "",
     newTabName: "{Month} {Year}",
   },
   MULBERRY: {
