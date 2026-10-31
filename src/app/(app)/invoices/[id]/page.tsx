@@ -170,6 +170,7 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
             creditNotes={invoice.creditNotes}
             status={invoice.status}
             payments={invoice.payments}
+            invoiceTds={invoice.tdsAmount > 0 ? { amount: invoice.tdsAmount, section: invoice.tdsSection } : null}
             taxableShare={taxableShare}
             razorpayRates={{
               feePercent: settings?.razorpayFeePercent ?? 2,

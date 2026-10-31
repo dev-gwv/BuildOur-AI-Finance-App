@@ -106,6 +106,17 @@ export function invoiceSummaryFields(lines: LineInput[]): {
   };
 }
 
+// --- TDS -----------------------------------------------------------------------
+
+/**
+ * TDS the customer will deduct: the rate on the pre-GST subtotal (GST shown
+ * separately is left out of TDS). 0 when no rate is set.
+ */
+export function invoiceTds(subTotal: number, tdsPercent: number | null | undefined): number {
+  if (!tdsPercent || tdsPercent <= 0) return 0;
+  return round2((subTotal * tdsPercent) / 100);
+}
+
 // --- Balance --------------------------------------------------------------------
 
 export interface BalanceInput {
@@ -113,6 +124,8 @@ export interface BalanceInput {
   status: string;
   creditNotes: { grossAmount: number }[];
   payments: { amount: number; kind?: string | null; tdsAmount?: number | null }[];
+  /** TDS the invoice says the customer will deduct (Invoice.tdsAmount). */
+  tdsAmount?: number | null;
 }
 
 export interface Balance {
@@ -123,7 +136,13 @@ export interface Balance {
   received: number;
   refunded: number;
   tds: number;
-  /** Still to collect (never negative). */
+  /** TDS the invoice expects, shrunk in proportion by credit notes (0 if cancelled). */
+  tdsExpected: number;
+  /** Expected TDS not yet recorded on a payment. Part of `balance`. */
+  tdsPending: number;
+  /** What the customer still pays in money: balance less the TDS they'll deduct. */
+  cashDue: number;
+  /** Still to collect (never negative). TDS still to be deducted is included: it settles the invoice too. */
   balance: number;
   /** Paid more than is now owed, after a credit note: to hand back. */
   toRefund: number;
@@ -144,13 +163,19 @@ export function invoiceBalance(inv: BalanceInput): Balance {
   const net = cancelled ? 0 : round2(Math.max(0, inv.grossAmount - credited));
   const settledAmount = round2(received - refunded);
   const diff = round2(net - settledAmount);
+  const balance = Math.max(0, diff);
+  const tdsExpected = inv.grossAmount > 0 ? round2(((inv.tdsAmount ?? 0) * net) / inv.grossAmount) : 0;
+  const tdsPending = Math.min(balance, Math.max(0, round2(tdsExpected - tds)));
   return {
     net,
     credited,
     received,
     refunded,
     tds,
-    balance: Math.max(0, diff),
+    tdsExpected,
+    tdsPending,
+    cashDue: round2(balance - tdsPending),
+    balance,
     toRefund: Math.max(0, -diff),
     settled: diff <= 0.5,
     cancelled,

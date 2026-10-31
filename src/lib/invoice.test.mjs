@@ -11,7 +11,7 @@ import { PAYMENT_METHODS, parsePaymentScreenshotText } from "./parsePaymentScree
 import { invoiceEmailHtml, invoiceEmailSubject, invoiceEmailText } from "./invoiceEmail.ts";
 import { guessStateCodeFromAddress, isInterStateSupply, placeOfSupplyFromGstin, stateCodeFromGstin, stateCodeFromPlaceOfSupply } from "./gstState.ts";
 import { formatInvoiceNumber, fyLabel, longestNumberFor, previewInvoiceNumber, resolvePrefix, seqInSeries, slugify } from "./invoiceNumbering.ts";
-import { computeInvoice, invoiceBalance, invoiceSummaryFields } from "./invoiceLines.ts";
+import { computeInvoice, invoiceBalance, invoiceSummaryFields, invoiceTds } from "./invoiceLines.ts";
 import { calculateBreakup, calculateCostBreakup, calculateGatewayFee } from "./calc.ts";
 import { detectGateway } from "./parsePaymentScreenshot.ts";
 import { expenseSheetBody, paymentReceiptRow } from "./sheetRows.ts";
@@ -687,6 +687,22 @@ bal = invoiceBalance({ grossAmount: 118000, status: "ISSUED", creditNotes: [{ gr
 assert.ok(bal.settled && bal.toRefund === 0, "refund closes it");
 bal = invoiceBalance({ grossAmount: 118000, status: "CANCELLED", creditNotes: [], payments: [] });
 assert.ok(bal.cancelled && bal.net === 0 && bal.balance === 0, "a cancelled invoice owes nothing");
+
+// --- TDS set on the invoice (reference INV-002373: ₹1,65,000 + 18% IGST, 2% TDS) ---
+{
+  const sub = computeInvoice([{ description: "AI Implementation", hsnSac: "999259", qty: 1, grossAmount: 194700, gstPercent: 18 }], { isInterState: true }).subTotal;
+  assert.equal(sub, 165000, "subtotal before GST");
+  assert.equal(invoiceTds(sub, 2), 3300, "TDS is the rate on the pre-GST subtotal");
+  assert.equal(invoiceTds(sub, null), 0, "no rate, no TDS");
+  let b = invoiceBalance({ grossAmount: 194700, status: "ISSUED", creditNotes: [], payments: [], tdsAmount: 3300 });
+  assert.ok(b.balance === 194700 && b.tdsPending === 3300 && b.cashDue === 191400, "unpaid: customer pays the total less TDS");
+  b = invoiceBalance({ grossAmount: 194700, status: "ISSUED", creditNotes: [], payments: [{ amount: 194700, tdsAmount: 3300 }], tdsAmount: 3300 });
+  assert.ok(b.settled && b.tdsPending === 0 && b.cashDue === 0, "paid with the TDS recorded: settled");
+  b = invoiceBalance({ grossAmount: 194700, status: "ISSUED", creditNotes: [], payments: [{ amount: 100000 }], tdsAmount: 3300 });
+  assert.ok(b.balance === 94700 && b.tdsPending === 3300 && b.cashDue === 91400, "part paid in cash: TDS still to come off");
+  b = invoiceBalance({ grossAmount: 194700, status: "CANCELLED", creditNotes: [], payments: [], tdsAmount: 3300 });
+  assert.ok(b.tdsPending === 0 && b.cashDue === 0, "a cancelled invoice expects no TDS");
+}
 
 // --- Sheet rows for TDS, refunds and multi-rate invoices ---
 {

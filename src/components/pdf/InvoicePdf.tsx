@@ -34,6 +34,9 @@ export interface InvoicePdfData {
   lines: LineInput[];
   creditNotes: { number: string; noteDate: Date; grossAmount: number }[];
   payments: { amount: number; kind: string; tdsAmount: number; method: string | null }[];
+  /** TDS the customer deducts: its rate and what it comes to. */
+  tdsPercent: number | null;
+  tdsAmount: number;
   signatureDataUri: string;
 }
 
@@ -112,7 +115,13 @@ export function InvoicePdf({ data }: { data: InvoicePdfData }) {
   const isInterState = registered ? isInterStateSupply(data.customerGstin, data.placeOfSupply) : false;
   const totals = computeInvoice(data.lines, { isInterState, gstRegistered: registered });
   const igst = totals.taxMode === "IGST";
-  const bal = invoiceBalance({ grossAmount: totals.total, status: data.status, creditNotes: data.creditNotes, payments: data.payments });
+  const bal = invoiceBalance({
+    grossAmount: totals.total,
+    status: data.status,
+    creditNotes: data.creditNotes,
+    payments: data.payments,
+    tdsAmount: data.tdsAmount,
+  });
   const cancelled = data.status === "CANCELLED";
   const isBajaj = data.saleType === "BAJAJ";
   const financed = isBajaj ? (data.financedAmount ?? totals.total - (data.downPayment ?? 0)) : 0;
@@ -156,7 +165,7 @@ export function InvoicePdf({ data }: { data: InvoicePdfData }) {
           </View>
           <View style={s.headerRight}>
             <Text style={s.pill}>
-              {cancelled ? "Cancelled" : bal.settled ? "Paid in full" : `Balance due ${money(bal.balance)}`}
+              {cancelled ? "Cancelled" : bal.settled ? "Paid in full" : `Balance due ${money(bal.cashDue)}`}
             </Text>
             <Text style={s.number}>#{data.invoiceNumber}</Text>
           </View>
@@ -258,6 +267,9 @@ export function InvoicePdf({ data }: { data: InvoicePdfData }) {
             {data.creditNotes.map((c) => (
               <Row key={c.number} k={`Credit note ${c.number}`} v={`(-) ${money(c.grossAmount)}`} />
             ))}
+            {bal.tdsPending > 0 && !cancelled && (
+              <Row k={`Less: TDS${data.tdsPercent ? ` (${pct(data.tdsPercent)})` : ""}`} v={`(-) ${money(bal.tdsPending)}`} />
+            )}
             {bal.received > 0 && <Row k={bal.tds > 0 ? "Paid (incl. TDS)" : "Payment made"} v={`(-) ${money(bal.received)}`} />}
             {bal.tds > 0 && <Row k="   of which TDS deducted" v={money(bal.tds)} />}
             {bal.refunded > 0 && <Row k="Refunded" v={`(+) ${money(bal.refunded)}`} />}
@@ -275,7 +287,7 @@ export function InvoicePdf({ data }: { data: InvoicePdfData }) {
             ) : (
               <View style={[s.due, bal.settled ? { backgroundColor: "#ecfdf5", color: "#047857" } : { backgroundColor: "#f5f5f5" }]}>
                 <Text>{bajajPending && !bal.settled ? "Balance due (Bajaj Finance)" : "Balance due"}</Text>
-                <Text>{money(bal.balance)}</Text>
+                <Text>{money(bal.cashDue)}</Text>
               </View>
             )}
           </View>

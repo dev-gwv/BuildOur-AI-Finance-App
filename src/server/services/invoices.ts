@@ -8,7 +8,7 @@ import { accessibleBusinessIds, accessWhere, assertBusinessAccess, requireInvoic
 import { audit, diff } from "../audit";
 import { allocateInvoiceNumber, businessSummarySelect, nextInvoiceNumberPreview } from "../businesses";
 import { assertPeriodOpen } from "../gstLock";
-import { invoiceSummaryFields, type LineInput } from "@/lib/invoiceLines";
+import { computeInvoice, invoiceSummaryFields, invoiceTds, type LineInput } from "@/lib/invoiceLines";
 import { ApiError, badRequest, conflict, forbidden, notFound } from "../errors";
 import { isAdmin, type SessionUser } from "../session";
 import {
@@ -89,6 +89,9 @@ const invoiceFields = {
   gstPercent: percent("GST %").default(18),
   notes: optionalText(2000),
   terms: optionalText(5000),
+  /** TDS the customer will deduct, as a % of the pre-GST subtotal. Blank = none. */
+  tdsPercent: blankAsMissing(percent("TDS %").max(30, "TDS is at most 30%").optional()),
+  tdsSection: blankAsMissing(optionalText(20)),
 };
 
 export const createInvoiceSchema = z.object({
@@ -148,6 +151,14 @@ function resolveLines(
   });
   if (Object.keys(fields).length) throw badRequest("Every item needs its HSN/SAC code", fields);
   return lines;
+}
+
+/** The invoice's TDS columns: the rate, its section and the amount it comes to. */
+function tdsFields(lines: LineInput[], input: { tdsPercent?: number; tdsSection?: string | null }, gstRegistered: boolean) {
+  const tdsPercent = input.tdsPercent && input.tdsPercent > 0 ? input.tdsPercent : null;
+  if (!tdsPercent) return { tdsPercent: null, tdsSection: null, tdsAmount: 0 };
+  const { subTotal } = computeInvoice(lines, { isInterState: false, gstRegistered });
+  return { tdsPercent, tdsSection: input.tdsSection ?? null, tdsAmount: invoiceTds(subTotal, tdsPercent) };
 }
 
 const linesCreate = (lines: LineInput[]) => lines.map((l, position) => ({ position, ...l }));
@@ -233,6 +244,7 @@ export async function createInvoice(user: SessionUser, input: z.infer<typeof cre
   const lines = resolveLines(input, !isMulberry);
   const summary = invoiceSummaryFields(lines);
   const total = summary.grossAmount;
+  const tds = tdsFields(lines, input, !isMulberry);
 
   // The source document is a convenience copy; the invoice must not be lost
   // because storage hiccupped. A rejected file (wrong type, too big) is still
@@ -303,6 +315,7 @@ export async function createInvoice(user: SessionUser, input: z.infer<typeof cre
           customerGstin: isMulberry ? null : input.customerGstin,
           placeOfSupply: input.placeOfSupply,
           ...summary,
+          ...tds,
           lines: { create: linesCreate(lines) },
           notes: input.notes,
           terms: input.terms,
@@ -343,7 +356,7 @@ export async function createInvoice(user: SessionUser, input: z.infer<typeof cre
     entityId: invoice.id,
     summary: `Raised ${invoice.invoiceNumber} for ${invoice.customerName} · ${rupees(invoice.grossAmount)}${
       lines.length > 1 ? ` · ${lines.length} items` : ""
-    }${
+    }${tds.tdsAmount > 0 ? ` · less TDS ${tds.tdsPercent}% ${rupees(tds.tdsAmount)}` : ""}${
       isBajaj ? ` · Bajaj DO ${invoice.doId}, financing ${rupees(financedAmount!)}` : ""
     }${initialPayment > 0 ? ` (${initialMethod.toLowerCase()} ${rupees(initialPayment)} received)` : ""}${
       collectedCharges > 0 ? ` · ${rupees(collectedCharges)} of Bajaj's charges collected` : ""
@@ -411,6 +424,9 @@ const EDIT_LABELS = {
   qty: "qty",
   grossAmount: "amount",
   gstPercent: "GST %",
+  tdsPercent: "TDS %",
+  tdsSection: "TDS section",
+  tdsAmount: "TDS",
   notes: "notes",
   terms: "terms",
   businessId: "business",
@@ -438,6 +454,7 @@ export async function updateInvoice(user: SessionUser, invoiceId: string, input:
   const lines = resolveLines(input, !isMulberry);
   const summary = invoiceSummaryFields(lines);
   const total = summary.grossAmount;
+  const tds = tdsFields(lines, input, !isMulberry);
 
   // Moving between businesses keeps the legal entity: the printed seller can't change.
   let targetBusinessId = existing.businessId;
@@ -494,6 +511,7 @@ export async function updateInvoice(user: SessionUser, invoiceId: string, input:
     customerGstin: isMulberry ? existing.customerGstin : input.customerGstin,
     placeOfSupply: input.placeOfSupply,
     ...summary,
+    ...tds,
     notes: input.notes,
     terms: input.terms,
     businessId: targetBusinessId,

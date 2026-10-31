@@ -37,6 +37,8 @@ export async function loadInvoicePdfData(invoiceId: string): Promise<InvoicePdfD
     placeOfSupply: invoice.placeOfSupply,
     notes: invoice.notes,
     terms: invoice.terms,
+    tdsPercent: invoice.tdsPercent,
+    tdsAmount: invoice.tdsAmount,
     doId: invoice.doId,
     saleType: invoice.saleType,
     downPayment: invoice.downPayment,

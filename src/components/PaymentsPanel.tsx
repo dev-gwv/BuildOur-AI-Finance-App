@@ -99,6 +99,7 @@ export function PaymentsPanel({
   bajaj,
   creditNotes = [],
   status = "ISSUED",
+  invoiceTds,
 }: {
   invoiceId: string;
   total: number;
@@ -113,6 +114,8 @@ export function PaymentsPanel({
   taxableShare?: number;
   /** Set on a Bajaj Finance sale: what Bajaj finances, and its DO. */
   bajaj?: { financedAmount: number; doId: string | null; doDetails?: DoDetails | null } | null;
+  /** TDS the invoice says the customer deducts: filled in on the next payment. */
+  invoiceTds?: { amount: number; section: string | null } | null;
 }) {
   const router = useRouter();
   const toast = useToast();
@@ -164,7 +167,7 @@ export function PaymentsPanel({
   const feesExact = verify.state === "ok" && !overrideFees;
 
   // One balance rule for every screen: credit notes, refunds, TDS, cancellation.
-  const bal = invoiceBalance({ grossAmount: total, status, creditNotes, payments });
+  const bal = invoiceBalance({ grossAmount: total, status, creditNotes, payments, tdsAmount: invoiceTds?.amount });
   const cancelled = bal.cancelled;
   const receipts = payments.filter((p) => p.kind !== "REFUND");
   const paid = round2(bal.received - bal.refunded);
@@ -510,8 +513,10 @@ export function PaymentsPanel({
     resetGateway();
     clearError();
     setEditing(null);
-    setTds("");
-    setTdsSection("194J");
+    // The invoice's TDS not yet recorded is filled in: the amount stays the
+    // full balance (cash + TDS), so the cash part is what the customer pays.
+    setTds(bal.tdsPending > 0 ? String(bal.tdsPending) : "");
+    setTdsSection(bal.tdsPending > 0 && invoiceTds?.section ? invoiceTds.section : "194J");
     setAmount(String(Math.max(outstanding, 0)));
     setPaidOn(todayISO());
     setMethod("");
@@ -656,7 +661,12 @@ export function PaymentsPanel({
             <div className="flex items-baseline justify-between gap-3 sm:block">
               <dt className="text-xs text-neutral-600 dark:text-neutral-400">Balance due</dt>
               <dd className="mt-0.5 text-base font-semibold tabular-nums text-neutral-900 dark:text-neutral-100">
-                {formatCurrency(Math.max(outstanding, 0))}
+                {formatCurrency(Math.max(bal.cashDue, 0))}
+                {bal.tdsPending > 0 && (
+                  <span className="ml-1.5 text-xs font-normal text-neutral-600 dark:text-neutral-400">
+                    + {formatCurrency(bal.tdsPending)} TDS
+                  </span>
+                )}
               </dd>
             </div>
           </dl>

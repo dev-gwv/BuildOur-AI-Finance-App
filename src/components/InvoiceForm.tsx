@@ -30,6 +30,8 @@ import {
   type EditorLine,
 } from "@/components/invoices/LineItemsEditor";
 import { LineBreakupPreview } from "@/components/invoices/LineBreakupPreview";
+import { TdsFields } from "@/components/invoices/TdsFields";
+import { computeInvoice } from "@/lib/invoiceLines";
 
 export type { CatalogEntry };
 
@@ -92,6 +94,9 @@ export function InvoiceForm({
   const [lines, setLines] = useState<EditorLine[]>(() => [newLine({ hsnSac: "999259", gstPercent: "18" })]);
   const [notes, setNotes] = useState(defaultNotes);
   const [terms, setTerms] = useState(defaultTerms);
+  /** TDS the customer will deduct, as a % of the pre-GST subtotal; "" = none. */
+  const [tdsPercent, setTdsPercent] = useState("");
+  const [tdsSection, setTdsSection] = useState("194J");
 
   const [saleType, setSaleType] = useState<SaleType>(initialSaleType);
   const isBajaj = saleType === "BAJAJ";
@@ -108,6 +113,7 @@ export function InvoiceForm({
 
   const lineInputs = toLineInputs(lines);
   const price = Math.round(lineInputs.reduce((s, l) => s + l.grossAmount, 0) * 100) / 100;
+  const subTotal = computeInvoice(lineInputs, { isInterState: false }).subTotal;
   const down = Math.max(0, Number(downPayment) || 0);
   const financed = Math.max(0, Math.round((price - down) * 100) / 100);
   // Price - down payment must equal the loan the DO states; if not, a figure was misread.
@@ -274,6 +280,10 @@ export function InvoiceForm({
       body.append("lines", JSON.stringify(lineInputs));
       body.append("notes", notes);
       body.append("terms", terms);
+      if (!isBajaj && Number(tdsPercent) > 0) {
+        body.append("tdsPercent", tdsPercent);
+        body.append("tdsSection", tdsSection);
+      }
       body.append("doId", doId);
       if (docType) body.append("source", docType);
       body.append("doDate", doDate);
@@ -662,6 +672,18 @@ export function InvoiceForm({
             />
           </CardBody>
         </Card>
+
+        {/* TDS: a B2B customer's deduction, shown on the invoice. Not for Bajaj sales. */}
+        {!isBajaj && (
+          <TdsFields
+            percent={tdsPercent}
+            section={tdsSection}
+            onPercentChange={setTdsPercent}
+            onSectionChange={setTdsSection}
+            subTotal={subTotal}
+            total={price}
+          />
+        )}
 
         {/* The rest has sensible defaults and stays out of the way */}
         <details className="group rounded-2xl border border-neutral-200/80 bg-white shadow-card dark:border-white/[0.07] dark:bg-neutral-900/70">

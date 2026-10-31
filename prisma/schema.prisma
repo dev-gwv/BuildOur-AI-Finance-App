@@ -214,6 +214,12 @@ model Invoice {
   /// Total of all lines, GST included.
   grossAmount     Float
   gstPercent      Float        @default(18)
+  /// TDS the customer is expected to deduct: a rate on the pre-GST subtotal,
+  /// printed as "Less: TDS" on the invoice and filled in on its payment.
+  /// Null/0 = none. tdsAmount is that rate applied, worked out on save.
+  tdsPercent      Float?
+  tdsSection      String?
+  tdsAmount       Float        @default(0)
   /// The exact PDF last emailed to the customer (stored file name).
   emailedPdfPath  String?
   notes           String?

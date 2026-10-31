@@ -39,6 +39,9 @@ export interface InvoiceDocumentData {
   status?: string | null;
   cancelledAt?: string | Date | null;
   cancelReason?: string | null;
+  /** TDS the customer deducts: its rate and what it comes to. */
+  tdsPercent?: number | null;
+  tdsAmount?: number | null;
 }
 
 export interface PaymentLine {
@@ -97,7 +100,13 @@ export function InvoiceDocument({
   const igst = t.taxMode === "IGST";
   const taxed = registered && t.taxMode !== "NONE";
 
-  const bal = invoiceBalance({ grossAmount: invoice.grossAmount, status: invoice.status ?? "ISSUED", creditNotes, payments });
+  const bal = invoiceBalance({
+    grossAmount: invoice.grossAmount,
+    status: invoice.status ?? "ISSUED",
+    creditNotes,
+    payments,
+    tdsAmount: invoice.tdsAmount,
+  });
   const netReceived = Math.round((bal.received - bal.refunded) * 100) / 100;
   // A Bajaj EMI sale: the customer pays the down payment, Bajaj Finance the rest.
   const isBajaj = invoice.saleType === "BAJAJ";
@@ -158,7 +167,7 @@ export function InvoiceDocument({
               </div>
             ) : (
               <div className="inline-flex items-center gap-1.5 rounded-full bg-white/15 px-3 py-1 text-xs font-semibold">
-                Balance due {formatCurrency(bal.balance)}
+                Balance due {formatCurrency(bal.cashDue)}
               </div>
             )}
             <p className="mt-3 whitespace-nowrap text-2xl font-bold tracking-tight tabular-nums sm:text-[28px]">#{invoice.invoiceNumber}</p>
@@ -369,6 +378,12 @@ export function InvoiceDocument({
                 <span className="tabular-nums text-red-600">(-) {formatCurrency(cn.grossAmount)}</span>
               </div>
             ))}
+            {bal.tdsPending > 0 && !cancelled && (
+              <div className="flex justify-between text-neutral-600">
+                <span>Less: TDS{invoice.tdsPercent ? ` (${invoice.tdsPercent}%)` : ""}</span>
+                <span className="tabular-nums">−{formatCurrency(bal.tdsPending)}</span>
+              </div>
+            )}
             {netReceived > 0 && !cancelled && (
               <div className="flex justify-between text-neutral-600">
                 <span>Payment received{bal.refunded > 0 ? " (net of refunds)" : ""}</span>
@@ -387,7 +402,7 @@ export function InvoiceDocument({
                 <span>
                   {bal.toRefund > 0.5 ? "To refund" : bajajPending && bal.balance > 0.5 ? "Balance due (Bajaj Finance)" : "Balance due"}
                 </span>
-                <span className="tabular-nums">{formatCurrency(bal.toRefund > 0.5 ? bal.toRefund : bal.balance)}</span>
+                <span className="tabular-nums">{formatCurrency(bal.toRefund > 0.5 ? bal.toRefund : bal.cashDue)}</span>
               </div>
             )}
           </div>

@@ -44,7 +44,8 @@ export const GET = withApiErrors(async (_req: NextRequest, { params }: Params) =
     invoiceDate: invoice.invoiceDate,
     dueDate: invoice.dueDate,
     total: invoice.grossAmount,
-    balanceDue: balance.balance,
+    // What the customer actually pays: less any TDS they will deduct.
+    balanceDue: balance.cashDue,
     itemDescription: invoice.itemDescription,
   });
   const sender = await senderForBusiness(access.businessId);
@@ -114,7 +115,8 @@ export const POST = withApiErrors(async (req: NextRequest, { params }: Params) =
     invoiceDate: invoice.invoiceDate,
     dueDate: invoice.dueDate,
     total: invoice.grossAmount,
-    balanceDue: balance.balance,
+    // What the customer actually pays: less any TDS they will deduct.
+    balanceDue: balance.cashDue,
     itemDescription: invoice.itemDescription,
   });
 

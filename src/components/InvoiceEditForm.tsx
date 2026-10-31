@@ -18,6 +18,8 @@ import { useToast } from "@/components/ui/Toast";
 import { FieldError, Rupee, focusFirstError, hintClass, inputClass, labelClass, moneyInputClass, textareaClass, type FieldErrors, useFieldErrors } from "@/components/invoices/LineFields";
 import { LineItemsEditor, lineErrors, lineFromStored, toLineInputs, type CatalogEntry, type EditorLine } from "@/components/invoices/LineItemsEditor";
 import { LineBreakupPreview } from "@/components/invoices/LineBreakupPreview";
+import { TdsFields } from "@/components/invoices/TdsFields";
+import { computeInvoice } from "@/lib/invoiceLines";
 
 export type StoredLine = { description: string; hsnSac: string; qty: number; grossAmount: number; gstPercent: number };
 
@@ -45,6 +47,9 @@ export type EditableInvoice = {
   downPayment?: number;
   /** Bajaj has already paid out — the financed amount can't move any more. */
   bajajDisbursed?: boolean;
+  /** TDS the customer deducts, as a % of the pre-GST subtotal. */
+  tdsPercent?: number | null;
+  tdsSection?: string | null;
 };
 
 /** A business an admin can move this invoice to (same legal entity only). */
@@ -88,9 +93,12 @@ export function InvoiceEditForm({
   const isBajaj = invoice.saleType === "BAJAJ";
   const [doId, setDoId] = useState(invoice.doId ?? "");
   const [downPayment, setDownPayment] = useState(String(invoice.downPayment ?? 0));
+  const [tdsPercent, setTdsPercent] = useState(invoice.tdsPercent ? String(invoice.tdsPercent) : "");
+  const [tdsSection, setTdsSection] = useState(invoice.tdsSection ?? "194J");
 
   const lineInputs = toLineInputs(lines, gstRegistered);
   const total = Math.round(lineInputs.reduce((s, l) => s + l.grossAmount, 0) * 100) / 100;
+  const subTotal = computeInvoice(lineInputs, { isInterState: false, gstRegistered }).subTotal;
   const down = Math.max(0, Number(downPayment) || 0);
   const financed = Math.max(0, Math.round((total - down) * 100) / 100);
 
@@ -151,6 +159,9 @@ export function InvoiceEditForm({
           lines: lineInputs,
           notes,
           terms,
+          // Always sent: a blank rate clears the invoice's TDS.
+          tdsPercent: Number(tdsPercent) > 0 ? tdsPercent : "",
+          tdsSection: Number(tdsPercent) > 0 ? tdsSection : "",
           ...(businessId !== invoice.businessId ? { businessId } : {}),
           ...(isBajaj ? { doId, downPayment: down } : {}),
         }),
@@ -429,6 +440,17 @@ export function InvoiceEditForm({
             {minGross > 0 && <p className={hintClass}>{formatCurrency(minGross)} has already been received — the total can&apos;t go below that.</p>}
           </CardBody>
         </Card>
+
+        {!isBajaj && gstRegistered && (
+          <TdsFields
+            percent={tdsPercent}
+            section={tdsSection}
+            onPercentChange={setTdsPercent}
+            onSectionChange={setTdsSection}
+            subTotal={subTotal}
+            total={total}
+          />
+        )}
 
         <Card>
           <CardHeader>
