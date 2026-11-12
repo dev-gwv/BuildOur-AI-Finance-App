@@ -39,6 +39,21 @@ export const DEFAULT_TEMPLATES: Record<BrandKey, { subject: string; body: string
       "{{brand}}",
     ].join("\n"),
   },
+  VERTEX: {
+    subject: "Tax Invoice {{invoice_number}} from {{brand}}",
+    body: [
+      "Dear {{customer_name}},",
+      "",
+      "Thank you for choosing {{brand}}.",
+      "",
+      "Please find your tax invoice {{invoice_number}} for {{item}}, dated {{invoice_date}}, for an amount of {{total}}. The balance currently outstanding is {{balance_due}}.",
+      "",
+      "If you have any questions about this invoice, simply reply to this email and we will be happy to help.",
+      "",
+      "Warm regards,",
+      "{{brand}}",
+    ].join("\n"),
+  },
   MULBERRY: {
     subject: "Invoice {{invoice_number}} from {{brand}}",
     body: [

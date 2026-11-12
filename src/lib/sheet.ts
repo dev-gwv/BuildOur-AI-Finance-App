@@ -2,6 +2,7 @@ import { prisma } from "./prisma";
 import { sheetTarget } from "@/server/businesses";
 import { expenseSheetBody, paymentReceiptRow, type SheetBody } from "./sheetRows";
 import { computeInvoice } from "./invoiceLines";
+import { chargesGst } from "./brands";
 
 export type { SheetBody };
 
@@ -109,7 +110,7 @@ function sheetInvoice(inv: {
   lines: { grossAmount: number; gstPercent: number; hsnSac: string; description: string; qty: number }[];
 }) {
   if (!inv.lines.length) return inv;
-  const totals = computeInvoice(inv.lines, { isInterState: false, gstRegistered: inv.brand === "GRATEFUL" });
+  const totals = computeInvoice(inv.lines, { isInterState: false, gstRegistered: chargesGst(inv.brand) });
   return { ...inv, taxableRatio: totals.total > 0 ? totals.subTotal / totals.total : null };
 }
 

@@ -15,13 +15,20 @@ export function fyLabel(date: Date): string {
   return `${String(start % 100).padStart(2, "0")}-${String((start + 1) % 100).padStart(2, "0")}`;
 }
 
-/** The prefix with {FY} filled in for the given date. */
+/** Financial year with the full first year, as "2026-27" (for a {FY4} prefix). */
+export function fyLabelLong(date: Date): string {
+  const y = date.getUTCFullYear();
+  const start = date.getUTCMonth() >= 3 ? y : y - 1;
+  return `${start}-${String((start + 1) % 100).padStart(2, "0")}`;
+}
+
+/** The prefix with {FY} ("26-27") or {FY4} ("2026-27") filled in for the given date. */
 export function resolvePrefix(prefix: string, date: Date): string {
-  return prefix.replace(/\{FY\}/gi, fyLabel(date));
+  return prefix.replace(/\{FY4\}/gi, fyLabelLong(date)).replace(/\{FY\}/gi, fyLabel(date));
 }
 
 export function hasFyToken(prefix: string): boolean {
-  return /\{FY\}/i.test(prefix);
+  return /\{FY4?\}/i.test(prefix);
 }
 
 export function formatInvoiceNumber(prefix: string, seq: number, digits = 6): string {
@@ -50,7 +57,7 @@ export function seqInSeries(invoiceNumber: string, prefix: string): number | nul
 
 /** Longest number this series will produce, for validating settings against the 16-char cap. */
 export function longestNumberFor(prefix: string, digits: number): number {
-  return prefix.replace(/\{FY\}/gi, "26-27").length + digits;
+  return prefix.replace(/\{FY4\}/gi, "2026-27").replace(/\{FY\}/gi, "26-27").length + digits;
 }
 
 export function slugify(name: string): string {

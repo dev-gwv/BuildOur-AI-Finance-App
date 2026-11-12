@@ -66,7 +66,7 @@ export function invoiceEmailHtml(data: InvoiceEmailData): string {
   const brand = BRANDS[data.brand];
   const balance = Math.round((data.total - data.amountPaid) * 100) / 100;
   const settled = balance <= 0;
-  const accent = data.brand === "MULBERRY" ? "#5b0d1c" : "#4338ca";
+  const accent = brand.pdfHeader.bg;
 
   const row = (label: string, value: string, strong = false) => `
     <tr>

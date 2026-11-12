@@ -11,6 +11,7 @@ import { Segmented } from "@/components/ui/Segmented";
 import { controlClass } from "@/components/ui/controlClass";
 import { Button } from "@/components/ui/Button";
 import { formatCurrency, formatDate } from "@/lib/format";
+import { chargesGst } from "@/lib/brands";
 
 // Toolbar controls line up with the toolbar buttons: 44px on phones, 36px from sm.
 const dateClass = controlClass(false, "h-11 w-full sm:h-9 sm:w-40");
@@ -104,7 +105,7 @@ export default async function ReportsPage({
     else delete next.direction;
     return { pathname: "/reports", query: next };
   };
-  const hasGst = (scope.current ? [scope.current] : scope.businesses).some((b) => b.entity === "GRATEFUL");
+  const hasGst = (scope.current ? [scope.current] : scope.businesses).some((b) => chargesGst(b.entity));
   const filtered = Boolean(from || to || direction);
   const rangeText = from || to ? `${from ? formatDate(from) : "the start"} – ${to ? formatDate(to) : "today"}` : "all dates";
 

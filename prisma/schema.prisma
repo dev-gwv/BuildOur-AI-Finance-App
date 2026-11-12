@@ -18,12 +18,13 @@ enum Role {
 }
 
 /// The legal entity that issues an invoice: the seller printed on it (name,
-/// GSTIN, bank; see src/lib/brands.ts). Grateful is GST-registered; Mulberry is
-/// not, so its invoices carry no tax breakup. Several businesses can share one
-/// entity: IPC and IWC both bill as Grateful.
+/// GSTIN, bank; see src/lib/brands.ts). Grateful and Vertex are GST-registered;
+/// Mulberry is not, so its invoices carry no tax breakup. Several businesses can
+/// share one entity: IPC and IWC both bill as Grateful.
 enum InvoiceBrand {
   GRATEFUL
   MULBERRY
+  VERTEX
 }
 
 model User {

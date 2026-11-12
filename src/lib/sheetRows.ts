@@ -1,3 +1,4 @@
+import { chargesGst } from "./brands";
 // Pure: what each record looks like as a sheet row. Kept apart from the
 // network and database code in sheet.ts so it can be checked in isolation.
 
@@ -67,9 +68,9 @@ type InvoiceForSheet = {
 };
 
 export function paymentReceiptRow(payment: PaymentForSheet, invoice: InvoiceForSheet): ReceiptRow {
-  // Only Grateful's ventures charge GST; Mulberry's "excluding" is just net of charges.
+  // Only GST-registered sellers (Grateful, Vertex) charge GST; Mulberry's "excluding" is just net of charges.
   const exGst = (n: number) =>
-    invoice.brand !== "GRATEFUL"
+    !chargesGst(invoice.brand)
       ? n
       : invoice.taxableRatio && invoice.taxableRatio > 0
         ? n * invoice.taxableRatio

@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
+import { BRANDS } from "@/lib/brands";
 import { isAdmin, requirePageUser } from "@/server/session";
 import { canAccessBusiness } from "@/server/access";
 import { InvoiceEditForm } from "@/components/InvoiceEditForm";
@@ -33,7 +34,13 @@ export default async function EditInvoicePage({ params }: { params: Promise<{ id
 
   // Admins can move an invoice between businesses that bill as the same
   // legal entity — the printed seller can't change after issue.
-  const catalog = invoice.brand === "MULBERRY" ? [] : await prisma.itemCatalogEntry.findMany({ orderBy: { amount: "asc" } });
+  const products = BRANDS[invoice.brand].products;
+  const catalog =
+    invoice.brand === "MULBERRY"
+      ? []
+      : products
+        ? products.map((p, i) => ({ id: `${invoice.brand}-${i}`, amount: 0, ...p }))
+        : await prisma.itemCatalogEntry.findMany({ orderBy: { amount: "asc" } });
   const businessOptions = isAdmin(user)
     ? await prisma.business.findMany({
         where: { entity: invoice.brand, archivedAt: null },

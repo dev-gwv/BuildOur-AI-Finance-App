@@ -1,3 +1,4 @@
+import { BRANDS } from "@/lib/brands";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { sealSecret } from "@/lib/secretBox";
@@ -23,14 +24,14 @@ const prefix = z
   .min(1, "A prefix is required")
   .max(16)
   .transform((v) => v.toUpperCase())
-  .refine((v) => /^[A-Z0-9/_{}-]+$/.test(v) && !/[{}]/.test(v.replace(/\{FY\}/g, "")), "Letters, numbers, - / _ and {FY} only");
+  .refine((v) => /^[A-Z0-9/_{}-]+$/.test(v) && !/[{}]/.test(v.replace(/\{FY4?\}/g, "")), "Letters, numbers, - / _ and {FY} or {FY4} only");
 const digits = z.coerce.number().int("A whole number").min(3, "At least 3 digits").max(8, "At most 8 digits");
 const nextNumber = z.coerce.number().int("A whole number").min(1, "At least 1").max(99_999_999);
 
 export const createBusinessSchema = z.object({
   name: requiredText("Name", 120),
   slug: slug.optional(),
-  entity: z.enum(["GRATEFUL", "MULBERRY"]),
+  entity: z.enum(["GRATEFUL", "MULBERRY", "VERTEX"]),
   color: color.optional(),
   invoicePrefix: prefix,
   invoiceNextNumber: nextNumber,
@@ -42,7 +43,7 @@ export const createBusinessSchema = z.object({
 export const updateBusinessSchema = z.object({
   name: requiredText("Name", 120).optional(),
   slug: slug.optional(),
-  entity: z.enum(["GRATEFUL", "MULBERRY"]).optional(),
+  entity: z.enum(["GRATEFUL", "MULBERRY", "VERTEX"]).optional(),
   color: color.optional(),
   invoicePrefix: prefix.optional(),
   invoiceNextNumber: nextNumber.optional(),
@@ -149,7 +150,7 @@ export async function createBusiness(admin: SessionUser, input: z.infer<typeof c
     action: "business.create",
     entityType: "business",
     entityId: business.id,
-    summary: `Created ${business.name} (${business.entity === "MULBERRY" ? "Mulberry" : "Grateful"}, ${business.invoicePrefix}…)`,
+    summary: `Created ${business.name} (${BRANDS[business.entity].name}, ${business.invoicePrefix}…)`,
     req,
   });
   return business;

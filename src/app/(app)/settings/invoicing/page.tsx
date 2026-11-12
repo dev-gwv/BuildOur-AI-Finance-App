@@ -47,7 +47,7 @@ export default async function InvoicingSettingsPage() {
         </CardBody>
       </Card>
 
-      {(["GRATEFUL", "MULBERRY"] as BrandKey[]).map((key) => {
+      {(Object.keys(BRANDS) as BrandKey[]).map((key) => {
         const saved = templates.find((t) => t.brand === key);
         const tpl = saved ?? DEFAULT_TEMPLATES[key];
         return (

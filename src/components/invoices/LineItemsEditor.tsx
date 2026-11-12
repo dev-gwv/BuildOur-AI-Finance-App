@@ -5,7 +5,8 @@ import { formatCurrency } from "@/lib/format";
 import type { LineInput } from "@/lib/invoiceLines";
 import { FieldError, Rupee, inputClass, labelClass, moneyInputClass, type FieldErrors } from "./LineFields";
 
-export type CatalogEntry = { id: string; amount: number; itemDescription: string; hsnSac: string };
+/** A product to pick. amount 0 = no list price: the amount is typed each time. */
+export type CatalogEntry = { id: string; amount: number; itemDescription: string; hsnSac: string; gstPercent?: number };
 
 /** A line as typed: strings, so a half-typed number isn't lost. */
 export interface EditorLine {
@@ -103,8 +104,9 @@ export function LineItemsEditor({
       catalogId,
       description: entry.itemDescription,
       hsnSac: entry.hsnSac,
+      ...(entry.gstPercent != null ? { gstPercent: String(entry.gstPercent) } : {}),
       // A DO's own amount is authoritative; otherwise the list price is a starting point.
-      ...(line.fromDo && Number(line.grossAmount) > 0 ? {} : { grossAmount: String(entry.amount) }),
+      ...((line.fromDo && Number(line.grossAmount) > 0) || !(entry.amount > 0) ? {} : { grossAmount: String(entry.amount) }),
     });
     ["description", "hsnSac", "grossAmount"].forEach((f) => onFieldEdit?.(`lines.${i}.${f}`));
   };
@@ -175,7 +177,7 @@ export function LineItemsEditor({
                   <option value="">Pick a product from the catalog…</option>
                   {catalog.map((c) => (
                     <option key={c.id} value={c.id}>
-                      {c.itemDescription} — {formatCurrency(c.amount)}
+                      {c.amount > 0 ? `${c.itemDescription} — ${formatCurrency(c.amount)}` : c.itemDescription}
                     </option>
                   ))}
                 </select>

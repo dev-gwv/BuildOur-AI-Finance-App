@@ -11,6 +11,7 @@ import { formatCurrency, formatCurrencyWhole, formatDate } from "@/lib/format";
 import { startOfToday } from "@/lib/alerts";
 import { invoiceBalance } from "@/lib/invoiceLines";
 import { ScrollX } from "@/components/ui/ScrollX";
+import { chargesGst, sellerStateCode } from "@/lib/brands";
 
 export type ListedInvoice = {
   id: string;
@@ -322,8 +323,8 @@ export function InvoiceList({
                       </span>
                       <p className="whitespace-nowrap text-xs text-neutral-500 dark:text-neutral-400">{formatDate(inv.invoiceDate)}</p>
                       <div className="mt-1 flex flex-wrap gap-1">
-                        {inv.brand === "GRATEFUL" &&
-                          (isInterStateSupply(inv.customerGstin, inv.placeOfSupply) ? <Badge tone="warning">IGST</Badge> : <Badge>CGST+SGST</Badge>)}
+                        {chargesGst(inv.brand) &&
+                          (isInterStateSupply(inv.customerGstin, inv.placeOfSupply, sellerStateCode(inv.brand)) ? <Badge tone="warning">IGST</Badge> : <Badge>CGST+SGST</Badge>)}
                         {inv.saleType === "BAJAJ" && <Badge>Bajaj</Badge>}
                         {inv.revisedAt && <Badge tone="brand">Revised</Badge>}
                       </div>
@@ -333,7 +334,7 @@ export function InvoiceList({
                         {inv.customerName}
                       </p>
                       <p className="max-w-48 truncate text-xs text-neutral-400">
-                        {inv.brand === "GRATEFUL" ? (inv.customerGstin ?? "B2C") : "—"}
+                        {chargesGst(inv.brand) ? (inv.customerGstin ?? "B2C") : "—"}
                         {inv.emailSentAt && " · emailed"}
                       </p>
                     </TD>

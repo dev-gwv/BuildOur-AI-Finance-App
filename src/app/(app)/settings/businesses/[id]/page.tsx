@@ -16,6 +16,7 @@ import { ENTITY_OPTIONS, entityName } from "@/components/settings/entities";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Card, CardBody, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
+import { chargesGst } from "@/lib/brands";
 
 const LEGACY_ENV: Record<string, string> = {
   mulberry: "SHEETS_WEBHOOK_URL",
@@ -129,7 +130,7 @@ export default async function BusinessSettingsPage({ params }: { params: Promise
       <nav className="flex flex-wrap gap-1.5 text-xs font-medium">
         {[
           ["profile", "Profile & numbering"],
-          ...(business.entity === "GRATEFUL" ? [["gst", "GST filing lock"]] : []),
+          ...(chargesGst(business.entity) ? [["gst", "GST filing lock"]] : []),
           ["email", "Email"],
           ["sheet", "Google Sheet"],
           ["categories", "Categories"],
@@ -166,7 +167,7 @@ export default async function BusinessSettingsPage({ params }: { params: Promise
       </Section>
 
       {/* Only a GST-registered seller files returns. */}
-      {business.entity === "GRATEFUL" && (
+      {chargesGst(business.entity) && (
         <Section id="gst" icon={Landmark} title="GST filing lock" subtitle="Freeze months whose GST return is already filed">
           <GstLockForm
             businessId={business.id}

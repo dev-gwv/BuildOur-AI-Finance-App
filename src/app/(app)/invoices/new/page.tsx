@@ -64,7 +64,7 @@ export default async function NewInvoicePage({ searchParams }: { searchParams: P
                   <div className="mt-3 flex flex-wrap gap-1.5">
                     <Badge>Next: {nextNumbers[b.id]}</Badge>
                     <Badge tone={b.entity === "MULBERRY" ? "neutral" : "brand"}>
-                      {b.entity === "MULBERRY" ? "From a quotation" : "Bajaj sale or direct sale"}
+                      {b.entity === "MULBERRY" ? "From a quotation" : b.entity === "GRATEFUL" ? "Bajaj sale or direct sale" : "Direct sale"}
                     </Badge>
                   </div>
                 </Card>
@@ -97,7 +97,8 @@ export default async function NewInvoicePage({ searchParams }: { searchParams: P
   }
 
   // A Grateful invoice is one of two different sales; pick which before the form.
-  const saleType = type === "bajaj" ? "BAJAJ" : type === "direct" ? "DIRECT" : null;
+  // Bajaj EMI sales are Grateful's only — any other seller raises a direct sale.
+  const saleType = business.entity !== "GRATEFUL" ? "DIRECT" : type === "bajaj" ? "BAJAJ" : type === "direct" ? "DIRECT" : null;
   if (!saleType) {
     const options = [
       {
@@ -150,8 +151,13 @@ export default async function NewInvoicePage({ searchParams }: { searchParams: P
     );
   }
 
+  // A seller with its own products (Vertex: IAA PROGRAMS) offers those, price typed each time;
+  // otherwise the shared catalog from Invoice Settings.
+  const products = BRANDS[business.entity].products;
   const [catalog, settings] = await Promise.all([
-    prisma.itemCatalogEntry.findMany({ orderBy: { amount: "asc" } }),
+    products
+      ? products.map((p, i) => ({ id: `${business.entity}-${i}`, amount: 0, ...p }))
+      : prisma.itemCatalogEntry.findMany({ orderBy: { amount: "asc" } }),
     prisma.invoiceSettings.findUnique({ where: { id: "default" } }),
   ]);
 
@@ -169,6 +175,7 @@ export default async function NewInvoicePage({ searchParams }: { searchParams: P
       <InvoiceForm
         key={saleType}
         saleType={saleType}
+        entity={business.entity}
         businessId={business.id}
         suggestedNumber={suggestedNumber}
         catalog={catalog}

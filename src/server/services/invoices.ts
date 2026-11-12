@@ -266,7 +266,9 @@ export async function createInvoice(user: SessionUser, input: z.infer<typeof cre
   // actually reaches the bank (see recordBajajDisbursement). Nothing is marked
   // paid on its behalf here. A direct sale is paid like any other; a Mulberry
   // booking records only the advance received.
-  const saleType = isMulberry ? "DIRECT" : (input.saleType ?? (input.source === "DO" || input.doId ? "BAJAJ" : "DIRECT"));
+  // Bajaj Finance EMI sales are Grateful's only.
+  const saleType =
+    business.entity !== "GRATEFUL" ? "DIRECT" : (input.saleType ?? (input.source === "DO" || input.doId ? "BAJAJ" : "DIRECT"));
   const isBajaj = saleType === "BAJAJ";
   if (isBajaj && !input.doId) {
     throw badRequest("Enter the DO number from Bajaj's delivery order", { doId: "The DO number is required for a Bajaj sale" });

@@ -3,7 +3,8 @@ import { Ban, Download, FileText, Info, Landmark, Lock, Percent, Receipt, Scale,
 import { requirePageUser } from "@/server/session";
 import { getScope } from "@/server/scope";
 import { GST_PERIODS, monthLabel, parseGstPeriod, type GstCreditLine, type GstLine, type GstTotals } from "@/lib/gstReport";
-import { gstBusinesses, loadGstReport, resolveGstBusinessIds } from "@/lib/gstReportData";
+import { gstBusinesses, loadGstReport, resolveGstBusinessIds, resolveGstEntity } from "@/lib/gstReportData";
+import { BRANDS } from "@/lib/brands";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Card, CardBody, CardHeader, CardTitle } from "@/components/ui/Card";
 import { StatCard } from "@/components/ui/StatCard";
@@ -107,27 +108,47 @@ function InvoiceTable({
 export default async function GstReportPage({
   searchParams,
 }: {
-  searchParams: Promise<{ period?: string; business?: string }>;
+  searchParams: Promise<{ period?: string; business?: string; entity?: string }>;
 }) {
   const params = await searchParams;
   const period = parseGstPeriod(params.period);
   const user = await requirePageUser();
   const scope = await getScope(user);
-  // Only businesses billing under a GST-registered entity have a GST report.
-  const candidates = gstBusinesses(scope);
-  const businessIds = resolveGstBusinessIds(scope, params.business);
+  // Only businesses billing under a GST-registered entity have a GST report,
+  // and each entity files its own returns: one GSTIN per report.
+  const allCandidates = gstBusinesses(scope);
+  const entity = resolveGstEntity(scope, params.business, params.entity);
+  const seller = BRANDS[entity ?? "GRATEFUL"];
+  const candidates = allCandidates.filter((c) => c.entity === entity);
+  const otherEntities = [...new Set(allCandidates.map((c) => c.entity).filter((e) => e !== entity))];
+  const businessIds = resolveGstBusinessIds(scope, entity, params.business);
   const selected = businessIds.length === 1 && candidates.length > 1 ? businessIds[0] : null;
-  const report = await loadGstReport({ businessIds, period });
+  const report = entity ? await loadGstReport({ businessIds, period, entity }) : null;
 
-  const query = (o: { period?: string; business?: string | null }) => {
+  const query = (o: { period?: string; business?: string | null; entity?: string }) => {
     const p = o.period ?? period;
     const b = o.business === undefined ? selected : o.business;
-    return { ...(p !== "month" ? { period: p } : {}), ...(b ? { business: b } : {}) };
+    const e = o.entity ?? entity;
+    return { ...(p !== "month" ? { period: p } : {}), ...(b ? { business: b } : {}), ...(e && e !== "GRATEFUL" ? { entity: e } : {}) };
   };
   const exportHref = `/api/export/gst?${new URLSearchParams({
     ...(period !== "month" ? { period } : {}),
     ...(businessIds.length === 1 ? { businessId: businessIds[0] } : {}),
+    ...(entity && entity !== "GRATEFUL" ? { entity } : {}),
   }).toString()}`;
+  if (!report || candidates.length === 0) {
+    return (
+      <div className="space-y-6">
+        <PageHeader eyebrow="Reports" title="GST report" />
+        <EmptyState
+          icon={Landmark}
+          title={scope.current ? `${scope.current.name} doesn't charge GST` : "No GST-registered business"}
+          description="The GST report covers businesses that bill under a GST-registered entity (Grateful World Ventures or Vertex Global Academy). Switch business in the sidebar to see one."
+        />
+      </div>
+    );
+  }
+
   const lastDay = new Date(report.range.end.getTime() - 86_400_000);
   const rangeLabel = `${formatDate(report.range.start)} – ${formatDate(lastDay)}`;
   const scopeLabel =
@@ -136,25 +157,12 @@ export default async function GstReportPage({
       : `${candidates.length} businesses`;
   const showBusiness = businessIds.length > 1;
 
-  if (candidates.length === 0) {
-    return (
-      <div className="space-y-6">
-        <PageHeader eyebrow="Reports" title="GST report" />
-        <EmptyState
-          icon={Landmark}
-          title={scope.current ? `${scope.current.name} doesn't charge GST` : "No GST-registered business"}
-          description="The GST report covers businesses that bill under a GST-registered entity (Grateful World Ventures). Switch business in the sidebar to see one."
-        />
-      </div>
-    );
-  }
-
   return (
     <div className="space-y-6">
       <PageHeader
         eyebrow="Reports"
         title="GST report"
-        description={`Output tax on Grateful World Ventures' invoices (GSTIN 07AAJCG9243K1Z5), laid out like GSTR-1 · ${scopeLabel} · ${rangeLabel}`}
+        description={`Output tax on ${seller.name}'s invoices (GSTIN ${seller.gstin}), laid out like GSTR-1 · ${scopeLabel} · ${rangeLabel}`}
         actions={
           <a
             href={exportHref}
@@ -166,11 +174,22 @@ export default async function GstReportPage({
         }
       />
 
+      {otherEntities.length > 0 && (
+        <Segmented
+          items={[seller.key, ...otherEntities].map((e) => ({
+            key: e,
+            label: `${BRANDS[e as keyof typeof BRANDS].name} · ${BRANDS[e as keyof typeof BRANDS].gstin}`,
+            href: { pathname: "/reports/gst", query: query({ business: null, entity: e }) },
+            active: e === entity,
+          }))}
+        />
+      )}
+
       <div className="flex flex-wrap items-center justify-between gap-3">
         {candidates.length > 1 ? (
           <Segmented
             items={[
-              { key: "all", label: "All of Grateful", href: { pathname: "/reports/gst", query: query({ business: null }) }, active: !selected },
+              { key: "all", label: `All of ${seller.name.split(" ")[0]}`, href: { pathname: "/reports/gst", query: query({ business: null }) }, active: !selected },
               ...candidates.map((c) => ({
                 key: c.id,
                 label: (
@@ -259,7 +278,7 @@ export default async function GstReportPage({
         <EmptyState
           icon={Landmark}
           title="No tax invoices in this period"
-          description="Invoices raised under Grateful World Ventures show up here by invoice date."
+          description={`Invoices raised under ${seller.name} show up here by invoice date.`}
         />
       ) : (
         <>

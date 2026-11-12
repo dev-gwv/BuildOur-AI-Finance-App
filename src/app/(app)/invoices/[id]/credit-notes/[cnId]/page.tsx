@@ -160,8 +160,13 @@ export default async function CreditNotePage({ params }: { params: Promise<{ id:
 
         <footer className="flex justify-end border-t border-neutral-100 px-5 sm:px-8 py-6">
           <div className="text-center">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={signature} alt="Authorised signature" className="mx-auto h-14 object-contain" />
+            {brand.printsSignature ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={signature} alt="Authorised signature" className="mx-auto h-14 object-contain" />
+            ) : (
+              // The uploaded signature is Grateful's signatory: left blank to sign.
+              <div className="h-14" />
+            )}
             <p className="mt-1 text-xs text-neutral-500">Authorised signatory · {brand.name}</p>
           </div>
         </footer>

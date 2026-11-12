@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import ExcelJS from "exceljs";
-import { withApiErrors } from "@/server/errors";
+import { ApiError, withApiErrors } from "@/server/errors";
 import { requireUser } from "@/server/session";
 import { getScope } from "@/server/scope";
 import { monthLabel, parseGstPeriod, type GstLine } from "@/lib/gstReport";
-import { loadGstReport, resolveGstBusinessIds } from "@/lib/gstReportData";
+import { loadGstReport, resolveGstBusinessIds, resolveGstEntity } from "@/lib/gstReportData";
 
 const MONEY = "#,##0.00";
 // Stored dates and the period's range are calendar days at midnight UTC, so ISO gives the right day.
@@ -15,10 +15,13 @@ export const GET = withApiErrors(async (req: NextRequest) => {
   const user = await requireUser();
   const { searchParams } = new URL(req.url);
   const period = parseGstPeriod(searchParams.get("period") ?? undefined);
-  // Only Grateful-entity businesses the user can access; a crafted id is ignored.
+  // One GST-registered entity's businesses the user can access; a crafted id is ignored.
   const scope = await getScope(user);
-  const businessIds = resolveGstBusinessIds(scope, searchParams.get("businessId"));
-  const report = await loadGstReport({ businessIds, period });
+  const requested = searchParams.get("businessId");
+  const entity = resolveGstEntity(scope, requested, searchParams.get("entity"));
+  if (!entity) throw new ApiError(404, "No GST-registered business to report on");
+  const businessIds = resolveGstBusinessIds(scope, entity, requested);
+  const report = await loadGstReport({ businessIds, period, entity });
 
   const workbook = new ExcelJS.Workbook();
 

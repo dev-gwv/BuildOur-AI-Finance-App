@@ -17,6 +17,7 @@ export type ShellBusiness = {
 const ENTITY_LABEL: Record<string, string> = {
   GRATEFUL: "Bills as Grateful World Ventures",
   MULBERRY: "Bills as The Mulberry Weddings",
+  VERTEX: "Bills as Vertex Global Academy",
 };
 
 /**

@@ -1,6 +1,6 @@
 import { MULBERRY_LOGO_DATA_URI } from "./mulberryLogo";
 
-export type BrandKey = "GRATEFUL" | "MULBERRY";
+export type BrandKey = "GRATEFUL" | "MULBERRY" | "VERTEX";
 
 export interface Brand {
   key: BrandKey;
@@ -12,6 +12,8 @@ export interface Brand {
   gstin?: string;
   companyId?: string;
   placeOfSupply?: string;
+  /** The seller's GST state code: a buyer in another state is charged IGST. */
+  stateCode?: string;
   /** Heading on the document — an unregistered seller cannot title it "Tax Invoice". */
   documentTitle: string;
   invoicePrefix: string;
@@ -28,6 +30,15 @@ export interface Brand {
   /** Tailwind classes for the document header, so each brand keeps its own identity. */
   headerClass: string;
   accentTextClass: string;
+  /** Header colours for the PDF (no Tailwind there). */
+  pdfHeader: { bg: string; accent: string };
+  /**
+   * Prints the signature uploaded in Invoice Settings. That signature is
+   * Grateful's signatory, so another seller leaves the space blank to sign.
+   */
+  printsSignature: boolean;
+  /** Products offered as a pick on its invoices. The price is typed each time. */
+  products?: { itemDescription: string; hsnSac: string; gstPercent: number }[];
 }
 
 export const BRANDS: Record<BrandKey, Brand> = {
@@ -39,6 +50,7 @@ export const BRANDS: Record<BrandKey, Brand> = {
     gstin: "07AAJCG9243K1Z5",
     companyId: "U80301DL2022OPC401949",
     placeOfSupply: "Delhi (07)",
+    stateCode: "07",
     documentTitle: "Tax Invoice",
     invoicePrefix: "INV-",
     nextNumberFrom: 2242,
@@ -51,6 +63,8 @@ export const BRANDS: Record<BrandKey, Brand> = {
     },
     headerClass: "bg-gradient-to-r from-indigo-600 to-indigo-700 print:bg-indigo-700",
     accentTextClass: "text-indigo-200",
+    pdfHeader: { bg: "#4338ca", accent: "#c7d2fe" },
+    printsSignature: true,
   },
   MULBERRY: {
     key: "MULBERRY",
@@ -64,8 +78,37 @@ export const BRANDS: Record<BrandKey, Brand> = {
     logoDataUri: MULBERRY_LOGO_DATA_URI,
     headerClass: "bg-gradient-to-r from-[#5b0d1c] to-[#7b1226] print:bg-[#5b0d1c]",
     accentTextClass: "text-amber-200",
+    pdfHeader: { bg: "#5b0d1c", accent: "#fde68a" },
+    printsSignature: true,
+  },
+  VERTEX: {
+    key: "VERTEX",
+    name: "Vertex Global Academy Private Limited",
+    addressLines: ["P-45, South City-1, Sector 45", "Gurugram, Haryana 122003", "India"],
+    gstRegistered: true,
+    gstin: "06AALCV6564G1ZX",
+    placeOfSupply: "Haryana (06)",
+    stateCode: "06",
+    documentTitle: "Tax Invoice",
+    invoicePrefix: "VGA/{FY4}/",
+    nextNumberFrom: 48,
+    headerClass: "bg-gradient-to-r from-slate-800 to-slate-900 print:bg-slate-900",
+    accentTextClass: "text-sky-200",
+    pdfHeader: { bg: "#1e293b", accent: "#bae6fd" },
+    printsSignature: false,
+    products: [{ itemDescription: "IAA PROGRAMS", hsnSac: "999259", gstPercent: 18 }],
   },
 };
+
+/** The seller's state code, for deciding IGST vs CGST+SGST. */
+export function sellerStateCode(brand: BrandKey | string | null | undefined): string {
+  return BRANDS[(brand ?? "GRATEFUL") as BrandKey]?.stateCode ?? "07";
+}
+
+/** Whether invoices under this entity charge GST. */
+export function chargesGst(brand: BrandKey | string | null | undefined): boolean {
+  return Boolean(BRANDS[(brand ?? "GRATEFUL") as BrandKey]?.gstRegistered);
+}
 
 export function formatInvoiceNumber(brand: Brand, seq: number): string {
   return `${brand.invoicePrefix}${String(seq).padStart(6, "0")}`;

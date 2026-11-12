@@ -3,7 +3,7 @@ import { computeInvoice, invoiceBalance, type LineInput } from "@/lib/invoiceLin
 import { isInterStateSupply } from "@/lib/gstState";
 import { amountInWords } from "@/lib/numberToWords";
 import { formatCurrency, formatDate } from "@/lib/format";
-import { BRANDS, type BrandKey } from "@/lib/brands";
+import { BRANDS, sellerStateCode, type BrandKey } from "@/lib/brands";
 import { AUTHORIZED_SIGNATURE_DATA_URI } from "@/lib/signatureImage";
 import { ScrollX } from "@/components/ui/ScrollX";
 
@@ -92,7 +92,7 @@ export function InvoiceDocument({
   const registered = brand.gstRegistered;
 
   // The GSTIN's state (else the place of supply's) decides CGST+SGST vs IGST.
-  const isInterState = registered ? isInterStateSupply(invoice.customerGstin, invoice.placeOfSupply) : false;
+  const isInterState = registered ? isInterStateSupply(invoice.customerGstin, invoice.placeOfSupply, sellerStateCode(brand.key)) : false;
   const lines: LineInput[] = invoice.lines?.length
     ? invoice.lines
     : [{ description: invoice.itemDescription, hsnSac: invoice.hsnSac, qty: invoice.qty, grossAmount: invoice.grossAmount, gstPercent: invoice.gstPercent }];
@@ -487,8 +487,13 @@ export function InvoiceDocument({
             )}
           </div>
           <div className="shrink-0 text-right">
-            {/* eslint-disable-next-line @next/next/no-img-element -- inline data URI, no next/image optimization needed */}
-            <img src={signature} alt="Authorized signature" className="ml-auto h-14 w-auto object-contain" />
+            {brand.printsSignature ? (
+              // eslint-disable-next-line @next/next/no-img-element -- inline data URI, no next/image optimization needed
+              <img src={signature} alt="Authorized signature" className="ml-auto h-14 w-auto object-contain" />
+            ) : (
+              // The uploaded signature is Grateful's signatory: left blank to sign.
+              <div className="h-14" />
+            )}
             <div className="ml-auto w-56 border-b border-neutral-300" />
             <p className="mt-1.5 text-xs font-medium text-neutral-700">Authorised Signatory</p>
             <p className="text-xs text-neutral-500">{brand.name}</p>

@@ -5,12 +5,12 @@ import { requireAdmin, requireUser } from "@/server/session";
 import { audit } from "@/server/audit";
 import { guardWrite } from "@/server/services/common";
 import { DEFAULT_TEMPLATES } from "@/lib/emailTemplate";
-import type { BrandKey } from "@/lib/brands";
+import { BRANDS, type BrandKey } from "@/lib/brands";
 
 export const GET = withApiErrors(async () => {
   await requireUser();
   const saved = await prisma.emailTemplate.findMany();
-  const templates = (["GRATEFUL", "MULBERRY"] as BrandKey[]).map((brand) => {
+  const templates = (Object.keys(BRANDS) as BrandKey[]).map((brand) => {
     const row = saved.find((t) => t.brand === brand);
     return { brand, ...(row ?? DEFAULT_TEMPLATES[brand]), isDefault: !row };
   });
@@ -23,8 +23,8 @@ export const PATCH = withApiErrors(async (req: NextRequest) => {
   const form = await req.formData().catch(() => null);
   if (!form) throw new ApiError(400, "Expected a form submission");
 
-  const brand = String(form.get("brand") ?? "");
-  if (brand !== "GRATEFUL" && brand !== "MULBERRY") {
+  const brand = String(form.get("brand") ?? "") as BrandKey;
+  if (!(brand in BRANDS)) {
     throw new ApiError(400, "Unknown brand");
   }
 

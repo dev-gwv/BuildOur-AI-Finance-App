@@ -1,5 +1,5 @@
 import { Document, Font, Image, Page, StyleSheet, Text, View } from "@react-pdf/renderer";
-import { BRANDS, type BrandKey } from "@/lib/brands";
+import { BRANDS, sellerStateCode, type BrandKey } from "@/lib/brands";
 import { computeInvoice, invoiceBalance, type LineInput } from "@/lib/invoiceLines";
 import { isInterStateSupply } from "@/lib/gstState";
 import { amountInWords } from "@/lib/numberToWords";
@@ -40,11 +40,6 @@ export interface InvoicePdfData {
   signatureDataUri: string;
 }
 
-/** Header colours per brand, matching the on-screen document. */
-const HEADER: Record<BrandKey, { bg: string; accent: string }> = {
-  GRATEFUL: { bg: "#4338ca", accent: "#c7d2fe" },
-  MULBERRY: { bg: "#5b0d1c", accent: "#fde68a" },
-};
 
 const INK = "#171717";
 const MUTED = "#525252";
@@ -110,9 +105,9 @@ const pct = (n: number) => `${Number.isInteger(n) ? n : n.toFixed(2)}%`;
 
 export function InvoicePdf({ data }: { data: InvoicePdfData }) {
   const brand = BRANDS[data.brand];
-  const colors = HEADER[data.brand];
+  const colors = brand.pdfHeader;
   const registered = brand.gstRegistered;
-  const isInterState = registered ? isInterStateSupply(data.customerGstin, data.placeOfSupply) : false;
+  const isInterState = registered ? isInterStateSupply(data.customerGstin, data.placeOfSupply, sellerStateCode(data.brand)) : false;
   const totals = computeInvoice(data.lines, { isInterState, gstRegistered: registered });
   const igst = totals.taxMode === "IGST";
   const bal = invoiceBalance({
@@ -378,8 +373,13 @@ export function InvoicePdf({ data }: { data: InvoicePdfData }) {
             )}
           </View>
           <View style={{ alignItems: "flex-end" }}>
-            {/* eslint-disable-next-line jsx-a11y/alt-text -- react-pdf Image has no alt */}
-            <Image src={data.signatureDataUri} style={s.sign} />
+            {brand.printsSignature ? (
+              // eslint-disable-next-line jsx-a11y/alt-text -- react-pdf Image has no alt
+              <Image src={data.signatureDataUri} style={s.sign} />
+            ) : (
+              // The uploaded signature is Grateful's signatory: left blank to sign.
+              <View style={{ height: s.sign.height }} />
+            )}
             <View style={s.signLine} />
             <Text style={{ fontSize: 8, marginTop: 3 }}>Authorised Signatory</Text>
             <Text style={s.small}>{brand.name}</Text>

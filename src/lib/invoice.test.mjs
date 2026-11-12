@@ -10,7 +10,8 @@ import { looksLikeQuotation, parseQuotationText } from "./parseQuotation.ts";
 import { PAYMENT_METHODS, parsePaymentScreenshotText } from "./parsePaymentScreenshot.ts";
 import { invoiceEmailHtml, invoiceEmailSubject, invoiceEmailText } from "./invoiceEmail.ts";
 import { guessStateCodeFromAddress, isInterStateSupply, placeOfSupplyFromGstin, stateCodeFromGstin, stateCodeFromPlaceOfSupply } from "./gstState.ts";
-import { formatInvoiceNumber, fyLabel, longestNumberFor, previewInvoiceNumber, resolvePrefix, seqInSeries, slugify } from "./invoiceNumbering.ts";
+import { formatInvoiceNumber, fyLabel, fyLabelLong, longestNumberFor, previewInvoiceNumber, resolvePrefix, seqInSeries, slugify } from "./invoiceNumbering.ts";
+import { chargesGst, sellerStateCode } from "./brands.ts";
 import { computeInvoice, invoiceBalance, invoiceSummaryFields, invoiceTds } from "./invoiceLines.ts";
 import { calculateBreakup, calculateCostBreakup, calculateGatewayFee } from "./calc.ts";
 import { detectGateway } from "./parsePaymentScreenshot.ts";
@@ -687,6 +688,24 @@ bal = invoiceBalance({ grossAmount: 118000, status: "ISSUED", creditNotes: [{ gr
 assert.ok(bal.settled && bal.toRefund === 0, "refund closes it");
 bal = invoiceBalance({ grossAmount: 118000, status: "CANCELLED", creditNotes: [], payments: [] });
 assert.ok(bal.cancelled && bal.net === 0 && bal.balance === 0, "a cancelled invoice owes nothing");
+
+// --- Vertex: its own series and seller state (Haryana) ---
+{
+  const aug = new Date("2026-08-31T00:00:00Z");
+  assert.equal(fyLabelLong(aug), "2026-27");
+  assert.equal(resolvePrefix("VGA/{FY4}/", aug), "VGA/2026-27/");
+  assert.equal(resolvePrefix("IPC/{FY}/", aug), "IPC/26-27/", "{FY} unchanged");
+  assert.equal(formatInvoiceNumber(resolvePrefix("VGA/{FY4}/", aug), 47, 3), "VGA/2026-27/047", "matches Vertex's own numbering");
+  assert.equal(seqInSeries("VGA/2026-27/047", "VGA/2026-27/"), 47);
+  assert.ok(longestNumberFor("VGA/{FY4}/", 3) <= 16, "fits GST's 16-character cap");
+  assert.equal(previewInvoiceNumber({ invoicePrefix: "VGA/{FY4}/", invoiceNextNumber: 1, invoiceDigits: 3 }, { date: aug, fyNext: 48 }), "VGA/2026-27/048");
+  assert.ok(chargesGst("VERTEX") && chargesGst("GRATEFUL") && !chargesGst("MULBERRY"));
+  // Vertex (Haryana) billing Grateful (Delhi): inter-state, IGST — as on VGA/2026-27/047.
+  assert.ok(isInterStateSupply("07AAJCG9243K1Z5", "Delhi (07)", sellerStateCode("VERTEX")), "Haryana → Delhi is IGST");
+  assert.ok(!isInterStateSupply("07AAJCG9243K1Z5", "Delhi (07)", sellerStateCode("GRATEFUL")), "Delhi → Delhi stays CGST+SGST");
+  const t = computeInvoice([{ description: "IAA PROGRAMS", hsnSac: "999259", qty: 1, grossAmount: 193247, gstPercent: 18 }], { isInterState: true });
+  assert.ok(t.subTotal === 163768.64 && t.igst === 29478.36, "VGA/2026-27/047's figures");
+}
 
 // --- TDS set on the invoice (reference INV-002373: ₹1,65,000 + 18% IGST, 2% TDS) ---
 {

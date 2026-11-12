@@ -102,9 +102,9 @@ export function monthOf(date: Date): string {
 }
 
 /** One invoice's tax, split exactly as its printed document splits it. */
-export function gstLine(inv: GstInvoiceInput): GstLine {
+export function gstLine(inv: GstInvoiceInput, homeCode?: string): GstLine {
   const gstin = inv.customerGstin?.trim() || null;
-  const interState = isInterStateSupply(gstin, inv.placeOfSupply);
+  const interState = isInterStateSupply(gstin, inv.placeOfSupply, homeCode);
   const lines: LineInput[] = inv.lines?.length
     ? inv.lines
     : [{ description: "", hsnSac: "", qty: inv.qty, grossAmount: inv.grossAmount, gstPercent: inv.gstPercent }];
@@ -186,9 +186,9 @@ export interface GstCreditLine extends GstCreditNoteInput {
   value: number;
 }
 
-export function gstCreditLine(cn: GstCreditNoteInput): GstCreditLine {
+export function gstCreditLine(cn: GstCreditNoteInput, homeCode?: string): GstCreditLine {
   const gstin = cn.customerGstin?.trim() || null;
-  const interState = isInterStateSupply(gstin, cn.placeOfSupply);
+  const interState = isInterStateSupply(gstin, cn.placeOfSupply, homeCode);
   const b = calculateInvoiceBreakup({ grossAmount: cn.grossAmount, gstPercent: cn.gstPercent, qty: 1, isInterState: interState });
   return {
     ...cn,

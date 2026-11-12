@@ -13,6 +13,7 @@ import { Badge } from "@/components/ui/Badge";
 import { formatDate } from "@/lib/format";
 import { computeInvoice, invoiceBalance } from "@/lib/invoiceLines";
 import { readDoDetails } from "@/lib/bajajDo";
+import { chargesGst, sellerStateCode } from "@/lib/brands";
 import { isInterStateSupply } from "@/lib/gstState";
 import { creditNoteTax } from "@/server/services/creditNotes";
 import { CreditNotesPanel } from "@/components/invoices/CreditNotesPanel";
@@ -50,7 +51,7 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
   const cancelled = balance.cancelled;
   const lock = invoice.business.gstLockedThrough;
   const locked = Boolean(lock && invoice.invoiceDate.getTime() <= lock.getTime());
-  const gstRegistered = invoice.brand === "GRATEFUL";
+  const gstRegistered = chargesGst(invoice.brand);
   const biggestLine = [...invoice.lines].sort((a, b) => b.grossAmount - a.grossAmount)[0];
   // Share of what the customer pays that isn't GST, from the invoice's own
   // lines (they can carry different rates), for the payment breakdown.
@@ -206,7 +207,7 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
           net={balance.net}
           toRefund={balance.toRefund}
           gstRegistered={gstRegistered}
-          interState={isInterStateSupply(invoice.customerGstin, invoice.placeOfSupply)}
+          interState={isInterStateSupply(invoice.customerGstin, invoice.placeOfSupply, sellerStateCode(invoice.brand))}
           defaultRate={gstRegistered ? (biggestLine?.gstPercent ?? invoice.gstPercent) : 0}
           lockedThrough={lock ? iso(lock) : null}
           canDelete={isAdmin(user)}

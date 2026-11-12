@@ -11,7 +11,7 @@ import {
   stateNameFromCode,
 } from "@/lib/gstState";
 import { formatCurrency, formatDate } from "@/lib/format";
-import { BRANDS } from "@/lib/brands";
+import { BRANDS, sellerStateCode, type BrandKey } from "@/lib/brands";
 import { Button } from "@/components/ui/Button";
 import { Card, CardBody, CardHeader, CardTitle } from "@/components/ui/Card";
 import { useToast } from "@/components/ui/Toast";
@@ -25,7 +25,7 @@ export type StoredLine = { description: string; hsnSac: string; qty: number; gro
 
 export type EditableInvoice = {
   id: string;
-  brand: "GRATEFUL" | "MULBERRY";
+  brand: BrandKey;
   invoiceNumber: string;
   /** yyyy-mm-dd */
   invoiceDate: string;
@@ -105,7 +105,7 @@ export function InvoiceEditForm({
   // The GSTIN's state when there is one, else the place of supply's.
   const buyerStateCode = stateCodeFromGstin(customerGstin) ?? stateCodeFromPlaceOfSupply(placeOfSupply);
   const buyerStateName = stateNameFromCode(buyerStateCode);
-  const interState = isInterStateSupply(customerGstin, placeOfSupply);
+  const interState = isInterStateSupply(customerGstin, placeOfSupply, sellerStateCode(invoice.brand));
 
   function validate(): FieldErrors {
     const e: FieldErrors = {};
@@ -130,7 +130,7 @@ export function InvoiceEditForm({
     clear("customerGstin");
     const pos = placeOfSupplyFromGstin(clean);
     if (pos) setPlaceOfSupply(pos);
-    else if (!clean) setPlaceOfSupply(BRANDS.GRATEFUL.placeOfSupply ?? "Delhi (07)");
+    else if (!clean) setPlaceOfSupply(BRANDS[invoice.brand].placeOfSupply ?? "Delhi (07)");
   }
 
   async function onSubmit(e: FormEvent<HTMLFormElement>) {

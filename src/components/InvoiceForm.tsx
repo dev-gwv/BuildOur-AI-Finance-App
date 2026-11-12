@@ -14,7 +14,7 @@ import {
   stateNameFromCode,
 } from "@/lib/gstState";
 import { formatCurrency, formatDate } from "@/lib/format";
-import { BRANDS } from "@/lib/brands";
+import { BRANDS, sellerStateCode, type BrandKey } from "@/lib/brands";
 import { readImageText } from "@/lib/clientUpload";
 import { chargesCollected, expectedBajajDeduction, pickDoDetails, type DoDetails } from "@/lib/bajajDo";
 import { Button } from "@/components/ui/Button";
@@ -38,7 +38,6 @@ export type { CatalogEntry };
 /** BAJAJ = financed by Bajaj Finance, raised from its delivery order; DIRECT = the customer pays us. */
 export type SaleType = "BAJAJ" | "DIRECT";
 
-const DEFAULT_POS = BRANDS.GRATEFUL.placeOfSupply ?? "Delhi (07)";
 
 /** Human names for what's still missing, in the order the form reads. */
 const NEEDS: Array<[string, string]> = [
@@ -57,6 +56,7 @@ export function InvoiceForm({
   defaultNotes,
   businessId,
   saleType: initialSaleType = "DIRECT",
+  entity = "GRATEFUL",
 }: {
   suggestedNumber: string;
   catalog: CatalogEntry[];
@@ -66,7 +66,12 @@ export function InvoiceForm({
   businessId: string;
   /** Chosen on the page before the form; can still be switched here without losing anything typed. */
   saleType?: SaleType;
+  /** The legal entity the business bills as: decides the seller's state (IGST) and whether Bajaj sales apply. */
+  entity?: BrandKey;
 }) {
+  const DEFAULT_POS = BRANDS[entity].placeOfSupply ?? "Delhi (07)";
+  // Bajaj Finance EMI sales are Grateful's; other sellers only raise direct sales.
+  const allowBajaj = entity === "GRATEFUL";
   const router = useRouter();
   const toast = useToast();
   const formRef = useRef<HTMLFormElement>(null);
@@ -122,7 +127,7 @@ export function InvoiceForm({
   // The GSTIN's state when there is one, else the place of supply's.
   const buyerStateCode = stateCodeFromGstin(customerGstin) ?? stateCodeFromPlaceOfSupply(placeOfSupply);
   const buyerStateName = stateNameFromCode(buyerStateCode);
-  const interState = isInterStateSupply(customerGstin, placeOfSupply);
+  const interState = isInterStateSupply(customerGstin, placeOfSupply, sellerStateCode(entity));
 
   /** Everything the invoice needs, keyed like the API's `fields`. */
   function validate(): FieldErrors {
@@ -176,7 +181,7 @@ export function InvoiceForm({
       const { parsed, ocr } = await res.json();
       setDocType(parsed.docType);
       if (ocr) toast.info("Read from an image with OCR — double-check the name, date and amount");
-      setMismatch(parsed.docType === "DO" && !isBajaj ? "DO_ON_DIRECT" : parsed.docType === "GST" && isBajaj ? "GST_ON_BAJAJ" : null);
+      setMismatch(parsed.docType === "DO" && !isBajaj && allowBajaj ? "DO_ON_DIRECT" : parsed.docType === "GST" && isBajaj ? "GST_ON_BAJAJ" : null);
 
       if (parsed.docType === "GST") {
         // A GST certificate carries who the customer is, but never an amount —
@@ -324,7 +329,9 @@ export function InvoiceForm({
   return (
     <form ref={formRef} onSubmit={onSubmit} noValidate className="grid gap-6 lg:grid-cols-[1fr_320px]">
       <div className="grid min-w-0 gap-6">
-        <div className="grid grid-cols-2 gap-2 rounded-2xl border border-neutral-200/80 bg-white p-1.5 shadow-card dark:border-white/[0.07] dark:bg-neutral-900/70">
+        <div
+          className={`${allowBajaj ? "grid" : "hidden"} grid-cols-2 gap-2 rounded-2xl border border-neutral-200/80 bg-white p-1.5 shadow-card dark:border-white/[0.07] dark:bg-neutral-900/70`}
+        >
           {(
             [
               { key: "BAJAJ", label: "Bajaj Finance sale", hint: "Raised from the delivery order", icon: Landmark },

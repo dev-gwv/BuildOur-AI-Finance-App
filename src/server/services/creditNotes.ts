@@ -14,6 +14,7 @@ import { assertPeriodOpen } from "../gstLock";
 import { isAdmin, type SessionUser } from "../session";
 import { isoDate, percent, positiveMoney, requiredText } from "../validation";
 import { guardWrite, round2, rupees } from "./common";
+import { chargesGst, sellerStateCode } from "@/lib/brands";
 
 // Credit notes and cancellation: the GST-correct ways to undo or reduce an
 // issued invoice. An issued invoice's number is never freed and its figures
@@ -64,7 +65,7 @@ async function loadInvoice(invoiceId: string) {
 
 /** The rate a credit note defaults to: the invoice's (largest line's) rate. */
 function defaultRate(invoice: Awaited<ReturnType<typeof loadInvoice>>): number {
-  if (invoice.brand !== "GRATEFUL") return 0;
+  if (!chargesGst(invoice.brand)) return 0;
   const biggest = [...invoice.lines].sort((a, b) => b.grossAmount - a.grossAmount)[0];
   return biggest?.gstPercent ?? invoice.gstPercent;
 }
@@ -72,13 +73,13 @@ function defaultRate(invoice: Awaited<ReturnType<typeof loadInvoice>>): number {
 /** A credit note's tax split, on the same supply type (CGST+SGST or IGST) as its invoice. */
 export function creditNoteTax(
   cn: { grossAmount: number; gstPercent: number },
-  invoice: { customerGstin: string | null; placeOfSupply: string }
+  invoice: { customerGstin: string | null; placeOfSupply: string; brand: string }
 ) {
   const b = calculateInvoiceBreakup({
     grossAmount: cn.grossAmount,
     gstPercent: cn.gstPercent,
     qty: 1,
-    isInterState: isInterStateSupply(invoice.customerGstin, invoice.placeOfSupply),
+    isInterState: isInterStateSupply(invoice.customerGstin, invoice.placeOfSupply, sellerStateCode(invoice.brand)),
   });
   return { taxable: b.subTotal, cgst: b.cgstAmount, sgst: b.sgstAmount, igst: b.igstAmount, taxMode: b.taxMode };
 }
@@ -106,7 +107,7 @@ export async function createCreditNote(
   if (input.grossAmount > net + 0.005) {
     throw badRequest(`At most ${rupees(net)} can be credited on this invoice`, { grossAmount: `At most ${rupees(net)}` });
   }
-  const gstPercent = invoice.brand === "GRATEFUL" ? (input.gstPercent ?? defaultRate(invoice)) : 0;
+  const gstPercent = chargesGst(invoice.brand) ? (input.gstPercent ?? defaultRate(invoice)) : 0;
 
   const creditNote = await prisma.$transaction(async (tx) => {
     const number = await allocateCreditNoteNumber(tx, invoice.businessId, input.noteDate);
